@@ -6,6 +6,7 @@
     "newLine": "LF",
     "resolveJsonModule": true,
     "strictNullChecks": true,
+    "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "paths": {
       "@48tools-types/*": ["./packages/48tools/src/types/*"],

@@ -3,6 +3,7 @@ import { parse, type ParsedPath } from 'node:path';
 import { setTimeout } from 'node:timers';
 import * as process from 'node:process';
 import { requestLiveRoomInfo, type LiveRoomInfo } from '@48tools-api/48';
+import { setPocket48ProxyForWorker } from '../../../../../custom/pocket48Proxy/pocket48Proxy';
 import type { _UtilObject } from '../../../../../../../main/src/logProtocol/logTemplate/ffmpeg.mjs';
 import { _ffmpegLogProtocol } from '../../../../../utils/logProtocol/logActions';
 
@@ -19,6 +20,7 @@ export type WorkerEventData = {
   ffmpeg: string;         // ffmpeg地址
   liveId: string;         // 播放ID
   roomId: string;         // 直播房间地址
+  pocket48Proxy?: string; // 口袋48接口代理地址（worker 里没有 localStorage，由主线程传入）
 };
 
 export interface ErrorMessageEventData {
@@ -121,6 +123,7 @@ function stop(): void {
 addEventListener('message', function(event: MessageEvent<WorkerEventData>): void {
   switch (event.data.type) {
     case 'start':
+      setPocket48ProxyForWorker(event.data.pocket48Proxy);
       download(event.data);
       break;
 

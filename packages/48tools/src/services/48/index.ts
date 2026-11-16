@@ -3,10 +3,10 @@
 import { pipeline } from 'node:stream/promises';
 import * as fs from 'node:fs';
 // @ts-expect-error
-import got, { type Response as GotResponse, type Headers as GotHeaders, type Delays } from 'got';
+import { type Response as GotResponse, type Headers as GotHeaders, type Delays } from 'got';
+import got from '../../custom/pocket48Proxy/pocket48Got'; // 口袋48接口走代理、默认 20 秒超时
 import { createHeaders, getPocket48Token } from '../../utils/snh48';
 import type {
-  LiveInfo,
   LiveData,
   LiveRoomInfo,
   ServerSearchResult,
@@ -42,8 +42,7 @@ export async function requestLiveRoomInfo(id: string): Promise<LiveRoomInfo> {
     method: 'POST',
     headers: await createHeaders(),
     responseType: 'json',
-    json: { liveId: id },
-    timeout: timeoutOptions
+    json: { liveId: id }
   });
 
   return res.body;
@@ -86,24 +85,12 @@ export async function requestLiveList(
   if (inLive) {
     body.groupId = 0;
     body.record = false;
+  } else {
+    body.record = true; // 录播：新版口袋48需要显式传 record: true
   }
 
-  // 录播
+  // 录播（按成员查询时，接口现在支持 next 为 0，不再需要先取最新的 liveId）
   const isUserQuery: boolean = typeof userId === 'number' || (typeof userId === 'string' && !/^\s*$/.test(userId));
-  let firstData: LiveInfo | null = null;
-
-  if (isUserQuery && Number(next) === 0) {
-    // fix: 当next为0时，无法根据userId查询到指定的数据，所以取列表最新的liveId作为next参数
-    const firstRes: LiveData = await requestLiveList('0', false);
-
-    if (firstRes.content?.liveList?.[0]) {
-      body.next = firstRes.content.liveList[0].liveId;
-
-      if (firstRes.content.liveList[0].userInfo.userId === userId) {
-        firstData = firstRes.content.liveList[0];
-      }
-    }
-  }
 
   if (isUserQuery) {
     body.userId = Number(userId);
@@ -115,13 +102,8 @@ export async function requestLiveList(
     method: 'POST',
     headers: await createHeaders(),
     responseType: 'json',
-    json: body,
-    timeout: timeoutOptions
+    json: body
   });
-
-  if (firstData && res?.body?.content?.liveList) {
-    res.body.content.liveList.unshift(firstData);
-  }
 
   return res.body;
 }
@@ -284,8 +266,7 @@ export async function requestLiveOne(liveId: string, token?: string): Promise<Li
     method: 'POST',
     headers: await createHeaders(token),
     responseType: 'json',
-    json: { liveId },
-    timeout: timeoutOptions
+    json: { liveId }
   });
 
   return res.body;
@@ -301,8 +282,7 @@ export async function requestLiveStream(liveId: string, token?: string): Promise
     method: 'POST',
     headers: await createHeaders(token),
     responseType: 'json',
-    json: { liveId, streamType: 3 },
-    timeout: timeoutOptions
+    json: { liveId, streamType: 3 }
   });
 
   return res.body;

@@ -1,6 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { _UtilObject } from '../../../../../main/src/logProtocol/logTemplate/ffmpeg.mjs';
 import { _ffmpegLogProtocol } from '../../logProtocol/logActions';
+import { parseFFmpegStats } from '../../../custom/download/ffmpegStats';
+import type { ProgressStats } from '../../../custom/download/formatProgress';
 
 const _stdout: Array<string> = [];
 
@@ -18,6 +20,7 @@ export type WorkerEventData = {
   qid?: string;                           // id
   ffmpegHeaders?: string;                 // ffmpeg的headers
   concat?: boolean;                       // 合并
+  audioOnly?: boolean;                    // 只保留音频（不重新编码）
   // 是否添加"-flvflags no_duration_filesize"
   // see: https://stackoverflow.com/questions/50300013/ffmpeg-streaming-stops-after-few-seconds
   noDurationFilesize?: boolean;
@@ -33,7 +36,7 @@ export interface CloseMessageEventData {
   qid?: string;
 }
 
-export interface ProgressMessageEventData {
+export interface ProgressMessageEventData extends ProgressStats {
   type: 'progress';
   qid: string;
   data: number;
@@ -45,6 +48,7 @@ const userAgent: string = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) Apple
   + ' Chrome/77.0.3865.90 Safari/537.36';
 let child: ChildProcessWithoutNullStreams;
 let duration: number | null = null;
+let startTime: number = 0;
 
 /* 将字符串时间转换成秒 */
 function timeToSecond(time: string): number {
@@ -83,7 +87,8 @@ function ffmpegProgressParse(qid: string, str: string): void {
       postMessage({
         type: 'progress',
         data: Number((time / duration * 100).toFixed(2)),
-        qid
+        qid,
+        ...parseFFmpegStats(str, (Date.now() - startTime) / 1000, duration, time)
       });
     }
 
@@ -112,10 +117,11 @@ function download(workerData: WorkerEventData): void {
     qid,
     ffmpegHeaders,
     concat,
-    noDurationFilesize
+    noDurationFilesize,
+    audioOnly
   }: WorkerEventData = workerData;
   let ffmpegArgs: Array<string> = playStreamPathArray(playStreamPath).concat(
-    concat ? ['-c:v', 'copy', '-c:a', 'aac', filePath] : ['-c', 'copy', filePath]);
+    concat ? ['-c:v', 'copy', '-c:a', 'aac', filePath] : (audioOnly ? ['-vn', '-c:a', 'copy', filePath] : ['-c', 'copy', filePath]));
 
   if (libx264) {
     ffmpegArgs = playStreamPathArray(playStreamPath).concat(['-vcodec', 'libx264', filePath]);
@@ -138,6 +144,7 @@ function download(workerData: WorkerEventData): void {
   }
 
   ffmpegArgs = ['-rw_timeout', `${ (1_000 ** 2) * 60 * 5 }`, ...ffmpegArgs];
+  startTime = Date.now();
   child = spawn(ffmpeg, ffmpegArgs);
 
   child.stdout.on('data', function(data: Buffer): void {

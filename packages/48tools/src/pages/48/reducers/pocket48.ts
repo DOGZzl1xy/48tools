@@ -12,6 +12,7 @@ import type { QueryDispatchFunc, DataDispatchFunc } from '@indexeddb-tools/index
 import { requestLiveList, type LiveInfo, type LiveData } from '@48tools-api/48';
 import IDBRedux, { optionsObjectStoreName } from '../../../utils/IDB/IDBRedux';
 import { ProgressSet } from '../../../components/ProgressNative/index';
+import ProgressDetailSet, { updateProgressDetail } from '../../../custom/download/ProgressDetailSet';
 import type { RecordFieldData, RecordVideoDownloadWebWorkerItem, Pocket48LiveWorker } from '../types';
 import type { MessageEventData } from '../../../utils/worker/FFmpegDownload.worker/FFmpegDownload.worker';
 
@@ -131,11 +132,12 @@ const { actions, reducer }: Slice<Pocket48InitialState, SliceReducers, typeof sl
     setDownloadProgress(state: Pocket48InitialState, action: PayloadAction<MessageEventData>): void {
       if (action.payload.type === 'progress') {
         if (!state.progress[action.payload.qid]) {
-          state.progress[action.payload.qid] = new ProgressSet(action.payload.qid);
+          state.progress[action.payload.qid] = new ProgressDetailSet(action.payload.qid);
           state.progress = { ...state.progress };
         }
 
         state.progress[action.payload.qid].value = action.payload.data;
+        updateProgressDetail(state.progress[action.payload.qid], action.payload);
       } else if (action.payload.type === 'close' && action.payload.qid) {
         delete state.progress[action.payload.qid];
         state.progress = { ...state.progress };

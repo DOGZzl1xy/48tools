@@ -3,6 +3,7 @@ import { setTimeout } from 'node:timers';
 import * as FluentFFmpeg from 'fluent-ffmpeg';
 import type { FfmpegCommand } from 'fluent-ffmpeg';
 import { requestLiveRoomInfo, type LiveRoomInfo } from '@48tools-api/48';
+import { setPocket48ProxyForWorker } from '../../../../../custom/pocket48Proxy/pocket48Proxy';
 
 export type WorkerEventData = {
   type: 'start' | 'stop'; // 执行的方法
@@ -11,6 +12,7 @@ export type WorkerEventData = {
   ffmpeg: string;         // ffmpeg地址
   liveId: string;         // 播放ID
   roomId: string;         // 直播房间地址
+  pocket48Proxy?: string; // 口袋48接口代理地址（worker 里没有 localStorage，由主线程传入）
 };
 
 let command: FfmpegCommand;
@@ -94,6 +96,7 @@ function stop(): void {
 addEventListener('message', function(event: MessageEvent<WorkerEventData>): void {
   switch (event.data.type) {
     case 'start':
+      setPocket48ProxyForWorker(event.data.pocket48Proxy);
       download(event.data);
       break;
 

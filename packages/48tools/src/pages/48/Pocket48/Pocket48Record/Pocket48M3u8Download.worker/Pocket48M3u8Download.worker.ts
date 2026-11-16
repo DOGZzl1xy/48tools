@@ -19,6 +19,9 @@ import {
   type SegmentTimeline,
   type StreamTimeline
 } from './timeline';
+import DownloadMeter from '../../../../../custom/download/downloadMeter';
+import { createAudio, type AudioWorkerDeps } from '../../../../../custom/download/audioExtract';
+import type { ProgressStats } from '../../../../../custom/download/formatProgress';
 
 export type WorkerEventData = {
   ffmpeg: string;
@@ -26,6 +29,7 @@ export type WorkerEventData = {
   playStreamPath: string;
   filePath: string;
   qid?: string;
+  audioOnly?: boolean; // 只下载音频（custom/download/audioExtract）
 };
 
 type ProbePacket = {
@@ -76,13 +80,14 @@ let activeRequest: GotRequest | null = null;
 let activeTask: Promise<void> | null = null;
 let isStopped: boolean = false;
 
-function postProgress(qid: string | undefined, value: number): void {
+function postProgress(qid: string | undefined, value: number, stats: ProgressStats = {}): void {
   if (!qid) return;
 
   postMessage({
     type: 'progress',
     data: Math.min(100, Math.max(0, Number(value.toFixed(2)))),
-    qid
+    qid,
+    ...stats
   });
 }
 
@@ -287,7 +292,7 @@ async function probeSegment(ffprobe: string, file: string): Promise<SegmentProbe
   }
 }
 
-async function downloadSegment(uri: string, file: string): Promise<void> {
+async function downloadSegment(uri: string, file: string): Promise<number> {
   const url: URL = new URL(uri);
   const request: GotRequest = got.stream(uri, {
     headers: {
@@ -308,6 +313,8 @@ async function downloadSegment(uri: string, file: string): Promise<void> {
   if (fileStat.size === 0) {
     throw new Error(`TS分片下载为空：${ uri }`);
   }
+
+  return fileStat.size;
 }
 
 async function appendSegment(segmentFile: string, partFile: string, truncate: boolean): Promise<void> {
@@ -340,6 +347,7 @@ async function downloadParts(
   let audioFormat: AudioFormat | null = null;
   let hasAudio: boolean = false;
   let hasVideoWithoutAudio: boolean = false;
+  const meter: DownloadMeter = new DownloadMeter(segments);
 
   for (let index: number = 0; index < segments.length; index++) {
     if (isStopped) break;
@@ -347,7 +355,8 @@ async function downloadParts(
     const segment: HlsSegment = segments[index];
 
     try {
-      await downloadSegment(segment.uri, segmentFile);
+      const bytes: number = await downloadSegment(segment.uri, segmentFile);
+
       if (isStopped) break;
 
       const probeResult: SegmentProbeResult = await probeSegment(ffprobe, segmentFile);
@@ -368,7 +377,7 @@ async function downloadParts(
 
       await appendSegment(segmentFile, partFiles.at(-1) as string, startsNewPart);
       previousTimeline = timeline;
-      postProgress(qid, (index + 1) / segments.length * 90);
+      postProgress(qid, (index + 1) / segments.length * 90, meter.tick(index, bytes));
     } finally {
       await fsP.rm(segmentFile, { force: true });
     }
@@ -452,7 +461,7 @@ async function normalizeParts(
     }
 
     result.push({ filename: outputFilename, duration: await probeDuration(ffprobe, outputFile) });
-    postProgress(qid, 90 + (((index + 1) / partFiles.length) * 8));
+    postProgress(qid, 90 + (((index + 1) / partFiles.length) * 8), { stage: 'merge' });
   }
 
   return result;
@@ -514,7 +523,7 @@ async function createVideo(workerData: WorkerEventData, partsDir: string): Promi
     : mergedFile;
 
   await fsP.writeFile(concatFile, createGroupConcatFile(groupFiles), { encoding: 'utf8' });
-  postProgress(qid, 99);
+  postProgress(qid, 99, { stage: 'merge' });
   await runProcess(ffmpeg, [
     '-y',
     '-v', 'error',
@@ -564,6 +573,19 @@ function normalizeError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
 
+/* 只下载音频时，custom/download/audioExtract 用到的 worker 内部函数 */
+const audioDeps: AudioWorkerDeps = {
+  downloadSegment,
+  probeTimeline: async (ffprobe: string, file: string): Promise<SegmentTimeline> => (await probeSegment(ffprobe, file)).timeline,
+  getFFprobe,
+  runProcess,
+  postProgress,
+  isStopped: (): boolean => isStopped,
+  setActiveChild: (child: ChildProcessWithoutNullStreams | null): void => {
+    activeChild = child;
+  }
+};
+
 async function run(workerData: WorkerEventData): Promise<void> {
   let partsDir: string | null = null;
   let caughtError: Error | null = null;
@@ -571,7 +593,7 @@ async function run(workerData: WorkerEventData): Promise<void> {
   isStopped = false;
   try {
     partsDir = await fsP.mkdtemp(`${ workerData.filePath }.parts-`);
-    await createVideo(workerData, partsDir);
+    await (workerData.audioOnly ? createAudio(workerData, partsDir, audioDeps) : createVideo(workerData, partsDir));
   } catch (err) {
     caughtError = normalizeError(err);
   }

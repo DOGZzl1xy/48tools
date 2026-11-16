@@ -61,6 +61,11 @@ export const isMacOS = process.platform === 'darwin';
 export const isWindows = process.platform === 'win32';
 export const isArm64 = process.arch === 'arm64';
 
+/* Windows shell 的参数加引号 */
+function quoteWindowsArg(arg) {
+  return /[\s"&|<>^]/.test(arg) ? `"${ arg.replace(/"/g, '\\"') }"` : arg;
+}
+
 /**
  * 执行命令
  * @param { string } cmd - 命令
@@ -76,7 +81,10 @@ export function command(cmd, args, cwdPath) {
 
     if (isWindows) spawnOptions.shell = true;
 
-    const child = spawn(cmd, args, spawnOptions);
+    // Windows 下使用 shell 时传入拼好的命令字符串，避免 Node 的 DEP0190 弃用警告（shell: true 时不应再单独传 args）
+    const child = isWindows
+      ? spawn([cmd, ...args].map(quoteWindowsArg).join(' '), spawnOptions)
+      : spawn(cmd, args, spawnOptions);
 
     child.on('close', function(code) {
       resolve();

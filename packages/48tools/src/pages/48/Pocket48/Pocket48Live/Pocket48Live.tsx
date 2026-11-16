@@ -41,6 +41,7 @@ import {
   type Pocket48InitialState
 } from '../../reducers/pocket48';
 import { getFFmpeg, getFileTime, getFilePath } from '../../../../utils/utils';
+import { getPocket48Proxy } from '../../../../custom/pocket48Proxy/pocket48Proxy';
 import {
   netMediaServerInit,
   getNetMediaServerPort,
@@ -296,7 +297,8 @@ function Pocket48Live(props: {}): ReactElement {
         filePath: result.filePath,
         ffmpeg: getFFmpeg(),
         liveId: record.liveId,
-        roomId: resInfo.content.roomId
+        roomId: resInfo.content.roomId,
+        pocket48Proxy: getPocket48Proxy()
       });
 
       dispatch(setAddLiveChildList({

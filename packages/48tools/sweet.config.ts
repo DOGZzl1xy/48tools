@@ -91,6 +91,25 @@ const externalsName: Array<string> = nodeModules([
   'playwright-core'
 ]);
 
+/**
+ * webpack 5 中 [hash] 已弃用（会打印 DEP_WEBPACK_TEMPLATE_PATH_PLUGIN_REPLACE_PATH_VARIABLES_HASH），
+ * DLL 的配置来自 @sweet-milktea/milktea，这里把它改成 [fullhash]。其他配置不变（返回 undefined 表示不修改）。
+ */
+function fixDllHashDeprecation(webpackConfig: Record<string, any>): Record<string, any> | undefined {
+  const library: Record<string, any> | undefined = webpackConfig?.output?.library;
+
+  if (typeof library?.name !== 'string' || !library.name.includes('[hash')) return;
+
+  library.name = library.name.replace('[hash', '[fullhash');
+
+  for (const plugin of webpackConfig.plugins ?? []) {
+    if (plugin instanceof webpack.DllPlugin && typeof plugin.options?.name === 'string') {
+      plugin.options.name = plugin.options.name.replace('[hash', '[fullhash');
+    }
+  }
+
+  return webpackConfig;
+}
 export default function(info: Record<string, any>): Record<string, any> {
   const plugins: Array<PluginItem> = [
     ['@babel/plugin-syntax-import-attributes', { deprecatedAssertSyntax: true }],
@@ -213,6 +232,8 @@ export default function(info: Record<string, any>): Record<string, any> {
   if (!isDev && buildSourcemap) {
     config.devtool = 'source-map';
   }
+
+  config.modifyWebpackConfig = fixDllHashDeprecation;
 
   return config;
 }

@@ -1,5 +1,6 @@
 // @ts-expect-error
-import got, { type Response as GotResponse } from 'got';
+import type { Response as GotResponse } from 'got';
+import got from '../../../custom/pocket48Proxy/pocket48Got'; // 口袋48接口走代理、默认 20 秒超时
 import { createHeaders } from '../../../utils/snh48';
 import type { SMSResult, LoginUserInfo, IMUserInfo, UserInfoReloadOrSwitch, UserMoney } from './interface';
 

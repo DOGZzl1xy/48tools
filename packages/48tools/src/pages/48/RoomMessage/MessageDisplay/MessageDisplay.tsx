@@ -1,5 +1,5 @@
 import { setTimeout, clearTimeout } from 'node:timers';
-import { shell } from 'electron';
+import { safeOpenExternal } from '../../../../custom/security/safeOpenExternal';
 import {
   useState,
   useEffect,
@@ -36,7 +36,7 @@ const VirtualItemClassName: string = 'Virtual-Item-1';
 
 // 打开网站
 function handleOpenFileClick(event: MouseEvent<HTMLAnchorElement>): void {
-  shell.openExternal(event.target['getAttribute']('data-href'));
+  safeOpenExternal(event.target['getAttribute']('data-href'));
 }
 
 // 链接的无障碍

@@ -5,7 +5,6 @@ package-lock.json
 pnpm-lock.yaml
 
 # yarn
-yarn.lock
 yarn-error.log
 .yarnrc
 .yarn/*
@@ -34,3 +33,5 @@ node-nim-cache0
 docker/*.zip
 docker/48tools-**/*
 docker/48tools/**/*
+# 本机私有配置（口袋48代理节点、登录token等），不提交
+/local/

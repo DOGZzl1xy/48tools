@@ -8,6 +8,7 @@ import classNames from 'classnames';
 import commonStyle from '../../../../common.sass';
 import { showOpenDialog } from '../../../../utils/remote/dialog';
 import ButtonLink from '../../../../components/ButtonLink/ButtonLink';
+import { backButtonProps } from '../../../../custom/theme/backButton';
 import { IDBGetPocket48LiveOptions, IDBSavePocket48LiveOptions } from '../../reducers/pocket48';
 import type { Pocket48LiveAutoGrabOptions } from '../../types';
 
@@ -88,7 +89,7 @@ function LiveOptions(props: {}): ReactElement {
           <Button onClick={ handleChangeDirClick }>选择目录</Button>
         </Form.Item>
         <Space.Compact>
-          <ButtonLink linkProps={{ to: '/48/Pocket48Live' }} buttonProps={{ type: 'primary', danger: true }}>返回</ButtonLink>
+          <ButtonLink linkProps={{ to: '/48/Pocket48Live' }} buttonProps={ backButtonProps }>返回</ButtonLink>
           <Button type="primary" htmlType="submit">保存</Button>
         </Space.Compact>
       </Form>

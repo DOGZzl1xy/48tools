@@ -5,6 +5,8 @@ import { themeEvent, type ThemeValue } from './themeChange.mjs';
 import { getStore } from '../store.mjs';
 import { commandLineOptions } from '../commend.mjs';
 import { WinIpcChannel } from '../channelEnum.js';
+import { guardAppWebContents } from '../custom/windowGuards.mjs';
+import { registerDevShortcuts } from '../custom/devShortcuts.mjs';
 
 /* 记录id和窗口的关系 */
 export const playerWindowMaps: Map<string, BrowserWindow> = new Map();
@@ -49,6 +51,9 @@ function open(title: string, query: string): void {
     icon: titleBarIcon,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#000000' : undefined
   });
+
+  guardAppWebContents(win.webContents);
+  isDevelopment && registerDevShortcuts(win.webContents);
 
   // initialState
   const initialStateQs: string = createInitialState({

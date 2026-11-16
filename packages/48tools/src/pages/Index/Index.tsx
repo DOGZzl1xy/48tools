@@ -13,6 +13,8 @@ import commonStyle from '../../common.sass';
 import ButtonLink from '../../components/ButtonLink/ButtonLink';
 import FFmpegOption from './FFmpegOption/FFmpegOption';
 import ExecutablePath from './ExecutablePath/ExecutablePath';
+import Pocket48ProxyOption from '../../custom/pocket48Proxy/Pocket48ProxyOption';
+import { groupNavItems, navTileButtonProps, NavSection, type NavGroup } from '../../custom/home/navGroups';
 import NewUserTour from './NewUserTour/NewUserTour';
 import ThemeContext, { type Theme } from '../../components/basic/Theme/ThemeContext';
 import { useAppDataDir, type UseAppDataDirReturnType } from '../../functionalComponents/Pocket48Login/useAppDataDir/useAppDataDir';
@@ -212,8 +214,10 @@ const navLinkConfig: Array<Array<NativeItem>> = [
 function nativeRender(): Array<ReactNode> {
   const element: Array<ReactElement> = [];
 
-  for (let i: number = 0, j: number = navLinkConfig.length; i < j; i++) {
-    const group: Array<NativeItem> = navLinkConfig[i];
+  const navGroups: Array<NavGroup<NativeItem>> = groupNavItems(navLinkConfig.flat());
+
+  for (let i: number = 0, j: number = navGroups.length; i < j; i++) {
+    const group: Array<NativeItem> = navGroups[i].items;
     const groupElement: Array<ReactElement> = [];
 
     for (const navItem of group) {
@@ -223,6 +227,7 @@ function nativeRender(): Array<ReactNode> {
             className: navItem.hBtn ? 'overflow-hidden' : undefined,
             icon: navItem.icon,
             block: true,
+            ...navTileButtonProps,
             'data-test-id': navItem.testId
           }}
         >
@@ -239,13 +244,10 @@ function nativeRender(): Array<ReactNode> {
       groupElement.push(<div key={ typeof navItem.name === 'string' ? navItem.name : navItem.key }>{ buttonLinkElement }</div>);
     }
 
-    element.push(
-      <nav key={ `nav-${ i }` } className="grid grid-cols-4 gap-[16px] w-[800px]">
-        { groupElement }
-      </nav>,
-      <Divider key={ `driver-${ i }` } className="my-[12px]" />
-    );
+    element.push(<NavSection key={ `nav-${ i }` } title={ navGroups[i].title }>{ groupElement }</NavSection>);
   }
+
+  element.push(<Divider key="nav-divider" className="mt-[2px] mb-[16px]" />);
 
   return element;
 }
@@ -285,6 +287,7 @@ function Index(props: {}): ReactElement {
               <FFmpegOption />
               { buttonRender() }
               <ExecutablePath />
+              <Pocket48ProxyOption />
             </Space>
           </div>
           <div className="text-right">

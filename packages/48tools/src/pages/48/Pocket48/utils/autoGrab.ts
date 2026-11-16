@@ -13,6 +13,7 @@ import getDownloadAndTranscodingWorker from './DownloadAndTranscodingWorker/getD
 import { store } from '../../../../store/store';
 import { setLiveList, setDeleteLiveChildList, setAddLiveChildList, type Pocket48InitialState } from '../../reducers/pocket48';
 import { getFFmpeg, fileTimeFormat, getFilePath } from '../../../../utils/utils';
+import { getPocket48Proxy } from '../../../../custom/pocket48Proxy/pocket48Proxy';
 import Pocket48LiveRender from './Pocket48LiveRender';
 import type { MessageEventData, LiveStatusEventData, WebWorkerChildItem } from '../../../../commonTypes';
 
@@ -69,7 +70,8 @@ function download(args: DownloadArgs): void {
     filePath,
     ffmpeg: getFFmpeg(),
     liveId: item.liveId,
-    roomId: resInfo.content.roomId
+    roomId: resInfo.content.roomId,
+    pocket48Proxy: getPocket48Proxy()
   });
 
   dispatch(setAddLiveChildList({

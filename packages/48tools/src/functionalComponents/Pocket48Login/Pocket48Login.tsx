@@ -39,6 +39,7 @@ import style from './pocket48Login.sass';
 import { pick, omit } from '../../utils/lodash';
 import { setUserInfo, setClearInfo } from './reducers/pocket48Login';
 import { source } from '../../utils/snh48';
+import { getPocket48LocalConfig } from '../../custom/pocket48Proxy/pocket48Proxy';
 import LoginForm from './LoginForm/LoginForm';
 import TokenForm from './TokenForm/TokenForm';
 import { useAppDataDir, title, type UseAppDataDirReturnType } from './useAppDataDir/useAppDataDir';
@@ -100,7 +101,9 @@ function Pocket48Login(props: Pocket48LoginProps): ReactElement {
     navigate: NavigateFunction = useNavigate();
   const { message: messageApi, modal: modalApi }: useAppProps = App.useApp();
   const [open, setOpen]: [boolean, D<S<boolean>>] = useState(false);
-  const [tabsKey, setTabsKey]: [string, D<S<string>>] = useState('loginForm');
+  // local/pocket48.json 里有 token 时，默认打开「Token登录」
+  const defaultTabsKey: string = getPocket48LocalConfig().token ? 'tokenForm' : 'loginForm';
+  const [tabsKey, setTabsKey]: [string, D<S<string>>] = useState(defaultTabsKey);
   const userInfoSelectValueRef: RefObject<string | null> = useRef(null);
   const [loginForm]: [FormInstance] = Form.useForm();
   const [tokenForm]: [FormInstance] = Form.useForm();
@@ -285,7 +288,7 @@ function Pocket48Login(props: Pocket48LoginProps): ReactElement {
   function afterClose(): void {
     loginForm.resetFields();
     tokenForm.resetFields();
-    setTabsKey('loginForm');
+    setTabsKey(defaultTabsKey);
   }
 
   // menu的选择

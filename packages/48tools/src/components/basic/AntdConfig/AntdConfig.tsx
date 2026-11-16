@@ -1,9 +1,8 @@
 import { use, type ReactElement, type PropsWithChildren } from 'react';
 import { ConfigProvider, App } from 'antd';
-import darkDerivative from 'antd/es/theme/themes/dark/index';
 import zhCN from 'antd/locale/zh_CN';
-import { cyan } from '@ant-design/colors';
 import ThemeContext, { type Theme } from '../Theme/ThemeContext';
+import { createModernTheme } from '../../../custom/theme/modernTheme';
 
 /* antd ConfigProvider */
 function AntdConfig(props: Required<PropsWithChildren>): ReactElement {
@@ -11,12 +10,7 @@ function AntdConfig(props: Required<PropsWithChildren>): ReactElement {
 
   return (
     <ConfigProvider locale={ zhCN }
-      theme={{
-        token: {
-          colorPrimary: cyan.primary
-        },
-        algorithm: isDark ? darkDerivative : undefined
-      }}
+      theme={ createModernTheme(isDark) }
     >
       <App component={ false }>
         { props.children }

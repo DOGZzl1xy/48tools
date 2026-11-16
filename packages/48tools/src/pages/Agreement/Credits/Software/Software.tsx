@@ -1,4 +1,4 @@
-import { shell } from 'electron';
+import { safeOpenExternal } from '../../../../custom/security/safeOpenExternal';
 import { useMemo, type ReactElement, type MouseEvent } from 'react';
 import { Typography, type TypographyProps } from 'antd';
 import * as softwareList from './softwareList.json' assert { type: 'json' };
@@ -8,7 +8,7 @@ const { Paragraph, Text }: TypographyProps = Typography;
 
 // 打开许可证网站
 function handleOpenWebsiteClick(event: MouseEvent<HTMLAnchorElement>): void {
-  shell.openExternal(event.target['getAttribute']('data-href')!);
+  safeOpenExternal(event.target['getAttribute']('data-href'));
 }
 
 /* 软件列表 */

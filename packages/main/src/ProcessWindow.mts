@@ -12,6 +12,8 @@ import { nodeNimCleanup, nodeNimHandleLogin } from './ipcHandle/nodeNimHandleLog
 import helpHandle from './ipcHandle/helpHandle.mjs';
 import { nodeMediaServerClose } from './nodeMediaServer/nodeMediaServer.mjs';
 import type { ThemeValue } from './ipcListener/themeChange.mjs';
+import { guardAppWebContents } from './custom/windowGuards.mjs';
+import { registerDevShortcuts } from './custom/devShortcuts.mjs';
 
 export let processWindow: BrowserWindow | null = null;
 
@@ -56,6 +58,9 @@ export function createWindow(): void {
   if (isDevelopment && !isTest) {
     processWindow.webContents.openDevTools();
   }
+
+  guardAppWebContents(processWindow.webContents);
+  isDevelopment && registerDevShortcuts(processWindow.webContents);
 
   // initialState
   const initialStateQs: string = createInitialState({

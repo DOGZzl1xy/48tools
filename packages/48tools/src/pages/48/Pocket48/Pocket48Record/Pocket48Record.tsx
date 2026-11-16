@@ -54,7 +54,9 @@ import { engineUserAgent } from '../../../../utils/snh48';
 import downloadImages from '../Pocket48Live/downloadImages/downloadImages';
 import { getProxyServerPort, proxyServerInit } from '../../../../utils/proxyServer/proxyServer';
 import { pick } from '../../../../utils/lodash';
-import { ProgressNative, type ProgressSet } from '../../../../components/ProgressNative/index';
+import type { ProgressSet } from '../../../../components/ProgressNative/index';
+import ProgressDetail from '../../../../custom/download/ProgressDetail';
+import { recordListErrorText, recordListFailText } from '../../../../custom/pocket48Record/recordListError';
 import { useReqRoomIdQuery, type ReqRoomId } from '../../reducers/pocketFriends.api';
 import LiveType from '../../components/LiveType/LiveType';
 import type { MessageEventData } from '../../../../utils/worker/FFmpegDownload.worker/FFmpegDownload.worker';
@@ -262,8 +264,14 @@ function Pocket48Record(props: {}): ReactElement {
    * @param { LiveInfo } record
    * @param { 0 | 1 } downloadType - 下载方式。0：正常下载，1：拼碎片
    * @param { MouseEvent<HTMLButtonElement> } event
+   * @param { boolean } [audioOnly = false] - 只下载音频（custom/download/audioExtract）
    */
-  async function handleDownloadM3u8Click(record: LiveInfo, downloadType: 0 | 1, event: MouseEvent): Promise<void> {
+  async function handleDownloadM3u8Click(
+    record: LiveInfo,
+    downloadType: 0 | 1,
+    event: MouseEvent,
+    audioOnly: boolean = false
+  ): Promise<void> {
     try {
       const resInfo: LiveRoomInfo = await requestLiveRoomInfo(record.liveId);
       const url: URL = new URL(resInfo.content.playStreamPath);
@@ -272,10 +280,11 @@ function Pocket48Record(props: {}): ReactElement {
 
       const result: SaveDialogReturnValue = await showSaveDialog({
         defaultPath: getFilePath({
-          typeTitle: '口袋48录播',
+          typeTitle: audioOnly ? '口袋48录播音频' : '口袋48录播',
           infoArray: [record.userInfo.nickname, record.title, getFileTime(record.ctime), record.liveId],
-          ext: isM3u8 ? '.ts' : parseResult.ext
-        })
+          ext: audioOnly ? '.m4a' : (isM3u8 ? '.ts' : parseResult.ext)
+        }),
+        filters: audioOnly ? [{ name: '音频', extensions: ['m4a', 'aac'] }] : undefined
       });
 
       if (result.canceled || !result.filePath) return;
@@ -320,8 +329,11 @@ function Pocket48Record(props: {}): ReactElement {
         if (type === 'close' || type === 'error') {
           requestIdleID !== null && cancelIdleCallback(requestIdleID);
 
+          // 清理下载用的中间 m3u8 文件
+          if (isM3u8 && downloadType === 0) fsP.rm(downloadFile, { force: true }).catch((): void => undefined);
+
           if (type === 'error') {
-            messageApi.error(`视频：${ record.title } 下载失败！`);
+            messageApi.error(`${ audioOnly ? '音频' : '视频' }：${ record.title } 下载失败！`);
           }
 
           worker.terminate();
@@ -335,7 +347,8 @@ function Pocket48Record(props: {}): ReactElement {
         filePath: result.filePath,
         ffmpeg: getFFmpeg(),
         protocolWhitelist: isM3u8,
-        qid: record.liveId
+        qid: record.liveId,
+        audioOnly
       });
 
       dispatch(setAddRecordChildList({
@@ -386,6 +399,13 @@ function Pocket48Record(props: {}): ReactElement {
       try {
         const { groupId, userId }: { groupId?: number | 'all'; userId?: string | number | undefined } = form.getFieldsValue();
         const res: LiveData = await requestLiveList(recordNext, false, groupId, userId);
+
+        if (!res.success || !res.content) {
+          messageApi.error(recordListFailText(res.message));
+
+          return;
+        }
+
         const data: Array<LiveInfo> = recordList.concat(res.content.liveList);
 
         dispatch(setRecordList({
@@ -393,7 +413,7 @@ function Pocket48Record(props: {}): ReactElement {
           data
         }));
       } catch (err) {
-        messageApi.error('录播列表加载失败！');
+        messageApi.error(recordListErrorText(err));
         console.error(err);
       }
     });
@@ -406,12 +426,18 @@ function Pocket48Record(props: {}): ReactElement {
         const { groupId, userId }: { groupId?: number | 'all'; userId?: string | number | undefined } = form.getFieldsValue();
         const res: LiveData = await requestLiveList('0', false, groupId, userId);
 
+        if (!res.success || !res.content) {
+          messageApi.error(recordListFailText(res.message));
+
+          return;
+        }
+
         dispatch(setRecordList({
           next: res.content.next,
           data: res.content.liveList
         }));
       } catch (err) {
-        messageApi.error('录播列表加载失败！');
+        messageApi.error(recordListErrorText(err));
         console.error(err);
       }
     });
@@ -447,7 +473,7 @@ function Pocket48Record(props: {}): ReactElement {
           (o: RecordVideoDownloadWebWorkerItem): boolean => o.id === record.liveId);
 
         if (inDownload) {
-          return <ProgressNative progressSet={ progress[value] } />;
+          return <ProgressDetail progressSet={ progress[value] } />;
         } else {
           return idx >= 0 ? '准备中' : '未下载';
         }
@@ -491,6 +517,12 @@ function Pocket48Record(props: {}): ReactElement {
                         handleDownloadM3u8Click(record, 0, event)
                     }>
                       下载视频
+                    </Button>
+                    <Button onClick={
+                      (event: MouseEvent): Promise<void> =>
+                        handleDownloadM3u8Click(record, 0, event, true)
+                    }>
+                      下载音频
                     </Button>
                     <Button onClick={ (event: MouseEvent): Promise<void> => handleDownloadM3u8Click(record, 1, event) }>
                       备用方案下载

@@ -79,7 +79,6 @@ function FFmpegOption(props: {}): ReactElement {
         <HelpButtonGroup navId="ffmpeg-option">
           <Button type="primary"
             id="ffmpeg-options"
-            danger={ true }
             icon={ IconFFmpeg }
             onClick={ handleOpenFFmpegOptionClick }
           >

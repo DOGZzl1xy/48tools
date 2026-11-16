@@ -2,6 +2,7 @@ import type { ReactElement } from 'react';
 import { Form, Input, type FormInstance } from 'antd';
 import type { Rule } from 'rc-field-form/es/interface';
 import style from './tokenForm.sass';
+import { getPocket48LocalConfig } from '../../../custom/pocket48Proxy/pocket48Proxy';
 
 const rules: Array<Rule> = [
   { required: true, message: '请输入Token', whitespace: false },
@@ -25,7 +26,8 @@ function TokenForm(props: { form: FormInstance }): ReactElement {
   const form: FormInstance = props.form;
 
   return (
-    <Form form={ form }>
+    // local/pocket48.json 里有 token 时自动填入
+    <Form form={ form } initialValues={{ token: getPocket48LocalConfig().token }}>
       <Form.Item name="token" rules={ rules }>
         <Input.TextArea className={ style.textarea } rows={ 5 } placeholder="将Token粘贴到这里" />
       </Form.Item>
