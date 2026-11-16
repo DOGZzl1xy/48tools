@@ -1,6 +1,7 @@
 import { Pocket48Login } from '../functionalComponents/Pocket48Login/enum';
 import init, { __x6c2adf8__ } from '../pages/48/sdk/rust-wasm.js';
 import type { UserInfoString, UserInfo } from '../functionalComponents/Pocket48Login/types';
+import { pocket48AppInfo, pocket48UserAgent, pocket48ExtraHeaders } from '../custom/pocket48Headers/pocket48ClientInfo';
 
 // app端口袋48ua
 export const engineUserAgent: string = 'SNH48 ENGINE';
@@ -41,19 +42,11 @@ const $__x6c2adf8__: () => Promise<string> = (function(): () => Promise<string> 
 export async function createHeaders(token?: string | undefined, pa?: boolean): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json;charset=utf-8',
-    appInfo: JSON.stringify({
-      vendor: 'apple',
-      deviceId: `${ rStr(8) }-${ rStr(4) }-${ rStr(4) }-${ rStr(4) }-${ rStr(12) }`,
-      appVersion: '7.0.4',
-      appBuild: '23011601',
-      osVersion: '16.3.1',
-      osType: 'ios',
-      deviceName: 'iPhone XR',
-      os: 'ios'
-    }),
-    'User-Agent': appUserAgent,
+    appInfo: pocket48AppInfo(), // 和抓包的 7.1.48 客户端一致，设备 ID 本机固定
+    'User-Agent': pocket48UserAgent,
     'Accept-Language': 'zh-Hans-AW;q=1',
-    Host: 'pocketapi.48.cn'
+    Host: 'pocketapi.48.cn',
+    ...pocket48ExtraHeaders
   };
 
   if (token) {

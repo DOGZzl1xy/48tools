@@ -11,6 +11,7 @@
 | --- | --- | --- |
 | 口袋48接口走代理、接口默认 20 秒超时 | `pocket48Proxy/pocket48Got.ts`、`pocket48Proxy/pocket48Proxy.ts` | `services/48/index.ts`、`services/48/login/index.ts`：`got` 换成 `pocket48Got` |
 | 直播录制断线重连也走代理 | `pocket48Proxy/pocket48Proxy.ts` | `Pocket48Live.tsx`、`utils/autoGrab.ts` 传 `pocket48Proxy`；两个直播下载 worker 调 `setPocket48ProxyForWorker` |
+| 请求头模拟 iOS 口袋48 7.1.48，设备 ID 本机固定 | `pocket48Headers/pocket48ClientInfo.ts` | `utils/snh48.ts` 的 `createHeaders` |
 | 首页「口袋48代理」设置 | `pocket48Proxy/Pocket48ProxyOption.tsx` | `pages/Index/Index.tsx` |
 | 登录弹窗自动填入 `local/pocket48.json` 的 token | `pocket48Proxy/pocket48Proxy.ts` | `Pocket48Login.tsx`、`TokenForm.tsx` |
 | 录播列表加载失败提示（403 等） | `pocket48Record/recordListError.ts` | `Pocket48Record.tsx` |
