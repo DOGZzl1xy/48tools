@@ -17,6 +17,7 @@
 | 录播列表加载失败提示（403 等） | `pocket48Record/recordListError.ts` | `Pocket48Record.tsx` |
 | 下载速度、剩余时间、进度条 | `download/downloadMeter.ts`、`download/formatProgress.ts`、`download/ffmpegStats.ts`、`download/ProgressDetailSet.ts`、`download/ProgressDetail.tsx` | `Pocket48M3u8Download.worker.ts`、`FFmpegDownload.worker.ts`、`reducers/pocket48.ts`、`Pocket48Record.tsx` |
 | 分片下载失败自动重试（最多 5 次）、卡住 30 秒自动断开重试 | `download/segmentRetry.ts` | `Pocket48M3u8Download.worker.ts` 的 `downloadSegment`（超时）和 `downloadSegmentWithRetry` |
+| 分片并行下载（同时 4 个，按顺序处理），停止时取消所有请求 | `download/segmentPrefetcher.ts` | `Pocket48M3u8Download.worker.ts` 的 `downloadParts`、`downloadSegment`（登记请求）、`run`、`stop`；`download/audioExtract.ts` |
 | 只下载音频（边下载边提取 AAC，保存为 m4a） | `download/audioExtract.ts` | `Pocket48M3u8Download.worker.ts`（`audioOnly`）、`FFmpegDownload.worker.ts`（`audioOnly`）、`Pocket48Record.tsx`（按钮） |
 | 现代化主题 | `theme/modernTheme.ts` | `components/basic/AntdConfig/AntdConfig.tsx`；暗黑背景色同步改在 `components/basic/Theme/stylesheet.pug` |
 | 统一的「返回」按钮 | `theme/backButton.tsx` | `components/Header/Header.tsx`、`LiveOptions.tsx`、`Agreement.tsx` |

@@ -10,6 +10,7 @@ import {
   type SegmentTimeline
 } from '../../pages/48/Pocket48/Pocket48Record/Pocket48M3u8Download.worker/timeline';
 import DownloadMeter from './downloadMeter';
+import { SegmentPrefetcher } from './segmentPrefetcher';
 import type { ProgressStats } from './formatProgress';
 
 /**
@@ -25,7 +26,8 @@ export interface AudioWorkerData {
 }
 
 export interface AudioWorkerDeps {
-  downloadSegment(uri: string, file: string, label?: string, onRetry?: (attempt: number) => void): Promise<number>; // 返回分片大小，失败会重试
+  // 返回分片大小，失败会重试；signal 中止后不再重试
+  downloadSegment(uri: string, file: string, label?: string, onRetry?: (attempt: number) => void, signal?: AbortSignal): Promise<number>;
   probeTimeline(ffprobe: string, file: string): Promise<SegmentTimeline>;
   getFFprobe(ffmpeg: string): string;
   runProcess(command: string, args: Array<string>): Promise<void>;
@@ -129,6 +131,10 @@ export async function createAudio(workerData: AudioWorkerData, workDir: string, 
   const segmentFile: string = path.join(workDir, '_current_segment.ts');
   const output: fs.WriteStream = fs.createWriteStream(aacFile);
   const meter: DownloadMeter = new DownloadMeter(segments);
+  const prefetcher: SegmentPrefetcher = new SegmentPrefetcher(segments.length, workDir, // 并行下载，按顺序提取音频
+    (i: number, file: string, signal: AbortSignal): Promise<number> => deps.downloadSegment(segments[i].uri, file,
+      `第 ${ i + 1 }/${ segments.length } 个分片`,
+      (attempt: number): void => deps.postProgress(qid, i / segments.length * 98, { stage: 'retry', retry: attempt }), signal));
   let extractor: AudioExtractor | null = null;
   let previousTimeline: SegmentTimeline | null = null;
   let hasAudio: boolean = false;
@@ -140,8 +146,7 @@ export async function createAudio(workerData: AudioWorkerData, workDir: string, 
       const segment: HlsSegment = segments[index];
 
       try {
-        const bytes: number = await deps.downloadSegment(segment.uri, segmentFile, `第 ${ index + 1 }/${ segments.length } 个分片`,
-          (attempt: number): void => deps.postProgress(qid, index / segments.length * 98, { stage: 'retry', retry: attempt }));
+        const bytes: number = await prefetcher.take(index, segmentFile);
 
         if (deps.isStopped()) break;
 
@@ -176,6 +181,7 @@ export async function createAudio(workerData: AudioWorkerData, workDir: string, 
       extractor = null;
     }
   } finally {
+    await prefetcher.close();
     extractor?.child.kill('SIGTERM');
     deps.setActiveChild(null);
     await new Promise<void>((resolve: () => void): void => {

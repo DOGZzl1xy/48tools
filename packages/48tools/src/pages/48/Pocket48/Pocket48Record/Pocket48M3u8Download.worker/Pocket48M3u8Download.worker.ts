@@ -23,6 +23,7 @@ import DownloadMeter from '../../../../../custom/download/downloadMeter';
 import { createAudio, type AudioWorkerDeps } from '../../../../../custom/download/audioExtract';
 import type { ProgressStats } from '../../../../../custom/download/formatProgress';
 import { SEGMENT_TIMEOUT, withRetry } from '../../../../../custom/download/segmentRetry';
+import { SegmentPrefetcher, trackSegmentRequest, abortSegmentRequests, closeSegmentPrefetchers } from '../../../../../custom/download/segmentPrefetcher';
 
 export type WorkerEventData = {
   ffmpeg: string;
@@ -304,6 +305,7 @@ async function downloadSegment(uri: string, file: string): Promise<number> {
   });
 
   activeRequest = request;
+  trackSegmentRequest(request); // 并行下载时停止要取消所有请求
   try {
     await pipeline(request, fs.createWriteStream(file));
   } finally {
@@ -324,11 +326,12 @@ function downloadSegmentWithRetry(
   uri: string,
   file: string,
   label?: string,
-  onRetry?: (attempt: number) => void
+  onRetry?: (attempt: number) => void,
+  signal?: AbortSignal
 ): Promise<number> {
   return withRetry((): Promise<number> => downloadSegment(uri, file), {
     label,
-    isStopped: (): boolean => isStopped,
+    isStopped: (): boolean => isStopped || Boolean(signal?.aborted),
     onRetry
   });
 }
@@ -364,6 +367,10 @@ async function downloadParts(
   let hasAudio: boolean = false;
   let hasVideoWithoutAudio: boolean = false;
   const meter: DownloadMeter = new DownloadMeter(segments);
+  const prefetcher: SegmentPrefetcher = new SegmentPrefetcher(segments.length, workDir, // 并行下载，按顺序处理
+    (i: number, file: string, signal: AbortSignal): Promise<number> => downloadSegmentWithRetry(segments[i].uri, file,
+      `第 ${ i + 1 }/${ segments.length } 个分片`,
+      (attempt: number): void => postProgress(qid, i / segments.length * 90, { stage: 'retry', retry: attempt }), signal));
 
   for (let index: number = 0; index < segments.length; index++) {
     if (isStopped) break;
@@ -371,8 +378,7 @@ async function downloadParts(
     const segment: HlsSegment = segments[index];
 
     try {
-      const bytes: number = await downloadSegmentWithRetry(segment.uri, segmentFile, `第 ${ index + 1 }/${ segments.length } 个分片`,
-        (attempt: number): void => postProgress(qid, index / segments.length * 90, { stage: 'retry', retry: attempt }));
+      const bytes: number = await prefetcher.take(index, segmentFile);
 
       if (isStopped) break;
 
@@ -615,6 +621,8 @@ async function run(workerData: WorkerEventData): Promise<void> {
     caughtError = normalizeError(err);
   }
 
+  await closeSegmentPrefetchers();
+
   if (partsDir) {
     try {
       await fsP.rm(partsDir, { force: true, recursive: true });
@@ -636,6 +644,7 @@ function stop(): void {
     activeRequest?.destroy();
   } catch { /**/ }
   activeRequest = null;
+  abortSegmentRequests();
   activeChild?.kill('SIGTERM');
 }
 
