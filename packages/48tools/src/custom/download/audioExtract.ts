@@ -25,7 +25,7 @@ export interface AudioWorkerData {
 }
 
 export interface AudioWorkerDeps {
-  downloadSegment(uri: string, file: string): Promise<number>; // 返回分片大小
+  downloadSegment(uri: string, file: string, label?: string, onRetry?: (attempt: number) => void): Promise<number>; // 返回分片大小，失败会重试
   probeTimeline(ffprobe: string, file: string): Promise<SegmentTimeline>;
   getFFprobe(ffmpeg: string): string;
   runProcess(command: string, args: Array<string>): Promise<void>;
@@ -140,7 +140,8 @@ export async function createAudio(workerData: AudioWorkerData, workDir: string, 
       const segment: HlsSegment = segments[index];
 
       try {
-        const bytes: number = await deps.downloadSegment(segment.uri, segmentFile);
+        const bytes: number = await deps.downloadSegment(segment.uri, segmentFile, `第 ${ index + 1 }/${ segments.length } 个分片`,
+          (attempt: number): void => deps.postProgress(qid, index / segments.length * 98, { stage: 'retry', retry: attempt }));
 
         if (deps.isStopped()) break;
 

@@ -333,7 +333,8 @@ function Pocket48Record(props: {}): ReactElement {
           if (isM3u8 && downloadType === 0) fsP.rm(downloadFile, { force: true }).catch((): void => undefined);
 
           if (type === 'error') {
-            messageApi.error(`${ audioOnly ? '音频' : '视频' }：${ record.title } 下载失败！`);
+            messageApi.error(`${ audioOnly ? '音频' : '视频' }：${ record.title } 下载失败！${
+              workerEvent.data.type === 'error' ? workerEvent.data.error?.message ?? '' : '' }`);
           }
 
           worker.terminate();

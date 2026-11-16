@@ -22,6 +22,7 @@ import {
 import DownloadMeter from '../../../../../custom/download/downloadMeter';
 import { createAudio, type AudioWorkerDeps } from '../../../../../custom/download/audioExtract';
 import type { ProgressStats } from '../../../../../custom/download/formatProgress';
+import { SEGMENT_TIMEOUT, withRetry } from '../../../../../custom/download/segmentRetry';
 
 export type WorkerEventData = {
   ffmpeg: string;
@@ -298,7 +299,8 @@ async function downloadSegment(uri: string, file: string): Promise<number> {
     headers: {
       'Host': url.hostname,
       'User-Agent': 'SNH48 ENGINE'
-    }
+    },
+    timeout: SEGMENT_TIMEOUT // 卡住时断开，交给 downloadSegmentWithRetry 重试
   });
 
   activeRequest = request;
@@ -315,6 +317,20 @@ async function downloadSegment(uri: string, file: string): Promise<number> {
   }
 
   return fileStat.size;
+}
+
+/* 分片下载失败时重试（custom/download/segmentRetry） */
+function downloadSegmentWithRetry(
+  uri: string,
+  file: string,
+  label?: string,
+  onRetry?: (attempt: number) => void
+): Promise<number> {
+  return withRetry((): Promise<number> => downloadSegment(uri, file), {
+    label,
+    isStopped: (): boolean => isStopped,
+    onRetry
+  });
 }
 
 async function appendSegment(segmentFile: string, partFile: string, truncate: boolean): Promise<void> {
@@ -355,7 +371,8 @@ async function downloadParts(
     const segment: HlsSegment = segments[index];
 
     try {
-      const bytes: number = await downloadSegment(segment.uri, segmentFile);
+      const bytes: number = await downloadSegmentWithRetry(segment.uri, segmentFile, `第 ${ index + 1 }/${ segments.length } 个分片`,
+        (attempt: number): void => postProgress(qid, index / segments.length * 90, { stage: 'retry', retry: attempt }));
 
       if (isStopped) break;
 
@@ -575,7 +592,7 @@ function normalizeError(err: unknown): Error {
 
 /* 只下载音频时，custom/download/audioExtract 用到的 worker 内部函数 */
 const audioDeps: AudioWorkerDeps = {
-  downloadSegment,
+  downloadSegment: downloadSegmentWithRetry,
   probeTimeline: async (ffprobe: string, file: string): Promise<SegmentTimeline> => (await probeSegment(ffprobe, file)).timeline,
   getFFprobe,
   runProcess,

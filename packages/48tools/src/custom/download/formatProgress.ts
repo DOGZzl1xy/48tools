@@ -3,7 +3,8 @@ export interface ProgressStats {
   speed?: number;      // 字节/秒
   eta?: number;        // 秒
   downloaded?: number; // 字节
-  stage?: 'download' | 'merge' | 'audio';
+  stage?: 'download' | 'merge' | 'audio' | 'retry';
+  retry?: number;      // 第几次重试
 }
 
 /* 格式化字节数 */
@@ -41,6 +42,8 @@ export function formatProgressDetail(stats: ProgressStats): string {
   if (stats.stage === 'merge') return '下载完成，正在合并分段…';
 
   if (stats.stage === 'audio') return '下载完成，正在封装音频…';
+
+  if (stats.stage === 'retry') return `网络波动，正在重试（第 ${ stats.retry ?? 1 } 次）…`;
 
   const parts: Array<string> = [];
 
