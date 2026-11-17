@@ -35,32 +35,41 @@ function isBlank(value: string | null | undefined): boolean {
   return value === null || value === undefined || /^\s*$/.test(value);
 }
 
-/* 从启动目录往上查找 local/pocket48.json */
+/* 从启动目录往上找 local/pocket48.json */
+function findLocalConfigFile(): string | undefined {
+  // 开发模式从仓库里启动；打包后的程序从 exe 所在目录往上找
+  for (const start of [process.cwd(), path.dirname(process.execPath)]) {
+    let dir: string = start;
+
+    for (let i: number = 0; i < 8; i++) {
+      const file: string = path.join(dir, 'local', 'pocket48.json');
+
+      if (fs.existsSync(file)) return file;
+
+      const parent: string = path.dirname(dir);
+
+      if (parent === dir) break;
+
+      dir = parent;
+    }
+  }
+
+  return undefined;
+}
+
 export function getPocket48LocalConfig(): Pocket48LocalConfig {
   if (localConfig) return localConfig;
 
   localConfig = {};
 
-  let dir: string = process.cwd();
+  const file: string | undefined = findLocalConfigFile();
 
-  for (let i: number = 0; i < 6; i++) {
-    const file: string = path.join(dir, 'local', 'pocket48.json');
-
-    if (fs.existsSync(file)) {
-      try {
-        localConfig = JSON.parse(fs.readFileSync(file, { encoding: 'utf8' }));
-      } catch (err) {
-        console.error('local/pocket48.json 解析失败', err);
-      }
-
-      break;
+  if (file) {
+    try {
+      localConfig = JSON.parse(fs.readFileSync(file, { encoding: 'utf8' }));
+    } catch (err) {
+      console.error('local/pocket48.json 解析失败', err);
     }
-
-    const parent: string = path.dirname(dir);
-
-    if (parent === dir) break;
-
-    dir = parent;
   }
 
   return localConfig!;

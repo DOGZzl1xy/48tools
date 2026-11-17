@@ -10,6 +10,9 @@
 | 功能 | 模块 | 接入点（原版文件） |
 | --- | --- | --- |
 | 口袋48接口走代理、接口默认 20 秒超时 | `pocket48Proxy/pocket48Got.ts`、`pocket48Proxy/pocket48Proxy.ts` | `services/48/index.ts`、`services/48/login/index.ts`：`got` 换成 `pocket48Got` |
+| 启动应用时自动拉起 `local/xray` 代理，退出时关闭（端口已被占用就直接用现有的） | `packages/main/src/custom/pocket48ProxyLauncher.mts` | `packages/main/src/main.mts` |
+| 打包后的程序也能找到 `local/`（从 exe 所在目录往上找） | `pocket48Proxy/pocket48Proxy.ts` | 无 |
+| 只打包 Windows 64 位：`node --run pack:win`，输出 `build/48tools-win64/48tools.exe` | `scripts/custom/packWin64.mjs` | 根目录 `package.json` 的 `pack:win` |
 | 直播录制断线重连也走代理 | `pocket48Proxy/pocket48Proxy.ts` | `Pocket48Live.tsx`、`utils/autoGrab.ts` 传 `pocket48Proxy`；两个直播下载 worker 调 `setPocket48ProxyForWorker` |
 | 请求头模拟 iOS 口袋48 7.1.48，设备 ID 本机固定 | `pocket48Headers/pocket48ClientInfo.ts` | `utils/snh48.ts` 的 `createHeaders` |
 | 首页「口袋48代理」设置 | `pocket48Proxy/Pocket48ProxyOption.tsx` | `pages/Index/Index.tsx` |

@@ -13,6 +13,7 @@
     "update-version": "milktea-esm update",
     "update-version:dev": "milktea-esm update --__DEV__",
     "build": "node scripts/delivery.mjs",
+    "pack:win": "node scripts/custom/packWin64.mjs",
     "build:cn": "ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm run build",
     "build:ci": "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm run build",
     "build:png": "ffmpeg -i statics/titleBarIcon512.png -vf scale=128:128 app/titleBarIcon.png",
