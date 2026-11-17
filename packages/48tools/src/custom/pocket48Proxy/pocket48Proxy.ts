@@ -37,8 +37,13 @@ function isBlank(value: string | null | undefined): boolean {
 
 /* 从启动目录往上找 local/pocket48.json */
 function findLocalConfigFile(): string | undefined {
-  // 开发模式从仓库里启动；打包后的程序从 exe 所在目录往上找
-  for (const start of [process.cwd(), path.dirname(process.execPath)]) {
+  // 开发模式从仓库里启动；打包后的程序从 exe 所在目录往上找。
+  // 注意：起点必须先单独算好，不能直接写在 for...of 的头部。生产构建的 babel-plugin-delay-require
+  // 会把 node 模块的加载语句插到所在块的开头，写在循环头部时加载语句会落进循环体，晚于头部执行，
+  // 结果 process 还没加载就被使用（打包后报错、找不到配置、不走代理）。
+  const starts: Array<string> = [process.cwd(), path.dirname(process.execPath)];
+
+  for (const start of starts) {
     let dir: string = start;
 
     for (let i: number = 0; i < 8; i++) {
@@ -60,19 +65,30 @@ function findLocalConfigFile(): string | undefined {
 export function getPocket48LocalConfig(): Pocket48LocalConfig {
   if (localConfig) return localConfig;
 
-  localConfig = {};
+  let file: string | undefined;
 
-  const file: string | undefined = findLocalConfigFile();
+  try {
+    file = findLocalConfigFile();
+  } catch (err) {
+    // 查找出错时不缓存，下次请求再找，避免一次出错就一直不走代理
+    console.error('查找 local/pocket48.json 失败', err);
+
+    return {};
+  }
+
+  let config: Pocket48LocalConfig = {};
 
   if (file) {
     try {
-      localConfig = JSON.parse(fs.readFileSync(file, { encoding: 'utf8' }));
+      config = JSON.parse(fs.readFileSync(file, { encoding: 'utf8' }));
     } catch (err) {
       console.error('local/pocket48.json 解析失败', err);
     }
   }
 
-  return localConfig!;
+  localConfig = config;
+
+  return config;
 }
 
 /* Worker 内使用：设置主线程传过来的代理地址 */

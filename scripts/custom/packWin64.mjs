@@ -56,6 +56,27 @@ async function checkTargetNotRunning() {
   }
 }
 
+/**
+ * 检查界面代码里有没有「循环头部直接使用 node 模块」的写法。
+ * 生产构建的 babel-plugin-delay-require 会把 node 模块的加载语句插到所在块的开头，
+ * 写在 for/while 头部时加载语句会落进循环体，晚于头部执行，运行时会报 undefined（开发模式不会出现）。
+ */
+async function checkDelayRequireInLoopHead() {
+  const files = await glob(path.join(cwd, 'packages/48tools/dist/**/*.js'), { windowsPathsNoEscape: true });
+  const pattern = /(?:for|while)\((?:const |let |var )?[^{;]{0,200}globalThis\.__ELECTRON__DELAY_REQUIRE__\w+[^{]{0,120}\)\{/g;
+  const found = [];
+
+  for (const file of files) {
+    const code = await fsP.readFile(file, { encoding: 'utf8' });
+
+    for (const match of code.matchAll(pattern)) found.push(`${ path.basename(file) }: ${ match[0].slice(0, 160) }`);
+  }
+
+  if (found.length > 0) {
+    throw new Error(`界面代码的循环头部直接用了 node 模块（打包后会报错），请先把它提到循环前面的变量里：\n${ found.join('\n') }`);
+  }
+}
+
 function builderConfig() {
   return {
     appId: '48tools',
@@ -102,6 +123,8 @@ async function packWin64() {
     await runScript('build', path.join(cwd, 'packages/48tools'));
     await runScript('build', path.join(cwd, 'packages/help'));
   }
+
+  await checkDelayRequireInLoopHead();
 
   // 2. 准备 www（和原版 unpack.mjs 一样）
   console.log('⏳ 准备打包目录');
