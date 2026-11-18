@@ -8,7 +8,7 @@
  * 程序启动时会从 exe 所在目录往上找仓库的 local/（代理和 token），所以 local/ 不会被打进程序目录。
  * 用法：node scripts/custom/packWin64.mjs（打包前先关掉正在运行的 build/48tools-win64/48tools.exe）
  *       加 --skip-build 只重新打包，不重新编译；加 --skip-smoke 跳过打包后的启动检查
- * 打包时把当前提交号写进 resources/app/build-info.json，窗口标题会显示「自定义版 xxxxxxx」（custom/buildInfo/buildLabel）。
+ * 打包时把当前提交号写进 resources/app/build-info.json（想知道程序是哪次提交打的包时看这个文件）。
  * 打包后会自动启动一次程序（约 10 秒，会闪一下窗口），确认启动时界面没有报错，再关掉。
  * 注意：electron-builder 第一次运行时会下载 winCodeSign（给 exe 设置图标），里面有 macOS 的符号链接，
  *       没有管理员权限 / 开发者模式时解压会失败。解决办法：用 7za 加 -xr!darwin 解压到

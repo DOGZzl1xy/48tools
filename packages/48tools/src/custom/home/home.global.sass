@@ -1,0 +1,155 @@
+// 新首页（custom/home/HomeDashboard）的样式，颜色变量来自 custom/shell/AppShell。
+
+.home
+  max-width: 980px
+  margin: 0 auto
+  padding: 28px 32px 40px
+
+  section
+    margin-top: 28px
+
+  h2
+    margin: 0 0 12px
+    color: var(--shell-text-tertiary)
+    font-size: 12px
+    font-weight: 600
+    letter-spacing: .6px
+
+  h3
+    margin: 0 0 6px
+    color: var(--shell-text-secondary)
+    font-size: 12.5px
+    font-weight: 500
+
+.home-header
+  display: flex
+  align-items: center
+  gap: 10px
+
+  h1
+    margin: 0
+    font-size: 26px
+    font-weight: 700
+    letter-spacing: -.3px
+
+.home-featured
+  display: grid
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr))
+  gap: 12px
+
+.home-card
+  display: flex
+  align-items: center
+  gap: 14px
+  padding: 16px 18px
+  border: 1px solid var(--shell-border)
+  border-radius: 12px
+  background: var(--shell-surface)
+  color: var(--shell-text)
+  text-decoration: none
+  transition: border-color .15s, box-shadow .15s, transform .15s
+
+  &:hover
+    border-color: var(--shell-primary)
+    box-shadow: 0 6px 20px -8px rgba(0, 0, 0, .18)
+    color: var(--shell-text)
+    transform: translateY(-1px)
+
+    .home-card-arrow
+      color: var(--shell-primary)
+      transform: translateX(3px)
+
+  &:focus-visible
+    outline: 2px solid var(--shell-primary)
+    outline-offset: 2px
+
+.home-card-icon
+  display: inline-flex
+  flex: none
+  align-items: center
+  justify-content: center
+  width: 44px
+  height: 44px
+  border-radius: 10px
+  background: var(--shell-active-bg)
+  color: var(--shell-primary)
+  font-size: 22px
+
+.home-card-text
+  display: flex
+  flex: 1
+  flex-direction: column
+  min-width: 0
+
+  b
+    font-size: 15px
+    font-weight: 600
+
+  small
+    margin-top: 2px
+    color: var(--shell-text-secondary)
+    font-size: 12.5px
+
+.home-card-arrow
+  flex: none
+  color: var(--shell-text-tertiary)
+  transition: color .15s, transform .15s
+
+.home-empty
+  color: var(--shell-text-tertiary)
+  font-size: 13px
+
+.home-task
+  display: flex
+  align-items: center
+  gap: 10px
+  height: 36px
+
+.home-task-progress
+  flex: none
+  width: 220px
+  margin: 0
+
+.home-group + .home-group
+  margin-top: 14px
+
+.home-tiles
+  display: grid
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr))
+  gap: 8px
+
+.home-tile
+  display: flex
+  align-items: center
+  gap: 8px
+  height: 38px
+  padding: 0 12px
+  overflow: hidden
+  border-radius: 8px
+  background: var(--shell-hover)
+  color: var(--shell-text)
+  font-size: 13.5px
+  text-decoration: none
+  white-space: nowrap
+  transition: background-color .12s, color .12s
+
+  .anticon
+    flex: none
+    color: var(--shell-text-secondary)
+    font-size: 15px
+
+  &:hover
+    background: var(--shell-active-bg)
+    color: var(--shell-primary)
+
+    .anticon
+      color: var(--shell-primary)
+
+  &:focus-visible
+    outline: 2px solid var(--shell-primary)
+    outline-offset: 1px
+
+.home-about
+  color: var(--shell-text-secondary)
+  font-size: 13px
+  line-height: 1.8

@@ -1,0 +1,375 @@
+// 应用外壳（侧边栏布局）的样式。颜色都来自 AppShell 根元素上的 CSS 变量（由 antd 主题生成，跟随明暗主题）。
+
+.shell
+  display: flex
+  height: 100vh
+  overflow: hidden
+  background: var(--shell-bg)
+  color: var(--shell-text)
+
+// ---------- 侧边栏 ----------
+.shell-sidebar
+  display: flex
+  flex: none
+  flex-direction: column
+  width: 204px
+  padding: 10px 8px 8px
+  transition: width .18s ease
+  user-select: none
+
+  &.is-collapsed
+    width: 56px
+
+.shell-brand
+  display: flex
+  align-items: center
+  gap: 8px
+  height: 36px
+  margin-bottom: 6px
+  padding: 0 4px 0 8px
+
+.shell-brand-name
+  flex: 1
+  min-width: 0
+  overflow: hidden
+  font-size: 15px
+  font-weight: 650
+  letter-spacing: .2px
+  white-space: nowrap
+
+  small
+    margin-left: 6px
+    color: var(--shell-text-tertiary)
+    font-size: 11px
+    font-weight: 400
+
+.shell-icon-button
+  display: inline-flex
+  flex: none
+  align-items: center
+  justify-content: center
+  width: 30px
+  height: 30px
+  border: 0
+  border-radius: 8px
+  background: transparent
+  color: var(--shell-text-secondary)
+  font-size: 15px
+  cursor: pointer
+  transition: background-color .12s, color .12s
+
+  &:hover
+    background: var(--shell-hover)
+    color: var(--shell-text)
+
+  &:focus-visible
+    outline: 2px solid var(--shell-primary)
+    outline-offset: 1px
+
+.shell-search
+  display: flex
+  align-items: center
+  gap: 8px
+  width: 100%
+  height: 32px
+  margin-bottom: 8px
+  padding: 0 10px
+  border: 1px solid var(--shell-border)
+  border-radius: 8px
+  background: var(--shell-surface)
+  color: var(--shell-text-tertiary)
+  font-size: 13px
+  cursor: pointer
+  transition: border-color .12s, color .12s
+
+  &:hover
+    border-color: var(--shell-primary)
+    color: var(--shell-text-secondary)
+
+  kbd
+    margin-left: auto
+    padding: 0 5px
+    border: 1px solid var(--shell-border)
+    border-radius: 4px
+    font-family: inherit
+    font-size: 11px
+    line-height: 16px
+
+.shell-nav
+  flex: 1
+  min-height: 0
+  margin: 0 -8px
+  padding: 0 8px
+  overflow-x: hidden
+  overflow-y: auto
+
+.shell-group-title
+  display: flex
+  align-items: center
+  width: 100%
+  height: 26px
+  margin-top: 10px
+  padding: 0 10px
+  border: 0
+  background: transparent
+  color: var(--shell-text-tertiary)
+  font-size: 11.5px
+  font-weight: 600
+  letter-spacing: .4px
+  text-align: left
+  white-space: nowrap
+  cursor: pointer
+
+  &:hover
+    color: var(--shell-text-secondary)
+
+  .anticon
+    margin-left: auto
+    font-size: 9px
+    transition: transform .15s
+
+  &.is-closed .anticon
+    transform: rotate(-90deg)
+
+.shell-item
+  position: relative
+  display: flex
+  align-items: center
+  gap: 10px
+  width: 100%
+  height: 34px
+  margin-top: 2px
+  padding: 0 10px
+  border: 0
+  border-radius: 8px
+  background: transparent
+  color: var(--shell-text-secondary)
+  font-size: 13.5px
+  text-align: left
+  text-decoration: none
+  white-space: nowrap
+  cursor: pointer
+  transition: background-color .12s, color .12s
+
+  &:hover
+    background: var(--shell-hover)
+    color: var(--shell-text)
+
+  &:focus-visible
+    outline: 2px solid var(--shell-primary)
+    outline-offset: -2px
+
+  &.is-active
+    background: var(--shell-active-bg)
+    color: var(--shell-primary)
+    font-weight: 600
+
+  .anticon
+    flex: none
+    width: 16px
+    font-size: 16px
+
+.shell-item-label
+  flex: 1
+  min-width: 0
+  overflow: hidden
+  text-overflow: ellipsis
+
+.shell-item-badge
+  flex: none
+  min-width: 18px
+  height: 18px
+  padding: 0 5px
+  border-radius: 9px
+  background: var(--shell-primary)
+  color: #fff
+  font-size: 11px
+  font-weight: 600
+  line-height: 18px
+  text-align: center
+
+.shell-item-progress
+  position: absolute
+  right: 10px
+  bottom: 3px
+  left: 36px
+  height: 2px
+  overflow: hidden
+  border-radius: 1px
+  background: var(--shell-hover)
+
+  i
+    display: block
+    height: 100%
+    border-radius: 1px
+    background: var(--shell-primary)
+    transition: width .4s ease
+
+.shell-dot
+  flex: none
+  width: 8px
+  height: 8px
+  margin: 0 4px
+  border-radius: 50%
+  background: var(--shell-text-tertiary)
+
+  &.is-ok
+    background: #22c55e
+    box-shadow: 0 0 0 3px rgba(34, 197, 94, .18)
+
+  &.is-down
+    background: #ef4444
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, .18)
+
+.shell-footer
+  margin-top: 6px
+  padding-top: 6px
+  border-top: 1px solid var(--shell-border)
+
+.shell-sidebar.is-collapsed
+  .shell-brand
+    justify-content: center
+    padding: 0
+
+  .shell-brand-name, .shell-item-label, .shell-group-title, .shell-search > span:not(.anticon), .shell-search kbd
+    display: none
+
+  .shell-search
+    justify-content: center
+    padding: 0
+
+  .shell-item
+    justify-content: center
+    padding: 0
+
+  .shell-item-badge
+    position: absolute
+    top: 2px
+    right: 4px
+    min-width: 14px
+    height: 14px
+    padding: 0 3px
+    font-size: 10px
+    line-height: 14px
+
+  .shell-item-progress
+    right: 8px
+    left: 8px
+
+  .shell-group + .shell-group
+    margin-top: 6px
+    padding-top: 4px
+    border-top: 1px solid var(--shell-border)
+
+// ---------- 内容区 ----------
+.shell-main
+  position: relative
+  flex: 1
+  min-width: 0
+  margin: 8px 8px 8px 0
+  overflow: auto
+  border: 1px solid var(--shell-border)
+  border-radius: 12px
+  background: var(--shell-surface)
+  scrollbar-gutter: stable
+
+.shell-page
+  min-height: 100%
+  animation: shell-page-in .2s cubic-bezier(.2, .8, .2, 1)
+
+@keyframes shell-page-in
+  from
+    opacity: 0
+    transform: translateY(6px)
+
+  to
+    opacity: 1
+    transform: none
+
+@media (prefers-reduced-motion: reduce)
+  .shell-page
+    animation: none
+
+  .shell-sidebar
+    transition: none
+
+// 页面标题（原来「返回」按钮的位置）
+.shell-page-title
+  margin: 0
+  color: var(--shell-text)
+  font-size: 18px
+  font-weight: 650
+  line-height: 32px
+  white-space: nowrap
+
+// ---------- 快速跳转 ----------
+.shell-palette-list
+  max-height: 340px
+  margin-top: 8px
+  overflow-y: auto
+
+.shell-palette-item
+  display: flex
+  align-items: center
+  gap: 10px
+  height: 38px
+  padding: 0 10px
+  border-radius: 8px
+  color: var(--shell-text)
+  cursor: pointer
+
+  small
+    margin-left: auto
+    color: var(--shell-text-tertiary)
+
+  &.is-active
+    background: var(--shell-active-bg)
+    color: var(--shell-primary)
+
+// ---------- 让原有页面在外壳里更协调 ----------
+.shell
+  // 表格：去掉竖线和外框，表头更轻，行高更舒展
+  .ant-table-wrapper .ant-table.ant-table-bordered
+    > .ant-table-container
+      border-inline-start: 0
+      border-top: 0
+
+      > .ant-table-content > table, > .ant-table-header > table, > .ant-table-body > table
+        border-top: 0
+
+        > thead > tr > th, > tbody > tr > td, > tbody > tr > th
+          border-inline-end: 0
+
+  .ant-table-wrapper .ant-table-thead > tr > th
+    color: var(--shell-text-secondary)
+    font-size: 12.5px
+    font-weight: 600
+
+  .ant-table-wrapper .ant-table-tbody > tr > td
+    transition: background-color .12s
+
+  .ant-table-wrapper .ant-table-thead > tr > th
+    white-space: nowrap
+
+  // 窗口窄的时候不换行，表格自己横向滚动（Pocket48Record、Pocket48Live 的表格）
+  .shell-table-nowrap .ant-table-tbody > tr > td
+    white-space: nowrap
+
+
+// ---------- 滚动条（全局，弹窗和抽屉里也一样） ----------
+::-webkit-scrollbar
+  width: 10px
+  height: 10px
+
+::-webkit-scrollbar-thumb
+  border: 3px solid transparent
+  border-radius: 6px
+  background: var(--shell-scrollbar, rgba(128, 128, 128, .35))
+  background-clip: content-box
+
+::-webkit-scrollbar-thumb:hover
+  background: var(--shell-text-tertiary, rgba(128, 128, 128, .6))
+  background-clip: content-box
+
+::-webkit-scrollbar-corner
+  background: transparent

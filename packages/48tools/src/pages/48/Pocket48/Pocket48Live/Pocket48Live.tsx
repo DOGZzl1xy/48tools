@@ -43,6 +43,8 @@ import {
 import { getFFmpeg, getFileTime, getFilePath } from '../../../../utils/utils';
 import { getPocket48Proxy } from '../../../../custom/pocket48Proxy/pocket48Proxy';
 import { liveRecordingStart, liveRecordingEnd } from '../../../../custom/live/liveRecording';
+import RowActions from '../../../../custom/table/RowActions';
+import MediaTitleCell from '../../../../custom/table/MediaTitleCell';
 import {
   netMediaServerInit,
   getNetMediaServerPort,
@@ -364,7 +366,11 @@ function Pocket48Live(props: {}): ReactElement {
   }
 
   const columns: ColumnsType<LiveInfo> = [
-    { title: '标题', dataIndex: 'title' },
+    {
+      title: '标题',
+      dataIndex: 'title',
+      render: (value: string, record: LiveInfo): ReactElement => <MediaTitleCell title={ value } coverPath={ record.coverPath } />
+    },
     { title: '成员', dataIndex: ['userInfo', 'nickname'] },
     {
       title: '类型',
@@ -381,48 +387,44 @@ function Pocket48Live(props: {}): ReactElement {
     {
       title: '操作',
       key: 'action',
-      width: 325,
+      width: 200,
       render: (value: undefined, record: LiveInfo, index: number): ReactElement => {
         const idx: number = liveChildList.findIndex((o: WebWorkerChildItem): boolean => o.id === record.liveId);
         const inRecording: boolean = idx >= 0;
 
+        // 最常用的「录制」直接显示，其余在「更多」里（custom/table/RowActions）
         return (
-          <Fragment>
-            <div className="mb-[6px]">
-              <Space.Compact>
+          <RowActions busy={ inRecording }
+            stopLabel="停止录制"
+            stopConfirm="确定要停止录制吗？"
+            onStop={ (event?: MouseEvent): void => handleStopClick(record, event) }
+            main={ [
+              {
+                key: 'r-flv',
+                label: '录制',
+                primary: true,
+                onClick: (event: MouseEvent): Promise<void> => handleGetVideoClick(record, false, event)
+              },
+              { key: 'play', label: '播放', onClick: (event: MouseEvent): void => handleOpenPlayerClick(record, event) }
+            ] }
+            more={ [
+              ...(inRecording ? [] : [
                 {
-                  inRecording ? (
-                    <Popconfirm title="确定要停止录制吗？"
-                      onConfirm={ (event?: MouseEvent): void => handleStopClick(record, event) }
-                    >
-                      <Button type="primary" danger={ true }>停止</Button>
-                    </Popconfirm>
-                  ) : [
-                    <Button key="r-flv" onClick={ (event: MouseEvent): Promise<void> => handleGetVideoClick(record, false, event) }>
-                      录制(*.flv)
-                    </Button>,
-                    <Button key="r-ts" onClick={ (event: MouseEvent): Promise<void> => handleGetVideoClick(record, true, event) }>
-                      录制(*.ts)
-                    </Button>,
-                    <Button key="r-flv-2" onClick={ (event: MouseEvent): Promise<void> => handleGetVideoBackupClick(record, event) }>
-                      备用录制(*.flv)
-                    </Button>
-                  ]
+                  key: 'r-ts',
+                  label: '录制为 ts（每次重新编码，可修复连麦花屏）',
+                  onClick: (event: MouseEvent): Promise<void> => handleGetVideoClick(record, true, event)
+                },
+                {
+                  key: 'r-flv-2',
+                  label: '备用录制（flv）',
+                  onClick: (event: MouseEvent): Promise<void> => handleGetVideoBackupClick(record, event)
                 }
-              </Space.Compact>
-            </div>
-            <Space.Compact size="small">
-              <Button onClick={ (event: MouseEvent): void => handleOpenPlayerClick(record, event) }>
-                播放
-              </Button>
-              <Button onClick={ (event: MouseEvent): Promise<void> => handleDownloadImagesClick(record, event) }>
-                下载图片
-              </Button>
-              <Button onClick={ (event: MouseEvent): Promise<void> => handleCopyLiveUrlClick(record, event) }>
-                复制直播地址
-              </Button>
-            </Space.Compact>
-          </Fragment>
+              ]),
+              ...(inRecording ? [{ key: 'play', label: '播放', onClick: (event: MouseEvent): void => handleOpenPlayerClick(record, event) }] : []),
+              { key: 'images', label: '下载图片', onClick: (event: MouseEvent): Promise<void> => handleDownloadImagesClick(record, event) },
+              { key: 'copy', label: '复制直播地址', onClick: (event: MouseEvent): Promise<void> => handleCopyLiveUrlClick(record, event) }
+            ] }
+          />
         );
       }
     }
@@ -454,7 +456,9 @@ function Pocket48Live(props: {}): ReactElement {
           </Space.Compact>
         </div>
       </Header>
-      <Table size="middle"
+      <Table className="shell-table-nowrap"
+        size="middle"
+        scroll={{ x: 'max-content' }}
         columns={ columns }
         dataSource={ filterSearchResultLiveList }
         bordered={ true }

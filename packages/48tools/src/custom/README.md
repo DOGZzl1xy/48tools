@@ -16,9 +16,14 @@
 | 直播录制断线重连（3 秒后重连，查询失败会重试，连续 3 次秒断才结束）、ffmpeg 日志只留最近 300 条 | `live/liveReconnect.ts` | `Pocket48LiveDownload.worker.ts`、`DownloadAndTranscoding.worker.ts` 的 ffmpeg 结束回调 |
 | 自动抓取：按成员 ID 匹配（原版写错不生效）、昵称不再当正则、出错有提示、一个成员出错不影响其他成员 | `live/autoGrabHelpers.ts` | `utils/autoGrab.ts` |
 | 自动录制保存到 `local/pocket48.json` 的 `liveRecordDir`（没有就用 `downloadDir`）；录完按 `liveRecordFormat` 转成 mp4（无损封装或压缩） | `live/liveRecording.ts`、`live/convertRecording.ts`、`live/LiveRecordDirHint.tsx` | `utils/autoGrab.ts`、`Pocket48Live.tsx`（录制开始 / 结束）、`LiveOptions.tsx`（提示） |
-| 下载队列：右下角悬浮按钮，任何页面都能看到录播下载、直播录制、转 mp4 的进度 | `downloadQueue/downloadQueue.ts`、`downloadQueue/DownloadQueuePanel.tsx`、`downloadQueue/recordTasks.ts` | `src/index.tsx`（面板）、`Pocket48Record.tsx`（开始 / 进度 / 结束） |
+| 应用外壳：常驻侧边栏（功能列表、下载队列、代理状态）、页面切换动效、Ctrl+K 搜索功能、Ctrl+B 收起侧边栏 | `shell/AppShell.tsx`、`shell/navConfig.tsx`、`shell/shellStore.ts`、`shell/CommandPalette.tsx`、`shell/shell.global.sass` | `src/index.tsx`（包住 `<Routers />`） |
+| 顶层页面的「返回」换成页面标题（子页面仍然显示返回） | `shell/PageTitle.tsx` | `components/Header/Header.tsx` |
+| 新首页：常用功能卡片、当前任务、全部功能、设置、关于（原版首页 `pages/Index/Index.tsx` 保留不动） | `home/HomeDashboard.tsx`、`home/home.global.sass` | `router/Routers.tsx` 的首页路由 |
+| 表格「操作」列：常用按钮 + 「更多」菜单；「标题」列带封面；窄窗口时表格横向滚动 | `table/RowActions.tsx`、`table/MediaTitleCell.tsx` | `Pocket48Record.tsx`、`Pocket48Live.tsx` 的列定义和 `<Table>` |
+| 主窗口：默认宽 1280、画好再显示（不闪白屏）、最小化时定时器不降频、缓存编译后的脚本 | `packages/main/src/custom/windowTuning.mts` | `packages/main/src/ProcessWindow.mts` |
+| 下载队列：侧边栏底部的入口（显示进行中的任务数和总进度），任何页面都能看到录播下载、直播录制、转 mp4 的进度 | `downloadQueue/downloadQueue.ts`、`downloadQueue/DownloadQueuePanel.tsx`、`downloadQueue/recordTasks.ts` | `shell/AppShell.tsx`（面板）、`Pocket48Record.tsx`（开始 / 进度 / 结束） |
 | 音频断点续传（每 40 个分片记录一次进度到「文件名.part.json」）、m4a 写入标题 / 成员 / 日期 | `download/audioExtract.ts`、`download/audioResumeState.ts`、`download/audioResume.tsx` | `Pocket48Record.tsx`（下载音频前询问是否接着下）、`Pocket48M3u8Download.worker.ts`（`resume`、`audioMeta`） |
-| 窗口标题显示「自定义版 提交号（日期）」 | `buildInfo/buildLabel.ts`（读取打包脚本写的 `build-info.json`） | `src/index.tsx` |
+| 窗口标题加「-custom」（`48tools - 上游版本号-custom`）；打包的提交号记在程序目录的 `resources/app/build-info.json` | `buildInfo/buildLabel.ts` | `src/index.tsx` |
 | 打包后的程序也能找到 `local/`（从 exe 所在目录往上找） | `pocket48Proxy/pocket48Proxy.ts` | 无 |
 | 只打包 Windows 64 位：`node --run pack:win`，输出 `build/48tools-win64/48tools.exe` | `scripts/custom/packWin64.mjs` | 根目录 `package.json` 的 `pack:win` |
 | 直播录制断线重连也走代理 | `pocket48Proxy/pocket48Proxy.ts` | `Pocket48Live.tsx`、`utils/autoGrab.ts` 传 `pocket48Proxy`；两个直播下载 worker 调 `setPocket48ProxyForWorker` |
@@ -31,9 +36,9 @@
 | 分片并行下载（同时 4 个，按顺序处理），停止时取消所有请求 | `download/segmentPrefetcher.ts` | `Pocket48M3u8Download.worker.ts` 的 `downloadParts`、`downloadSegment`（登记请求）、`run`、`stop`；`download/audioExtract.ts` |
 | 保存对话框默认打开 `local/pocket48.json` 里 `downloadDir` 指定的文件夹 | `download/defaultSaveDir.ts` | `utils/remote/dialog.ts` 的 `showSaveDialog` |
 | 只下载音频（边下载边提取 AAC，保存为 m4a） | `download/audioExtract.ts` | `Pocket48M3u8Download.worker.ts`（`audioOnly`）、`FFmpegDownload.worker.ts`（`audioOnly`）、`Pocket48Record.tsx`（按钮） |
-| 现代化主题 | `theme/modernTheme.ts` | `components/basic/AntdConfig/AntdConfig.tsx`；暗黑背景色同步改在 `components/basic/Theme/stylesheet.pug` |
+| 现代化主题（分层背景、更轻的表格、更快的动效） | `theme/modernTheme.ts` | `components/basic/AntdConfig/AntdConfig.tsx`；窗口底色同步改在 `components/basic/Theme/stylesheet.pug` 和 `packages/main/src/custom/windowTuning.mts` |
 | 统一的「返回」按钮 | `theme/backButton.tsx` | `components/Header/Header.tsx`、`LiveOptions.tsx`、`Agreement.tsx` |
-| 首页按平台分组 | `home/navGroups.tsx` | `pages/Index/Index.tsx` 的 `nativeRender` |
+| 原版首页按平台分组（原版首页现在不再作为首页显示，改动保留） | `home/navGroups.tsx` | `pages/Index/Index.tsx` 的 `nativeRender` |
 | 只用浏览器打开 http(s) 链接 | `security/safeOpenExternal.ts` | `MessageDisplay.tsx`、`Credits/Software/Software.tsx` |
 | 主窗口、播放器窗口禁止跳到外部网页 / 打开新窗口 | `packages/main/src/custom/windowGuards.mts` | `ProcessWindow.mts`、`ipcListener/openPlayerHtml.mts` |
 | 开发模式 F5 / Ctrl+R 刷新、F12 开发者工具 | `packages/main/src/custom/devShortcuts.mts` | 同上 |

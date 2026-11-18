@@ -2,6 +2,7 @@ import type { ReactElement, PropsWithChildren } from 'react';
 import classNames from 'classnames';
 import ButtonLink from '../ButtonLink/ButtonLink';
 import { backButtonProps } from '../../custom/theme/backButton';
+import PageTitle from '../../custom/shell/PageTitle';
 
 interface HeaderProps extends PropsWithChildren {
   to?: string;
@@ -19,7 +20,7 @@ function Header(props: HeaderProps): ReactElement {
   return (
     <header className={ classNames('flex mb-[8px]', className) }>
       <div className="grow">
-        <ButtonLink linkProps={{ to }} buttonProps={ backButtonProps }>返回</ButtonLink>
+        { to === '/' ? <PageTitle /> : <ButtonLink linkProps={{ to }} buttonProps={ backButtonProps }>返回</ButtonLink> }
       </div>
       <div>{ children }</div>
     </header>

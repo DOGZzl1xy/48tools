@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 import { useRoutes, Navigate } from 'react-router';
-import Index from '../pages/Index/Index';
+import HomeDashboard from '../custom/home/HomeDashboard'; // 新首页，原版首页是 pages/Index/Index
 import Pocket48 from '../pages/48/Index';
 import Bilibili from '../pages/Bilibili/Index';
 import AcFun from '../pages/AcFun/Index';
@@ -22,7 +22,7 @@ function Routers(props: {}): ReactElement | null {
           return <Navigate to="/Agreement/Power?read=1" />;
         }
 
-        return <Index />;
+        return <HomeDashboard />;
       }
     },
     { path: '48/*', element: <Pocket48 /> },

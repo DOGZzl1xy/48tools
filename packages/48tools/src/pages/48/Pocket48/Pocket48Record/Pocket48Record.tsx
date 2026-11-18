@@ -58,6 +58,8 @@ import type { ProgressSet } from '../../../../components/ProgressNative/index';
 import ProgressDetail from '../../../../custom/download/ProgressDetail';
 import { recordListErrorText, recordListFailText } from '../../../../custom/pocket48Record/recordListError';
 import { pickAudioResume } from '../../../../custom/download/audioResume';
+import RowActions from '../../../../custom/table/RowActions';
+import MediaTitleCell from '../../../../custom/table/MediaTitleCell';
 import { recordTaskStart, recordTaskProgress, recordTaskEnd, audioMetaOf } from '../../../../custom/downloadQueue/recordTasks';
 import { useReqRoomIdQuery, type ReqRoomId } from '../../reducers/pocketFriends.api';
 import LiveType from '../../components/LiveType/LiveType';
@@ -465,7 +467,11 @@ function Pocket48Record(props: {}): ReactElement {
   }
 
   const columns: ColumnsType<LiveInfo> = [
-    { title: '标题', dataIndex: 'title' },
+    {
+      title: '标题',
+      dataIndex: 'title',
+      render: (value: string, record: LiveInfo): ReactElement => <MediaTitleCell title={ value } coverPath={ record.coverPath } />
+    },
     { title: '成员', dataIndex: ['userInfo', 'nickname'] },
     {
       title: '类型',
@@ -498,70 +504,48 @@ function Pocket48Record(props: {}): ReactElement {
     {
       title: '操作',
       key: 'action',
-      width: 310,
+      width: 232,
       render: (value: undefined, record: LiveInfo, index: number): ReactElement => {
         const idx: number = recordChildList.findIndex(
           (o: RecordVideoDownloadWebWorkerItem): boolean => o.id === record.liveId);
         const item: RecordVideoDownloadWebWorkerItem | undefined = idx >= 0 ? recordChildList[idx] : undefined,
           canRetry: boolean | undefined = item && item.downloadType === 1;
 
+        // 常用的两个直接显示，其余在「更多」里（custom/table/RowActions）
         return (
-          <Fragment>
-            <div className="mb-[6px]">
+          <RowActions busy={ idx >= 0 }
+            stopLabel="停止下载"
+            stopConfirm="确定要停止下载吗？"
+            onStop={ (event?: MouseEvent): void => handleStopClick(record, event) }
+            busyActions={ canRetry ? [{
+              key: 'retry',
+              label: '重试',
+              onClick: (event: MouseEvent): void => handleRetryDownloadClick(record, event)
+            }] : [] }
+            main={ [
               {
-                idx >= 0 ? (
-                  <Space.Compact>
-                    <Popconfirm title="确定要停止下载吗？"
-                      onConfirm={ (event?: MouseEvent): void => handleStopClick(record, event) }
-                    >
-                      <Button type="primary" danger={ true }>停止下载</Button>
-                    </Popconfirm>
-                    {
-                      canRetry && (
-                        <Button onClick={
-                          (event: MouseEvent): void => handleRetryDownloadClick(record, event)
-                        }>
-                          重试
-                        </Button>
-                      )
-                    }
-                  </Space.Compact>
-                ) : (
-                  <Space.Compact>
-                    <Button onClick={
-                      (event: MouseEvent): Promise<void> =>
-                        handleDownloadM3u8Click(record, 0, event)
-                    }>
-                      下载视频
-                    </Button>
-                    <Button onClick={
-                      (event: MouseEvent): Promise<void> =>
-                        handleDownloadM3u8Click(record, 0, event, true)
-                    }>
-                      下载音频
-                    </Button>
-                    <Button onClick={ (event: MouseEvent): Promise<void> => handleDownloadM3u8Click(record, 1, event) }>
-                      备用方案下载
-                    </Button>
-                  </Space.Compact>
-                )
+                key: 'video',
+                label: '下载视频',
+                onClick: (event: MouseEvent): Promise<void> => handleDownloadM3u8Click(record, 0, event)
+              },
+              {
+                key: 'audio',
+                label: '下载音频',
+                onClick: (event: MouseEvent): Promise<void> => handleDownloadM3u8Click(record, 0, event, true)
               }
-            </div>
-            <Space.Compact size="small">
-              <Button onClick={ (event: MouseEvent): Promise<void> => handleDownloadLrcClick(record, event) }>
-                下载弹幕
-              </Button>
-              <Button onClick={ (event: MouseEvent): Promise<void> => handleDownloadImagesClick(record, event) }>
-                下载图片
-              </Button>
-              <Button onClick={ (event: MouseEvent): void => handleOpenPlayerClick(record, event) }>
-                播放
-              </Button>
-              <Button onClick={ (event: MouseEvent): Promise<void> => handleCopyLiveUrlClick(record, event) }>
-                复制录播地址
-              </Button>
-            </Space.Compact>
-          </Fragment>
+            ] }
+            more={ [
+              { key: 'play', label: '播放', onClick: (event: MouseEvent): void => handleOpenPlayerClick(record, event) },
+              ...(idx >= 0 ? [] : [{
+                key: 'backup',
+                label: '备用方案下载',
+                onClick: (event: MouseEvent): Promise<void> => handleDownloadM3u8Click(record, 1, event)
+              }]),
+              { key: 'danmu', label: '下载弹幕', onClick: (event: MouseEvent): Promise<void> => handleDownloadLrcClick(record, event) },
+              { key: 'images', label: '下载图片', onClick: (event: MouseEvent): Promise<void> => handleDownloadImagesClick(record, event) },
+              { key: 'copy', label: '复制录播地址', onClick: (event: MouseEvent): Promise<void> => handleCopyLiveUrlClick(record, event) }
+            ] }
+          />
         );
       }
     }
@@ -601,7 +585,9 @@ function Pocket48Record(props: {}): ReactElement {
           </Space>
         </Form>
       </Header>
-      <Table size="middle"
+      <Table className="shell-table-nowrap"
+        size="middle"
+        scroll={{ x: 'max-content' }}
         columns={ columns }
         dataSource={ recordList }
         bordered={ true }

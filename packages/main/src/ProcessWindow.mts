@@ -14,6 +14,7 @@ import { nodeMediaServerClose } from './nodeMediaServer/nodeMediaServer.mjs';
 import type { ThemeValue } from './ipcListener/themeChange.mjs';
 import { guardAppWebContents } from './custom/windowGuards.mjs';
 import { registerDevShortcuts } from './custom/devShortcuts.mjs';
+import { tuneWindowOptions, showWhenReady } from './custom/windowTuning.mjs';
 
 export let processWindow: BrowserWindow | null = null;
 
@@ -39,7 +40,7 @@ export function createWindow(): void {
   logProtocol();
 
   /* 初始化窗口 */
-  processWindow = new BrowserWindow({
+  processWindow = new BrowserWindow(tuneWindowOptions({
     width: 1_000,
     height: 830,
     minWidth: 1_000,
@@ -53,7 +54,8 @@ export function createWindow(): void {
     title: `48tools - ${ packageJson.version }`,
     icon: titleBarIcon,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#000000' : undefined
-  });
+  }, nativeTheme.shouldUseDarkColors));
+  showWhenReady(processWindow);
 
   if (isDevelopment && !isTest) {
     processWindow.webContents.openDevTools();
