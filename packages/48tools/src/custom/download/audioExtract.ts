@@ -10,12 +10,16 @@ import {
   type SegmentTimeline
 } from '../../pages/48/Pocket48/Pocket48Record/Pocket48M3u8Download.worker/timeline';
 import DownloadMeter from './downloadMeter';
-import { SegmentPrefetcher } from './segmentPrefetcher';
+import { SegmentPrefetcher, SEGMENT_CONCURRENCY } from './segmentPrefetcher';
+import { CHECKPOINT_EVERY, resumeStatePath, isResumeStateUsable, type AudioResumeState } from './audioResumeState';
 import type { ProgressStats } from './formatProgress';
 
 /**
  * 只下载音频：每下载一个分片就送进 ffmpeg 提取音频，边下载边生成 .part.aac（随时可以播放）。
  * 下载完成后，如果保存的是 .m4a，再无损封装成 m4a 并删除 .part.aac；中途停止时保留 .part.aac。
+ * 断点续传：每处理 CHECKPOINT_EVERY 个分片就让 ffmpeg 把音频全部写完，并把进度记到「文件名.part.json」；
+ * 下次带 resume 启动时，把 .part.aac 截回记录的位置，从记录的分片接着下。下载完成后删除记录文件。
+ * 保存为 m4a 时写入标题、成员、日期等信息（audioMeta）。
  * 接入点：Pocket48M3u8Download.worker 在 audioOnly 时调用 createAudio，并把 worker 内部函数通过 deps 传进来。
  */
 export interface AudioWorkerData {
@@ -23,6 +27,8 @@ export interface AudioWorkerData {
   playStreamPath: string; // 本地 m3u8 文件
   filePath: string;
   qid?: string;
+  resume?: boolean;                   // 接着上次没下完的继续
+  audioMeta?: Record<string, string>; // 写进 m4a 的信息：title、artist、album、date、comment
 }
 
 export interface AudioWorkerDeps {
@@ -129,18 +135,61 @@ export async function createAudio(workerData: AudioWorkerData, workDir: string, 
   const saveAsAac: boolean = parsed.ext.toLowerCase() === '.aac';
   const aacFile: string = saveAsAac ? filePath : path.join(parsed.dir, `${ parsed.name }.part.aac`);
   const segmentFile: string = path.join(workDir, '_current_segment.ts');
-  const output: fs.WriteStream = fs.createWriteStream(aacFile);
+  const stateFile: string = resumeStatePath(filePath);
+  let startIndex: number = 0; // 从第几个分片开始
+  let baseBytes: number = 0;  // 续传时 .part.aac 里已有的字节数
+  let hasAudio: boolean = false;
+
+  if (workerData.resume) {
+    try {
+      const state: AudioResumeState = JSON.parse(await fsP.readFile(stateFile, { encoding: 'utf8' }));
+      const aacSize: number = (await fsP.stat(aacFile)).size;
+
+      if (isResumeStateUsable(state, segments.length, aacSize)) {
+        await fsP.truncate(aacFile, state.aacBytes); // 去掉记录之后写入的不完整数据
+        startIndex = state.nextIndex;
+        baseBytes = state.aacBytes;
+        hasAudio = state.aacBytes > 0;
+      }
+    } catch { /* 没有可用的记录，从头下载 */ }
+  }
+
+  const output: fs.WriteStream = fs.createWriteStream(aacFile, { flags: startIndex > 0 ? 'a' : 'w' });
   const meter: DownloadMeter = new DownloadMeter(segments);
   const prefetcher: SegmentPrefetcher = new SegmentPrefetcher(segments.length, workDir, // 并行下载，按顺序提取音频
     (i: number, file: string, signal: AbortSignal): Promise<number> => deps.downloadSegment(segments[i].uri, file,
       `第 ${ i + 1 }/${ segments.length } 个分片`,
-      (attempt: number): void => deps.postProgress(qid, i / segments.length * 98, { stage: 'retry', retry: attempt }), signal));
+      (attempt: number): void => deps.postProgress(qid, i / segments.length * 98, { stage: 'retry', retry: attempt }), signal),
+    SEGMENT_CONCURRENCY, startIndex);
   let extractor: AudioExtractor | null = null;
   let previousTimeline: SegmentTimeline | null = null;
-  let hasAudio: boolean = false;
+
+  /* 记录进度：先让 ffmpeg 把已经送进去的音频全部写完，再记下文件大小和下一个分片 */
+  async function checkpoint(nextIndex: number): Promise<void> {
+    if (extractor) {
+      await closeExtractor(extractor);
+      extractor = null;
+    }
+
+    await new Promise<void>((resolve: () => void): void => {
+      output.write(Buffer.alloc(0), (): void => resolve()); // 等前面的数据都写进文件
+    });
+
+    const state: AudioResumeState = {
+      version: 1,
+      liveId: qid ?? '',
+      filePath,
+      total: segments.length,
+      nextIndex,
+      aacBytes: baseBytes + output.bytesWritten,
+      updatedAt: Date.now()
+    };
+
+    await fsP.writeFile(stateFile, JSON.stringify(state), { encoding: 'utf8' });
+  }
 
   try {
-    for (let index: number = 0; index < segments.length; index++) {
+    for (let index: number = startIndex; index < segments.length; index++) {
       if (deps.isStopped()) break;
 
       const segment: HlsSegment = segments[index];
@@ -171,6 +220,10 @@ export async function createAudio(workerData: AudioWorkerData, workDir: string, 
         }
 
         deps.postProgress(qid, (index + 1) / segments.length * 98, meter.tick(index, bytes));
+
+        if ((index + 1) % CHECKPOINT_EVERY === 0 && index + 1 < segments.length && !deps.isStopped()) {
+          await checkpoint(index + 1);
+        }
       } finally {
         await fsP.rm(segmentFile, { force: true });
       }
@@ -193,17 +246,24 @@ export async function createAudio(workerData: AudioWorkerData, workDir: string, 
   if (!hasAudio) throw new Error('录播中没有找到音频。');
 
   if (!saveAsAac) {
+    const metadata: Array<string> = Object.entries(workerData.audioMeta ?? {})
+      .filter(([, value]: [string, string]): boolean => typeof value === 'string' && value !== '')
+      .flatMap(([key, value]: [string, string]): Array<string> => ['-metadata', `${ key }=${ value }`]);
+
     deps.postProgress(qid, 99, { stage: 'audio' });
     await deps.runProcess(ffmpeg, [
       '-y',
       '-v', 'error',
       '-i', aacFile,
       '-c:a', 'copy',
+      ...metadata,
       '-movflags', '+faststart',
       filePath
     ]);
     await fsP.rm(aacFile, { force: true });
   }
+
+  await fsP.rm(stateFile, { force: true }); // 下载完成，不需要续传记录了
 
   deps.postProgress(qid, 100);
 }

@@ -32,6 +32,8 @@ export type WorkerEventData = {
   filePath: string;
   qid?: string;
   audioOnly?: boolean; // 只下载音频（custom/download/audioExtract）
+  resume?: boolean;    // 音频：接着上次没下完的继续
+  audioMeta?: Record<string, string>; // 音频：写进 m4a 的标题、成员等信息
 };
 
 type ProbePacket = {

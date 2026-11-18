@@ -1,9 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { parse, type ParsedPath } from 'node:path';
-import { setTimeout } from 'node:timers';
 import * as process from 'node:process';
-import { requestLiveRoomInfo, type LiveRoomInfo } from '@48tools-api/48';
+import { requestLiveRoomInfo } from '@48tools-api/48';
 import { setPocket48ProxyForWorker } from '../../../../../custom/pocket48Proxy/pocket48Proxy';
+import { LiveReconnect, pushCapped } from '../../../../../custom/live/liveReconnect';
 import type { _UtilObject } from '../../../../../../../main/src/logProtocol/logTemplate/ffmpeg.mjs';
 import { _ffmpegLogProtocol } from '../../../../../utils/logProtocol/logActions';
 
@@ -37,6 +37,7 @@ export type MessageEventData = ErrorMessageEventData | CloseMessageEventData;
 let child: ChildProcessWithoutNullStreams;
 let isKilled: boolean = false; // 手动结束
 let retryIndex: number = 0;
+let reconnect: LiveReconnect | undefined; // 断线重连（custom/live/liveReconnect）
 
 function formatCommend(t: string): string {
   return isMacOS ? `"${ t }"` : t;
@@ -64,15 +65,26 @@ function download(workerData: WorkerEventData, isRetry?: boolean): void {
   ];
 
   child = spawn(formatCommend(ffmpeg), ffmpegArgs, { shell: isMacOS });
+  reconnect ??= new LiveReconnect({
+    liveId: workerData.liveId,
+    getUrl: (): string => workerData.playStreamPath,
+    requestInfo: requestLiveRoomInfo,
+    restart(url: string): void {
+      download(Object.assign(workerData, { playStreamPath: url }), true);
+    },
+    close: (): void => postMessage({ type: 'close' }),
+    isKilled: (): boolean => isKilled
+  });
+  reconnect.markStart();
 
   child.stdout.on('data', function(data: Buffer): void {
     // console.log(data.toString());
-    _stdout.push(data.toString());
+    pushCapped(_stdout, data.toString());
   });
 
   child.stderr.on('data', function(data: Buffer): void {
     // console.log(data.toString());
-    _stdout.push(data.toString());
+    pushCapped(_stdout, data.toString());
   });
 
   child.on('close', function(...args: string[]): void {
@@ -89,23 +101,7 @@ function download(workerData: WorkerEventData, isRetry?: boolean): void {
       postMessage({ type: 'close' });
     } else {
       retryIndex++;
-      // 60秒后重试
-      setTimeout((): void => {
-        requestLiveRoomInfo(workerData.liveId).then((res: LiveRoomInfo): void => {
-          if (res.success && res.content.playStreamPath !== workerData.playStreamPath) {
-            download({
-              type: 'start',
-              playStreamPath: res.content.playStreamPath,
-              filePath: workerData.filePath,
-              ffmpeg: workerData.ffmpeg,
-              liveId: workerData.liveId,
-              roomId: workerData.roomId
-            }, true);
-          } else {
-            postMessage({ type: 'close' });
-          }
-        });
-      }, 60_000);
+      reconnect!.handleClose(); // 断线重连，或者确认直播结束后发 close
     }
   });
 

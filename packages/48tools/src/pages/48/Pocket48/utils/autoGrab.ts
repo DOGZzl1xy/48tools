@@ -14,6 +14,9 @@ import { store } from '../../../../store/store';
 import { setLiveList, setDeleteLiveChildList, setAddLiveChildList, type Pocket48InitialState } from '../../reducers/pocket48';
 import { getFFmpeg, fileTimeFormat, getFilePath } from '../../../../utils/utils';
 import { getPocket48Proxy } from '../../../../custom/pocket48Proxy/pocket48Proxy';
+import { createMemberMatcher, createErrorNotifier } from '../../../../custom/live/autoGrabHelpers';
+import { getLiveRecordDir, liveRecordingStart, liveRecordingEnd } from '../../../../custom/live/liveRecording';
+import { pocket48ErrorText, pocket48FailText } from '../../../../custom/pocket48Api/apiErrorText';
 import Pocket48LiveRender from './Pocket48LiveRender';
 import type { MessageEventData, LiveStatusEventData, WebWorkerChildItem } from '../../../../commonTypes';
 
@@ -37,6 +40,7 @@ function downloadBackup(args: Pick<DownloadArgs, 'item' | 'resInfo' | 'filePath'
     ffmpeg: getFFmpeg(),
     onClose(id: string): void {
       dispatch(setDeleteLiveChildList(item));
+      liveRecordingEnd({ liveId: item.liveId, filePath }, getFFmpeg());
     }
   });
 
@@ -44,6 +48,12 @@ function downloadBackup(args: Pick<DownloadArgs, 'item' | 'resInfo' | 'filePath'
     id: item.liveId,
     worker
   }));
+  liveRecordingStart({
+    liveId: item.liveId,
+    title: `${ item.userInfo.nickname } ${ item.title }`,
+    filePath,
+    stop: (): void => worker.kill()
+  });
 }
 
 function download(args: DownloadArgs): void {
@@ -61,8 +71,15 @@ function download(args: DownloadArgs): void {
 
       worker.terminate();
       dispatch(setDeleteLiveChildList(item));
+      liveRecordingEnd({ liveId: item.liveId, filePath }, getFFmpeg(), type === 'error' ? '录制出错' : undefined);
     }
   }, false);
+  liveRecordingStart({
+    liveId: item.liveId,
+    title: `${ item.userInfo.nickname } ${ item.title }`,
+    filePath,
+    stop: (): void => worker.postMessage({ type: 'stop' })
+  });
 
   worker.postMessage({
     type: 'start',
@@ -88,29 +105,51 @@ function download(args: DownloadArgs): void {
  * @param { boolean | undefined } transcoding - 自动转码
  * @param { boolean | undefined } backup - 备用下载
  */
+/* 轮询出错时提示（同样的错误 10 分钟内只提示一次） */
+let notifyAutoGrabError: ((text: string) => void) | undefined;
+
 async function autoGrab(
   messageApi: MessageInstance,
-  dir: string,
+  configDir: string,
   usersArr: string[],
   transcoding: boolean | undefined,
   backup: boolean | undefined
 ): Promise<void> {
   const { dispatch, getState }: Store = store;
-  const res: LiveData = await requestLiveList('0', true);
+  const dir: string = getLiveRecordDir(configDir); // local/pocket48.json 里配置的目录优先
+  let res: LiveData;
+
+  notifyAutoGrabError ??= createErrorNotifier((text: string): unknown => messageApi.error(text, 8));
+
+  try {
+    res = await requestLiveList('0', true);
+  } catch (err) {
+    console.error(err);
+    notifyAutoGrabError(await pocket48ErrorText('自动抓取：获取直播列表失败。', err));
+
+    return;
+  }
+
+  if (!res.success || !res.content?.liveList) {
+    notifyAutoGrabError(pocket48FailText('自动抓取：获取直播列表失败。', res.message));
+
+    return;
+  }
+
   const liveList: Array<LiveInfo> = res.content.liveList; // 自动刷新获取直播列表
 
   dispatch(setLiveList(liveList));
 
   // 过滤，只保留xox信息
-  const humanRegExp: RegExp = new RegExp(`(${ usersArr.join('|') })`, 'i'); // 正则
+  const isTargetMember: (nickname: string, userId: string | number) => boolean = createMemberMatcher(usersArr);
   const { liveChildList }: Pocket48InitialState = getState().pocket48;
 
   for (const item of liveList) {
     const { userId, nickname }: UserInfo = item.userInfo;
     const index: number = liveChildList.findIndex((o: WebWorkerChildItem): boolean => o.id === item.liveId);
 
-    // 正则匹配或者id完全匹配
-    if ((humanRegExp.test(nickname) || usersArr.includes[userId]) && index < 0) {
+    // 昵称匹配或者id完全匹配
+    if (isTargetMember(nickname, userId) && index < 0) {
       const cTimeDay: Dayjs = dayjs(Number(item.ctime)),
         cTime: string = cTimeDay.format(fileTimeFormat), // 直播开始时间
         rTimeDay: Dayjs = dayjs(),
@@ -121,6 +160,19 @@ async function autoGrab(
           timeString: rTime,
           ext: transcoding ? 'ts' : 'flv'
         }); // 文件名
+
+      let resInfo: LiveRoomInfo;
+
+      try {
+        resInfo = await requestLiveRoomInfo(item.liveId);
+
+        if (!resInfo.success || !resInfo.content?.playStreamPath) throw new Error(resInfo.message || '没有拿到直播地址');
+      } catch (err) {
+        // 这个成员这一轮录不了，下一轮再试，不影响其他成员
+        console.error(err);
+        notifyAutoGrabError(await pocket48ErrorText(`自动抓取：获取 ${ nickname } 的直播地址失败。`, err));
+        continue;
+      }
 
       try {
         // 追加log
@@ -138,7 +190,6 @@ async function autoGrab(
       }
 
       const filePath: string = path.join(dir, filename);
-      const resInfo: LiveRoomInfo = await requestLiveRoomInfo(item.liveId);
 
       if (backup) {
         downloadBackup({ item, resInfo, filePath });

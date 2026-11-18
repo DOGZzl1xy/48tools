@@ -1,0 +1,19 @@
+# 文本文件在仓库和工作区里都用 LF，避免每次提交出现 LF/CRLF 警告
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.webp binary
+*.avif binary
+*.wasm binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.zip binary
+*.mp4 binary

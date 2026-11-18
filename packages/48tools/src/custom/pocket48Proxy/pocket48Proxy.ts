@@ -25,9 +25,13 @@ export const POCKET48_PROXY_STORAGE_KEY: string = 'POCKET48_PROXY';
 export interface Pocket48LocalConfig {
   proxy?: string;
   token?: string;
+  downloadDir?: string; // 保存文件时默认打开的文件夹，见 custom/download/defaultSaveDir
+  liveRecordDir?: string; // 直播自动录制保存的文件夹（优先于界面里配置的目录），见 custom/live/liveRecording
+  liveRecordFormat?: 'flv' | 'mp4' | 'mp4-compress'; // 直播录完后是否转成 mp4（mp4：无损封装；mp4-compress：重新编码压缩）
 }
 
 let localConfig: Pocket48LocalConfig | undefined;
+let localConfigRoot: string | undefined; // local/ 所在的目录（仓库根目录）
 let workerProxy: string | undefined | null = null; // null：未设置
 const agentCache: Map<string, Pocket48Agents> = new Map();
 
@@ -79,6 +83,8 @@ export function getPocket48LocalConfig(): Pocket48LocalConfig {
   let config: Pocket48LocalConfig = {};
 
   if (file) {
+    localConfigRoot = path.dirname(path.dirname(file));
+
     try {
       config = JSON.parse(fs.readFileSync(file, { encoding: 'utf8' }));
     } catch (err) {
@@ -89,6 +95,13 @@ export function getPocket48LocalConfig(): Pocket48LocalConfig {
   localConfig = config;
 
   return config;
+}
+
+/* local/ 所在的目录（仓库根目录），没有找到 local/pocket48.json 时返回 undefined */
+export function getLocalConfigRoot(): string | undefined {
+  getPocket48LocalConfig();
+
+  return localConfigRoot;
 }
 
 /* Worker 内使用：设置主线程传过来的代理地址 */

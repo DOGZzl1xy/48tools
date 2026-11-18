@@ -57,6 +57,8 @@ import { pick } from '../../../../utils/lodash';
 import type { ProgressSet } from '../../../../components/ProgressNative/index';
 import ProgressDetail from '../../../../custom/download/ProgressDetail';
 import { recordListErrorText, recordListFailText } from '../../../../custom/pocket48Record/recordListError';
+import { pickAudioResume } from '../../../../custom/download/audioResume';
+import { recordTaskStart, recordTaskProgress, recordTaskEnd, audioMetaOf } from '../../../../custom/downloadQueue/recordTasks';
 import { useReqRoomIdQuery, type ReqRoomId } from '../../reducers/pocketFriends.api';
 import LiveType from '../../components/LiveType/LiveType';
 import type { MessageEventData } from '../../../../utils/worker/FFmpegDownload.worker/FFmpegDownload.worker';
@@ -278,7 +280,15 @@ function Pocket48Record(props: {}): ReactElement {
       const parseResult: ParsedPath = path.parse(resInfo.content.playStreamPath);
       const isM3u8: boolean = parseResult.ext === '.m3u8'; // 以前的视频可能是mp4的
 
-      const result: SaveDialogReturnValue = await showSaveDialog({
+      // 音频：有没下完的记录时可以接着下（custom/download/audioResume）
+      const resumeFilePath: string | undefined | null = audioOnly ? await pickAudioResume(modalApi, record.liveId) : undefined;
+
+      if (resumeFilePath === null) return;
+
+      const result: Pick<SaveDialogReturnValue, 'canceled' | 'filePath'> = resumeFilePath ? {
+        canceled: false,
+        filePath: resumeFilePath
+      } : await showSaveDialog({
         defaultPath: getFilePath({
           typeTitle: audioOnly ? '口袋48录播音频' : '口袋48录播',
           infoArray: [record.userInfo.nickname, record.title, getFileTime(record.ctime), record.liveId],
@@ -320,6 +330,7 @@ function Pocket48Record(props: {}): ReactElement {
         const { type }: MessageEventData = workerEvent.data;
 
         if (type === 'progress') {
+          recordTaskProgress(record.liveId, workerEvent.data);
           requestIdleID !== null && cancelIdleCallback(requestIdleID);
           requestIdleID = requestIdleCallback((): void => {
             dispatch(setDownloadProgress(workerEvent.data));
@@ -337,10 +348,12 @@ function Pocket48Record(props: {}): ReactElement {
               workerEvent.data.type === 'error' ? workerEvent.data.error?.message ?? '' : '' }`);
           }
 
+          recordTaskEnd(record.liveId, result.filePath!, workerEvent.data);
           worker.terminate();
           dispatch(setDeleteRecordChildList(record));
         }
       }, false);
+      recordTaskStart(record, result.filePath, audioOnly, (): void => worker.postMessage({ type: 'stop' }));
 
       worker.postMessage({
         type: 'start',
@@ -349,7 +362,9 @@ function Pocket48Record(props: {}): ReactElement {
         ffmpeg: getFFmpeg(),
         protocolWhitelist: isM3u8,
         qid: record.liveId,
-        audioOnly
+        audioOnly,
+        resume: Boolean(resumeFilePath),
+        audioMeta: audioOnly ? audioMetaOf(record) : undefined
       });
 
       dispatch(setAddRecordChildList({
@@ -414,7 +429,7 @@ function Pocket48Record(props: {}): ReactElement {
           data
         }));
       } catch (err) {
-        messageApi.error(recordListErrorText(err));
+        messageApi.error(await recordListErrorText(err));
         console.error(err);
       }
     });
@@ -438,7 +453,7 @@ function Pocket48Record(props: {}): ReactElement {
           data: res.content.liveList
         }));
       } catch (err) {
-        messageApi.error(recordListErrorText(err));
+        messageApi.error(await recordListErrorText(err));
         console.error(err);
       }
     });

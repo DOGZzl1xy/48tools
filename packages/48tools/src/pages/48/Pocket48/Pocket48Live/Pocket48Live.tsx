@@ -42,6 +42,7 @@ import {
 } from '../../reducers/pocket48';
 import { getFFmpeg, getFileTime, getFilePath } from '../../../../utils/utils';
 import { getPocket48Proxy } from '../../../../custom/pocket48Proxy/pocket48Proxy';
+import { liveRecordingStart, liveRecordingEnd } from '../../../../custom/live/liveRecording';
 import {
   netMediaServerInit,
   getNetMediaServerPort,
@@ -229,6 +230,7 @@ function Pocket48Live(props: {}): ReactElement {
         ffmpeg: getFFmpeg(),
         onClose(id: string): void {
           dispatch(setDeleteLiveChildList(record));
+          liveRecordingEnd({ liveId: record.liveId, filePath: result.filePath }, getFFmpeg());
         }
       });
 
@@ -236,6 +238,12 @@ function Pocket48Live(props: {}): ReactElement {
         id: record.liveId,
         worker: pocket48LiveRender
       }));
+      liveRecordingStart({
+        liveId: record.liveId,
+        title: `${ record.userInfo.nickname } ${ record.title }`,
+        filePath: result.filePath,
+        stop: (): void => pocket48LiveRender.kill()
+      });
     } catch (err) {
       console.error(err);
       messageApi.error('直播录制失败！');
@@ -288,8 +296,16 @@ function Pocket48Live(props: {}): ReactElement {
 
           worker.terminate();
           dispatch(setDeleteLiveChildList(record));
+          liveRecordingEnd({ liveId: record.liveId, filePath: result.filePath! }, getFFmpeg(),
+            type === 'error' ? '录制出错' : undefined);
         }
       }, false);
+      liveRecordingStart({
+        liveId: record.liveId,
+        title: `${ record.userInfo.nickname } ${ record.title }`,
+        filePath: result.filePath,
+        stop: (): void => worker.postMessage({ type: 'stop' })
+      });
 
       worker.postMessage({
         type: 'start',

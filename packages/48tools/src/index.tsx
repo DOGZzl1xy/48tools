@@ -17,6 +17,8 @@ import './entry/index/index.global.sass';
 import './components/basic/Accessibility/Accessibility';
 import './utils/logProtocol/logProtocolBroadcastChannel';
 import './utils/GLOBAL_REJECT_UNAUTHORIZED';
+import DownloadQueuePanel from './custom/downloadQueue/DownloadQueuePanel';
+import './custom/buildInfo/buildLabel';
 
 dayjs.locale('zh-cn');
 
@@ -31,6 +33,7 @@ root.render(
           <HashRouter>
             <Routers />
           </HashRouter>
+          <DownloadQueuePanel />
         </MDXProvider>
       </AntdConfig>
     </ThemeProvider>

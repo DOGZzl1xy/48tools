@@ -1,9 +1,9 @@
 import { parse, type ParsedPath } from 'node:path';
-import { setTimeout } from 'node:timers';
 import * as FluentFFmpeg from 'fluent-ffmpeg';
 import type { FfmpegCommand } from 'fluent-ffmpeg';
-import { requestLiveRoomInfo, type LiveRoomInfo } from '@48tools-api/48';
+import { requestLiveRoomInfo } from '@48tools-api/48';
 import { setPocket48ProxyForWorker } from '../../../../../custom/pocket48Proxy/pocket48Proxy';
+import { LiveReconnect } from '../../../../../custom/live/liveReconnect';
 
 export type WorkerEventData = {
   type: 'start' | 'stop'; // 执行的方法
@@ -19,29 +19,14 @@ let command: FfmpegCommand;
 let isKilled: boolean = false; // 手动结束
 let retryIndex: number = 0;
 
+let reconnect: LiveReconnect | undefined; // 断线重连（custom/live/liveReconnect）
+
 function closeCallback(workerData: WorkerEventData): void {
   if (isKilled) {
     postMessage({ type: 'close' });
   } else {
     retryIndex++;
-    // 60秒后重试
-    setTimeout((): void => {
-      requestLiveRoomInfo(workerData.liveId).then((res: LiveRoomInfo): void => {
-        if (res.success && res.content.playStreamPath !== workerData.playStreamPath) {
-          // eslint-disable-next-line @typescript-eslint/no-use-before-define
-          download({
-            type: 'start',
-            playStreamPath: res.content.playStreamPath,
-            filePath: workerData.filePath,
-            ffmpeg: workerData.ffmpeg,
-            liveId: workerData.liveId,
-            roomId: workerData.roomId
-          }, true);
-        } else {
-          postMessage({ type: 'close' });
-        }
-      });
-    }, 60_000);
+    reconnect!.handleClose(); // 断线重连，或者确认直播结束后发 close
   }
 }
 
@@ -66,6 +51,18 @@ function download(workerData: WorkerEventData, isRetry?: boolean): void {
   if (ffmpeg && ffmpeg !== '') {
     FluentFFmpeg.setFfmpegPath(ffmpeg);
   }
+
+  reconnect ??= new LiveReconnect({
+    liveId: workerData.liveId,
+    getUrl: (): string => workerData.playStreamPath,
+    requestInfo: requestLiveRoomInfo,
+    restart(url: string): void {
+      download(Object.assign(workerData, { playStreamPath: url }), true);
+    },
+    close: (): void => postMessage({ type: 'close' }),
+    isKilled: (): boolean => isKilled
+  });
+  reconnect.markStart();
 
   command = FluentFFmpeg(playStreamPath)
     .inputOptions(['-rw_timeout', `${ (1_000 ** 2) * 60 * 5 }`, '-re', '-accurate_seek'])

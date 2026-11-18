@@ -7,14 +7,16 @@
  *   - 打包完成后恢复开发模式用的主进程代码（packages/main/lib）
  * 程序启动时会从 exe 所在目录往上找仓库的 local/（代理和 token），所以 local/ 不会被打进程序目录。
  * 用法：node scripts/custom/packWin64.mjs（打包前先关掉正在运行的 build/48tools-win64/48tools.exe）
- *       加 --skip-build 只重新打包，不重新编译
+ *       加 --skip-build 只重新打包，不重新编译；加 --skip-smoke 跳过打包后的启动检查
+ * 打包时把当前提交号写进 resources/app/build-info.json，窗口标题会显示「自定义版 xxxxxxx」（custom/buildInfo/buildLabel）。
+ * 打包后会自动启动一次程序（约 10 秒，会闪一下窗口），确认启动时界面没有报错，再关掉。
  * 注意：electron-builder 第一次运行时会下载 winCodeSign（给 exe 设置图标），里面有 macOS 的符号链接，
  *       没有管理员权限 / 开发者模式时解压会失败。解决办法：用 7za 加 -xr!darwin 解压到
  *       %LOCALAPPDATA%\electron-builder\Cache\winCodeSign\winCodeSign-2.6.0
  */
 import path from 'node:path';
 import fsP from 'node:fs/promises';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { rimraf } from 'rimraf';
 import fse from 'fs-extra/esm';
 import { glob } from 'glob';
@@ -77,6 +79,64 @@ async function checkDelayRequireInLoopHead() {
   }
 }
 
+/* 当前提交的信息，写进程序目录，窗口标题用 */
+function gitBuildInfo() {
+  const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+  const now = new Date();
+  const date = `${ now.getFullYear() }-${ String(now.getMonth() + 1).padStart(2, '0') }-${ String(now.getDate()).padStart(2, '0') }`;
+
+  try {
+    return { commit: git(['rev-parse', '--short', 'HEAD']), date, dirty: git(['status', '--porcelain']) !== '' };
+  } catch {
+    return { date };
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 启动检查：打开打包好的程序约 10 秒，界面控制台有报错就算失败，然后正常关闭（代理会跟着退出）。
+ * 开发模式和打包后的代码不完全一样（见 checkDelayRequireInLoopHead），这一步用来发现只在打包后才出现的错误。
+ */
+async function smokeTest(exe) {
+  const output = [];
+  const child = spawn(exe, [], {
+    cwd: path.dirname(exe),
+    env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1' },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  let exited = false;
+
+  child.stdout.on('data', (data) => output.push(data.toString()));
+  child.stderr.on('data', (data) => output.push(data.toString()));
+  child.on('exit', () => (exited = true));
+  await sleep(10_000);
+
+  if (exited) throw new Error('启动检查失败：程序启动后自己退出了（是不是已经有一个 48tools 在运行？）');
+
+  // 先正常关闭窗口，不行再强制结束
+  try {
+    execFileSync('taskkill', ['/PID', String(child.pid)], { stdio: 'ignore' });
+  } catch { /* noop */ }
+
+  for (let i = 0; i < 16 && !exited; i++) await sleep(500);
+
+  if (!exited) {
+    try {
+      execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+    } catch { /* noop */ }
+  }
+
+  const errors = output.join('').split(/\r?\n/)
+    .filter((line) => /Uncaught|Minified React error|Cannot find module|is not defined|is not a function/.test(line));
+
+  if (errors.length > 0) {
+    throw new Error(`启动检查失败，界面有报错：\n${ errors.slice(0, 5).map((line) => line.slice(0, 300)).join('\n') }`);
+  }
+}
+
 function builderConfig() {
   return {
     appId: '48tools',
@@ -136,6 +196,7 @@ async function packWin64() {
 
   await Promise.all([
     fsP.writeFile(path.join(wwwDir, 'package.json'), JSON.stringify(appPackageJson), { encoding: 'utf8' }),
+    fsP.writeFile(path.join(wwwDir, 'build-info.json'), JSON.stringify(gitBuildInfo()), { encoding: 'utf8' }),
     fse.copy(path.join(cwd, 'packages/main/lib'), path.join(wwwDir, 'boot')),
     fse.copy(path.join(cwd, 'packages/48tools/dist'), path.join(wwwDir, 'view')),
     fse.copy(path.join(cwd, 'packages/help/dist'), path.join(wwwDir, 'help'))
@@ -167,6 +228,12 @@ async function packWin64() {
   // 6. 恢复开发模式用的主进程代码
   console.log('⏳ 恢复开发模式的主进程代码');
   await runScript('dev', path.join(cwd, 'packages/main'));
+
+  // 7. 启动检查
+  if (!process.argv.includes('--skip-smoke')) {
+    console.log('⏳ 启动检查（会打开程序约 10 秒）');
+    await smokeTest(path.join(targetDir, '48tools.exe'));
+  }
 
   console.log(`✅ 打包完成：${ path.join(targetDir, '48tools.exe') }`);
 }

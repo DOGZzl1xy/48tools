@@ -1,10 +1,49 @@
-import { Fragment, useState, type ReactElement, type Dispatch as D, type SetStateAction as S, type MouseEvent } from 'react';
-import { Button, Modal, Form, Alert, Input, message, type FormInstance } from 'antd';
+import { Fragment, useState, useEffect, type ReactElement, type Dispatch as D, type SetStateAction as S, type MouseEvent } from 'react';
+import { Button, Modal, Form, Alert, Input, Badge, Tooltip, message, type FormInstance } from 'antd';
 import type { Store } from 'antd/es/form/interface';
 import type { Rule } from 'rc-field-form/es/interface';
 import type { UseMessageReturnType } from '@48tools-types/antd';
 import { GlobalOutlined as IconGlobalOutlined } from '@ant-design/icons';
 import { POCKET48_PROXY_STORAGE_KEY, getPocket48LocalConfig } from './pocket48Proxy';
+import { checkPocket48Proxy, type ProxyState } from '../pocket48Api/apiErrorText';
+
+const proxyStateText: Record<ProxyState, string> = {
+  ok: '代理运行中',
+  down: '代理没有在运行（连不上代理端口）',
+  direct: '没有配置代理，直连'
+};
+
+const proxyStateBadge: Record<ProxyState, 'success' | 'error' | 'default'> = {
+  ok: 'success',
+  down: 'error',
+  direct: 'default'
+};
+
+/* 每 10 秒检查一次代理状态，显示在按钮上 */
+function useProxyState(refreshKey: unknown): ProxyState | undefined {
+  const [state, setState]: [ProxyState | undefined, D<S<ProxyState | undefined>>] = useState(undefined);
+
+  useEffect(function(): () => void {
+    let active: boolean = true;
+
+    function check(): void {
+      checkPocket48Proxy().then((value: ProxyState): void => {
+        active && setState(value);
+      }).catch((): void => undefined);
+    }
+
+    check();
+
+    const timer: number = window.setInterval(check, 10_000);
+
+    return (): void => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [refreshKey]);
+
+  return state;
+}
 
 const proxyRules: Array<Rule> = [
   { pattern: /^\s*(https?:\/\/\S+)?\s*$/i, message: '请输入 http:// 或 https:// 开头的代理地址，留空表示直连' }
@@ -16,6 +55,7 @@ function Pocket48ProxyOption(props: {}): ReactElement {
   const [messageApi, messageContextHolder]: UseMessageReturnType = message.useMessage();
   const [form]: [FormInstance] = Form.useForm();
   const fileProxy: string = getPocket48LocalConfig().proxy?.trim() ?? '';
+  const proxyState: ProxyState | undefined = useProxyState(visible); // 关闭配置弹窗后马上重新检查
 
   // 打开配置弹出层
   function handleOpenPocket48ProxyClick(event: MouseEvent): void {
@@ -66,9 +106,12 @@ function Pocket48ProxyOption(props: {}): ReactElement {
 
   return (
     <Fragment>
-      <Button id="pocket48-proxy" icon={ <IconGlobalOutlined /> } onClick={ handleOpenPocket48ProxyClick }>
-        口袋48代理
-      </Button>
+      <Tooltip title={ proxyState ? proxyStateText[proxyState] : undefined }>
+        <Button id="pocket48-proxy" icon={ <IconGlobalOutlined /> } onClick={ handleOpenPocket48ProxyClick }>
+          口袋48代理
+          { proxyState ? <Badge className="ml-[2px]" status={ proxyStateBadge[proxyState] } /> : null }
+        </Button>
+      </Tooltip>
       <Modal title="口袋48代理"
         open={ visible }
         width={ 600 }

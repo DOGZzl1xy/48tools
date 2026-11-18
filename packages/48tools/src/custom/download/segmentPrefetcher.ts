@@ -53,7 +53,21 @@ export class SegmentPrefetcher {
   readonly #tasks: Map<number, Promise<number>> = new Map();
   #next: number = 0; // 下一个要开始下载的分片
 
-  constructor(total: number, workDir: string, download: SegmentDownloader, concurrency: number = SEGMENT_CONCURRENCY) {
+  /**
+   * @param { number } total - 分片总数
+   * @param { string } workDir - 临时目录
+   * @param { SegmentDownloader } download
+   * @param { number } [concurrency]
+   * @param { number } [start] - 从第几个分片开始（断点续传）
+   */
+  constructor(
+    total: number,
+    workDir: string,
+    download: SegmentDownloader,
+    concurrency: number = SEGMENT_CONCURRENCY,
+    start: number = 0
+  ) {
+    this.#next = start;
     this.#total = total;
     this.#workDir = workDir;
     this.#download = download;
