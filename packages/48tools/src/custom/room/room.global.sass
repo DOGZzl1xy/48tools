@@ -185,16 +185,38 @@
 
 .room-message
   display: flex
-  align-items: flex-end
-  gap: 8px
-  max-width: 78%
-  margin-top: 6px
+  align-items: flex-start
+  gap: 10px
+  max-width: 82%
+  margin-top: 8px
 
   time
     flex: none
     padding-bottom: 2px
     color: var(--shell-text-tertiary)
     font-size: 11px
+
+.room-avatar
+  flex: none
+  margin-top: 1px
+
+.room-message-main
+  min-width: 0
+
+.room-message-row
+  display: flex
+  align-items: flex-end
+  gap: 8px
+
+// 不是房主发的消息：显示名字，气泡换一个颜色
+.room-sender
+  margin: 0 0 3px 2px
+  color: var(--shell-primary)
+  font-size: 12px
+  font-weight: 600
+
+.room-message.is-guest .room-bubble
+  background: var(--shell-active-bg)
 
 .room-bubble
   min-width: 0
@@ -259,6 +281,20 @@
   padding: 10px
   border: 1px solid var(--shell-border)
   border-radius: 12px
+  background: transparent
+  color: inherit
+  font: inherit
+  text-align: left
+  cursor: pointer
+  transition: border-color .12s, background-color .12s
+
+  &:hover
+    border-color: var(--shell-primary)
+    background: var(--shell-hover)
+
+  &:focus-visible
+    outline: 2px solid var(--shell-primary)
+    outline-offset: 2px
 
   img
     flex: none

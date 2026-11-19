@@ -35,7 +35,8 @@ import { showSaveDialog } from '../../utils/remote/dialog';
 import { getFilePath } from '../../utils/utils';
 import { source } from '../../utils/snh48';
 import type { SendDataItem } from '../../pages/48/types';
-import MessageBubble from './MessageBubble';
+import MessageBubble, { type LivePushInfo } from './MessageBubble';
+import { openLivePush, type LivePushResult } from './openLive';
 import {
   useRoomState,
   openRoom,
@@ -345,6 +346,31 @@ function ChatView(props: { member: RoomMember; room: RoomData; followed: boolean
     }
   }
 
+  /* 点击「开始直播」卡片：直播中打开直播，结束了打开回放，都没有就提示失效 */
+  async function handleOpenLive(info: LivePushInfo): Promise<void> {
+    const key: string = `open-live-${ info.liveId }`;
+
+    messageApi.open({ key, type: 'loading', content: '正在查询这场直播…', duration: 0 });
+
+    try {
+      const result: LivePushResult = await openLivePush(info.liveId, { title: info.liveTitle, cover: info.liveCover });
+
+      if (result.kind === 'gone') {
+        messageApi.open({ key, type: 'warning', content: '直播回放已失效', duration: 3 });
+      } else {
+        messageApi.open({
+          key,
+          type: 'success',
+          content: result.kind === 'live' ? '直播进行中，已打开直播播放' : '直播已结束，已打开回放',
+          duration: 2.5
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      messageApi.open({ key, type: 'error', content: '打开失败', duration: 3 });
+    }
+  }
+
   let lastDay: string = '';
 
   return (
@@ -410,7 +436,7 @@ function ChatView(props: { member: RoomMember; room: RoomData; followed: boolean
               return (
                 <Fragment key={ item.key }>
                   { showDay ? <div className="room-day"><span>{ day }</span></div> : null }
-                  <MessageBubble item={ item } time={ time.format('HH:mm') } />
+                  <MessageBubble item={ item } time={ time.format('HH:mm') } ownerId={ member.ownerId } onOpenLive={ handleOpenLive } />
                 </Fragment>
               );
             })
