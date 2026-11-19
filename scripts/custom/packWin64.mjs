@@ -173,6 +173,25 @@ function builderConfig() {
   };
 }
 
+/**
+ * 把新打好的目录改名成最终的程序目录。
+ * 刚生成的文件夹有时正被杀毒软件 / 索引服务扫描，改名会被系统拒绝（EPERM / EBUSY / EACCES），等一下再试就好。
+ */
+async function renameWithRetry(from, to, times = 20) {
+  for (let i = 1; ; i++) {
+    try {
+      await fsP.rename(from, to);
+
+      return;
+    } catch (err) {
+      if (i >= times || !['EPERM', 'EBUSY', 'EACCES'].includes(err.code)) throw err;
+
+      console.log(`⏳ 程序目录暂时被占用，${ i }/${ times } 次重试`);
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+    }
+  }
+}
+
 async function packWin64() {
   await checkTargetNotRunning();
 
@@ -224,7 +243,7 @@ async function packWin64() {
   // 5. 替换旧的程序目录
   await checkTargetNotRunning();
   await rimraf(targetDir);
-  await fsP.rename(unpackedDir, targetDir);
+  await renameWithRetry(unpackedDir, targetDir);
   await Promise.all([rimraf(outputDir), rimraf(wwwDir)]);
 
   // 6. 恢复开发模式用的主进程代码
