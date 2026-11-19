@@ -23,6 +23,7 @@
 | 房间的「全部消息」（成员 + 粉丝）：标题栏可以切换「只看成员 / 全部消息」，默认只看成员。用的是抓包得到的 `list/all` 接口。两种消息各自缓存；每次进入房间两种都会取并存到本机（没在看的那种在后台取）。全部消息每个房间本地最多保留最新 20000 条（`localStorage` 的 `ROOM_ALL_CACHE_MAX` 可以改）。缓存改成分批读取（每次 500 条），数据库升到版本 2。导出的是本地已有的全部内容 | `room/roomApi.ts`、`room/roomCache.ts`、`room/roomStore.ts`（`RoomStream`、`setMode`、`readAllCached`）、`room/MessageBubble.tsx`（粉丝 / 礼物消息的显示） | `room/RoomPage.tsx`；`pages/48/RoomMessage/utils/formatData.ts` 的 `formatSendData` 加了 `keepAll` 参数（导出全部消息时保留粉丝的消息） |
 | 关注成员的新消息提示：后台每 2 分钟检查一次关注成员的房间，未读条数显示在关注列表的头像气泡和侧边栏「房间消息」上；进入房间后清零，并用「以下是新消息」标出从哪里开始没看过；这条线在屏幕上方时，右上角有「N 条新消息」按钮，点一下跳到第一条新消息。「看到哪了」存在本机（localStorage 的 `ROOM_UNREAD`） | `room/unreadStore.ts`、`room/unreadWatcher.ts`、`room/RoomUnreadBadge.tsx` | `shell/AppShell.tsx`（启动后台检查、侧边栏数字）、`room/roomStore.ts`（`reportMessages`）、`room/RoomPage.tsx` |
 | 关闭窗口后留在后台运行（Windows 系统托盘）：点 × 只是收起窗口，直播抓取、下载、房间新消息检查继续；托盘图标单击打开窗口，右键可以关掉这个功能或退出。设置页面有开关和「退出程序」按钮。`48tools.exe --quit` 可以让正在运行的程序正常退出（打包脚本的启动检查用它） | `main/src/custom/backgroundTray.mts`、`main/src/custom/backgroundChannel.ts`、`settings/BackgroundOption.tsx` | `main/src/ProcessWindow.mts`（`keepInBackground`）、`main/src/custom/singleInstance.mts`（`--quit`）、`main/src/commend.mts`（`partial: true`，否则 `--quit` 会被当成未知参数报错）、`settings/SettingsPage.tsx`、`scripts/custom/packWin64.mjs`（启动检查） |
+| 回放窗口的弹幕跟着播放进度出现：右边的弹幕栏默认「跟随播放」，视频播到哪里弹幕出到哪里，新的从下面冒出来并自动滚到最新；往上翻时停止自动滚动，出现「N 条新弹幕」按钮；拖动进度条时弹幕跟着变；点弹幕前面的时间，视频跳到那一刻。「全部」是整份弹幕（原版的看法），标出当前播到的那一条。跟随播放只画最近 200 条（原版 `pages/PlayerWindow/Danmu/RecordDanmu.tsx` 保留不动） | `player/ReplayDanmu.tsx`、`player/danmuTimeline.ts`、`player/replayDanmu.global.sass` | `pages/PlayerWindow/PlayerWindow.tsx` 的 `danmuRender`（回放时用 `ReplayDanmu`） |
 | 顶层页面的「返回」换成页面标题（子页面仍然显示返回） | `shell/PageTitle.tsx` | `components/Header/Header.tsx` |
 | 新首页：常用功能卡片、当前任务、全部功能、设置、关于（原版首页 `pages/Index/Index.tsx` 保留不动） | `home/HomeDashboard.tsx`、`home/home.global.sass` | `router/Routers.tsx` 的首页路由 |
 | 表格「操作」列：常用按钮 + 「更多」菜单；「标题」列带封面；窄窗口时表格横向滚动 | `table/RowActions.tsx`、`table/MediaTitleCell.tsx` | `Pocket48Record.tsx`、`Pocket48Live.tsx` 的列定义和 `<Table>` |
@@ -31,7 +32,7 @@
 | 音频断点续传（每 40 个分片记录一次进度到「文件名.part.json」）、m4a 写入标题 / 成员 / 日期 | `download/audioExtract.ts`、`download/audioResumeState.ts`、`download/audioResume.tsx` | `Pocket48Record.tsx`（下载音频前询问是否接着下）、`Pocket48M3u8Download.worker.ts`（`resume`、`audioMeta`） |
 | 窗口标题加「-custom」（`48tools - 上游版本号-custom`）；打包的提交号记在程序目录的 `resources/app/build-info.json` | `buildInfo/buildLabel.ts` | `src/index.tsx` |
 | 打包后的程序也能找到 `local/`（从 exe 所在目录往上找） | `pocket48Proxy/pocket48Proxy.ts` | 无 |
-| 只打包 Windows 64 位：`node --run pack:win`，输出 `build/48tools-win64/48tools.exe` | `scripts/custom/packWin64.mjs` | 根目录 `package.json` 的 `pack:win` |
+| 只打包 Windows 64 位：`node --run pack:win`，输出 `build/48tools-win64/48tools.exe`；最后替换程序目录时如果文件夹暂时被占用（比如杀毒软件在扫描），会自动重试 | `scripts/custom/packWin64.mjs` | 根目录 `package.json` 的 `pack:win` |
 | 直播录制断线重连也走代理 | `pocket48Proxy/pocket48Proxy.ts` | `Pocket48Live.tsx`、`utils/autoGrab.ts` 传 `pocket48Proxy`；两个直播下载 worker 调 `setPocket48ProxyForWorker` |
 | 请求头模拟 iOS 口袋48 7.1.48，设备 ID 本机固定 | `pocket48Headers/pocket48ClientInfo.ts` | `utils/snh48.ts` 的 `createHeaders` |
 | 首页「口袋48代理」设置 | `pocket48Proxy/Pocket48ProxyOption.tsx` | `pages/Index/Index.tsx` |

@@ -1,0 +1,151 @@
+/* 回放窗口右边的弹幕栏（见 ./ReplayDanmu.tsx）。颜色来自组件设置的 --rd-* 变量 */
+.replay-danmu
+  display: flex
+  flex: 1
+  flex-direction: column
+  min-height: 0
+  font-size: 12px
+
+.replay-danmu-head
+  display: flex
+  flex-shrink: 0
+  align-items: center
+  justify-content: space-between
+  gap: 8px
+  margin-bottom: 8px
+
+  small
+    color: var(--rd-tertiary)
+    font-variant-numeric: tabular-nums
+
+.replay-danmu-body
+  position: relative
+  flex: 1
+  min-height: 0
+  border-radius: 8px
+  background: var(--rd-surface)
+  overflow: hidden
+
+.replay-danmu-scroll
+  height: 100%
+  overflow-y: auto
+  overscroll-behavior: contain
+  scrollbar-width: thin
+  scrollbar-color: var(--rd-scrollbar) transparent
+
+/* 弹幕不满一屏时贴着底部，新的从下面冒出来 */
+.replay-danmu-list
+  display: flex
+  flex-direction: column
+  justify-content: flex-end
+  box-sizing: border-box
+  min-height: 100%
+  padding: 6px 0
+
+  .replay-danmu-row
+    animation: replay-danmu-in .2s ease-out
+
+.replay-danmu-all .rc-virtual-list-scrollbar-thumb
+  background: var(--rd-scrollbar) !important
+
+.replay-danmu-row
+  display: flex
+  align-items: baseline
+  gap: 8px
+  padding: 3px 10px
+  color: var(--rd-text)
+  line-height: 20px
+
+  &:hover
+    background: var(--rd-hover)
+
+  &.is-current
+    background: var(--rd-active)
+
+  b
+    margin-right: 6px
+    color: var(--rd-secondary)
+    font-weight: 500
+
+.replay-danmu-time
+  flex-shrink: 0
+  min-width: 30px
+  padding: 0
+  border: 0
+  background: none
+  color: var(--rd-tertiary)
+  font-size: 11px
+  font-variant-numeric: tabular-nums
+  text-align: right
+  cursor: pointer
+
+  &:hover
+    color: var(--rd-primary)
+
+  &:focus-visible
+    outline: 2px solid var(--rd-primary)
+    outline-offset: 1px
+    border-radius: 3px
+
+.replay-danmu-text
+  min-width: 0
+  overflow-wrap: anywhere
+
+.replay-danmu-wait
+  margin: 0
+  padding: 12px 10px
+  color: var(--rd-tertiary)
+  text-align: center
+
+.replay-danmu-hint
+  display: flex
+  flex-direction: column
+  align-items: center
+  justify-content: center
+  gap: 12px
+  height: 100%
+  color: var(--rd-tertiary)
+
+  p
+    margin: 0
+
+.replay-danmu-jump
+  position: absolute
+  bottom: 12px
+  left: 50%
+  z-index: 2
+  display: inline-flex
+  align-items: center
+  gap: 6px
+  height: 28px
+  padding: 0 12px
+  border: 0
+  border-radius: 14px
+  background: var(--rd-primary)
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .22)
+  color: #fff
+  font-size: 12px
+  white-space: nowrap
+  cursor: pointer
+  transform: translateX(-50%)
+  transition: filter .12s
+
+  &:hover
+    filter: brightness(1.08)
+
+  &:focus-visible
+    outline: 2px solid var(--rd-text)
+    outline-offset: 2px
+
+@keyframes replay-danmu-in
+  from
+    opacity: 0
+    transform: translateY(6px)
+
+  to
+    opacity: 1
+    transform: none
+
+@media (prefers-reduced-motion: reduce)
+  .replay-danmu-list .replay-danmu-row
+    animation: none

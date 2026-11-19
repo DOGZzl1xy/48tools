@@ -6,7 +6,7 @@ import commonStyle from '../../common.sass';
 import LiveInfo from './LiveInfo/LiveInfo';
 import LiveVideo from './Video/LiveVideo';
 import RecordVideo from './Video/RecordVideo';
-import RecordDanmu from './Danmu/RecordDanmu';
+import ReplayDanmu from '../../custom/player/ReplayDanmu';
 import Damu from './Danmu/Danmu';
 import { getUserInfo } from './utils/helper';
 import { Pocket48Login } from '../../functionalComponents/Pocket48Login/enum';
@@ -36,7 +36,7 @@ function PlayerWindow(props: {}): ReactElement {
   // 渲染弹幕
   function danmuRender(): ReactElement | null {
     if (inRecord) {
-      return <RecordDanmu info={ info } />;
+      return <ReplayDanmu info={ info } />; // 弹幕跟着播放进度出现（原版 RecordDanmu 是一次全部列出来）
     }
 
     if (!nodeNim) {
