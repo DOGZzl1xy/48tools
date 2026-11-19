@@ -68,7 +68,8 @@ async function fixReduxjsToolkitTypeError(): Promise<void> {
     for (let i: number = 0; i < lines.length; i++) {
       const line: string = lines[i];
 
-      if (line.includes("'@internal/")) {
+      // 已经加过就不再加（重复安装时会再跑一次，加两行反而报「多余的 @ts-expect-error」）
+      if (line.includes("'@internal/") && lines[i - 1]?.trim() !== '// @ts-expect-error') {
         output.push('// @ts-expect-error');
       }
 

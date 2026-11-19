@@ -1,7 +1,8 @@
 'use idle';
 
 import { randomUUID } from 'node:crypto';
-import { clipboard, type SaveDialogReturnValue } from 'electron';
+import type { SaveDialogReturnValue } from 'electron';
+import { clipboard } from '../../../../custom/compat/clipboard'; // Electron 44 起界面里不能用 electron 的 clipboard，换成自己的
 import { Fragment, useEffect, useTransition, type ReactElement, type TransitionStartFunction, type MouseEvent } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import type { Dispatch } from '@reduxjs/toolkit';

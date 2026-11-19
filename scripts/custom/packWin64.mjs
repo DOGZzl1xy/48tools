@@ -3,6 +3,7 @@
  * 和原版 scripts/delivery.mjs 的步骤一样，区别：
  *   - 只编译 win64，不编译其他平台
  *   - 直接用 node_modules/electron/dist 里已经下载好的 Electron，不再联网下载
+ *     （Electron 42 起安装依赖时不再自动下载程序本体，dist 不存在时这里会先下载一次）
  *   - 不下载网易云信 SDK（node-nim，口袋48房间消息用），和开发模式一样
  *   - 打包完成后恢复开发模式用的主进程代码（packages/main/lib）
  * 程序启动时会从 exe 所在目录往上找仓库的 local/（代理和 token），所以 local/ 不会被打进程序目录。
@@ -41,6 +42,22 @@ function runScript(script, dir) {
       code === 0 ? resolve() : reject(new Error(`${ path.relative(cwd, dir) }: node --run ${ script } 失败，退出码 ${ code }`));
     });
   });
+}
+
+/**
+ * 确认 node_modules/electron/dist 里有 Electron 程序本体。
+ * Electron 42 起，安装依赖（yarn install）不再自动下载它，要到第一次运行 electron 命令时才下载；
+ * 重新安装依赖后直接打包的话 dist 还不存在，这里用 electron 自带的 install.js 下载一次。
+ */
+async function ensureElectronDist() {
+  const exe = path.join(electronDist, 'electron.exe');
+
+  if (await fse.pathExists(exe)) return;
+
+  console.log(`⏳ 下载 Electron ${ electronVersion }（node_modules/electron/dist 还没有）`);
+  execFileSync(process.execPath, [path.join(cwd, 'node_modules/electron/install.js')], { cwd, stdio: 'inherit' });
+
+  if (!await fse.pathExists(exe)) throw new Error(`Electron 下载后仍然找不到 ${ exe }`);
 }
 
 /* 程序目录被占用（程序还开着）时提前报错，避免编译完才发现替换不了 */
@@ -194,6 +211,7 @@ async function renameWithRetry(from, to, times = 20) {
 
 async function packWin64() {
   await checkTargetNotRunning();
+  await ensureElectronDist();
 
   // 1. 编译（--skip-build：直接用上次编译好的文件，只重新打包）
   if (process.argv.includes('--skip-build')) {

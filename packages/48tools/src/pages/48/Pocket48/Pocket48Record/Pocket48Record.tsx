@@ -4,7 +4,8 @@ import * as path from 'node:path';
 import type { ParsedPath } from 'node:path';
 import { promises as fsP } from 'node:fs';
 import { setTimeout, clearTimeout } from 'node:timers';
-import { clipboard, ipcRenderer, type SaveDialogReturnValue } from 'electron';
+import { ipcRenderer, type SaveDialogReturnValue } from 'electron';
+import { clipboard } from '../../../../custom/compat/clipboard'; // Electron 44 起界面里不能用 electron 的 clipboard，换成自己的
 import {
   Fragment,
   useState,

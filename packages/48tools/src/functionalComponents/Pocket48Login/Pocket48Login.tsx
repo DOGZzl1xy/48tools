@@ -1,4 +1,4 @@
-import { clipboard } from 'electron';
+import { clipboard } from '../../custom/compat/clipboard'; // Electron 44 起界面里不能用 electron 的 clipboard，换成自己的
 import {
   Fragment,
   createElement,
