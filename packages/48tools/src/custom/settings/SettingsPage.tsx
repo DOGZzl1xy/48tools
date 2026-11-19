@@ -18,6 +18,7 @@ import ThemeContext, { type Theme } from '../../components/basic/Theme/ThemeCont
 import { useAppDataDir, type UseAppDataDirReturnType } from '../../functionalComponents/Pocket48Login/useAppDataDir/useAppDataDir';
 import { showOpenDialog } from '../../utils/remote/dialog';
 import Pocket48ProxyOption from '../pocket48Proxy/Pocket48ProxyOption';
+import BackgroundOption from './BackgroundOption';
 import { safeOpenExternal } from '../security/safeOpenExternal';
 import { resolveLocalDir } from '../download/defaultSaveDir';
 import {
@@ -30,7 +31,7 @@ import {
 } from './settingsStore';
 
 /**
- * 设置页面：账号、保存位置、直播录制格式、代理、外观、工具路径、关于。
+ * 设置页面：账号、保存位置、直播录制格式、代理、后台运行、外观、工具路径、关于。
  * 入口在侧边栏底部的「设置」。账号、FFmpeg、代理等沿用原来的组件（只是集中放到这里）。
  * 接入点：router/Routers.tsx 的 Settings 路由。
  */
@@ -127,6 +128,11 @@ function SettingsPage(props: {}): ReactElement {
         <Row label="口袋48代理" hint="只有口袋48接口走这个代理，其他请求直连。圆点表示代理是否在运行。">
           <Pocket48ProxyOption />
         </Row>
+      </section>
+
+      <section>
+        <h2>后台运行</h2>
+        <BackgroundOption />
       </section>
 
       <section>

@@ -116,9 +116,9 @@ async function smokeTest(exe) {
 
   if (exited) throw new Error('启动检查失败：程序启动后自己退出了（是不是已经有一个 48tools 在运行？）');
 
-  // 先正常关闭窗口，不行再强制结束
+  // 先让它正常退出（关闭窗口只会藏到托盘，所以用 --quit），不行再强制结束
   try {
-    execFileSync('taskkill', ['/PID', String(child.pid)], { stdio: 'ignore' });
+    execFileSync(exe, ['--quit'], { cwd: path.dirname(exe), stdio: 'ignore', timeout: 15_000 });
   } catch { /* noop */ }
 
   for (let i = 0; i < 16 && !exited; i++) await sleep(500);
@@ -127,6 +127,8 @@ async function smokeTest(exe) {
     try {
       execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
     } catch { /* noop */ }
+
+    throw new Error('启动检查失败：程序没有响应 --quit（已经强制结束）。关闭窗口后程序会留在后台，--quit 是脚本让它退出的办法，不能坏');
   }
 
   const errors = output.join('').split(/\r?\n/)

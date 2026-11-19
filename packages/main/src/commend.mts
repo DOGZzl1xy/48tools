@@ -16,5 +16,6 @@ export interface CommandLineOptions extends _CommandLineOptions {
 }
 
 export const commandLineOptions: CommandLineOptions = isTest ? {} : commandLineArgs(optionDefinitions, {
-  argv: isDevelopment ? undefined : argv.slice(1)
+  argv: isDevelopment ? undefined : argv.slice(1),
+  partial: true // custom：不认识的参数（例如 custom/singleInstance 的 --quit）不要报错退出
 });

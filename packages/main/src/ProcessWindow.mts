@@ -15,6 +15,7 @@ import type { ThemeValue } from './ipcListener/themeChange.mjs';
 import { guardAppWebContents } from './custom/windowGuards.mjs';
 import { registerDevShortcuts } from './custom/devShortcuts.mjs';
 import { tuneWindowOptions, showWhenReady } from './custom/windowTuning.mjs';
+import { keepInBackground } from './custom/backgroundTray.mjs';
 
 export let processWindow: BrowserWindow | null = null;
 
@@ -56,6 +57,7 @@ export function createWindow(): void {
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#000000' : undefined
   }, nativeTheme.shouldUseDarkColors));
   showWhenReady(processWindow);
+  keepInBackground(processWindow); // 关闭窗口后留在系统托盘继续运行
 
   if (isDevelopment && !isTest) {
     processWindow.webContents.openDevTools();
