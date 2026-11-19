@@ -11,7 +11,9 @@ import {
 } from '@48tools-api/48';
 import { FormatData } from '../../pages/48/RoomMessage/utils/formatData';
 import { source, getPocket48Token } from '../../utils/snh48';
-import { readRoomCache, writeRoomCache, clearRoomCache, type RoomCacheData } from './roomCache';
+import { readRoomCache, writeRoomCache, clearRoomCache, type RoomCacheData, type RoomStream } from './roomCache';
+import { requestAllMessage } from './roomApi';
+import { noteMessages, getChannel, setChannel } from './unreadStore';
 import type { FormatCustomMessage } from '../../pages/48/types';
 
 /**
@@ -31,7 +33,18 @@ import type { FormatCustomMessage } from '../../pages/48/types';
  * 本地缓存（./roomCache，IndexedDB）：取到的消息会存到本机。下次打开房间时先显示本地的消息，
  * 再从最新的一批开始往回取，直到和本地的消息接上为止，所以只需要取「上次之后新发的」那部分。
  * 更早的消息仍然是往上滚动时才取，取到后也会存下来。
+ *
+ * 未读消息数（./unreadStore）：每次房间的消息有变化，都把消息的时间交给它（reportMessages）。
+ *
+ * 每个房间有两路消息（RoomStream），各自加载、各自缓存：
+ *   - owner：只有成员发的（上面第 3 步的接口），页面默认看这一路
+ *   - all：房间里所有人的消息，包括粉丝（./roomApi 的 list/all 接口，翻页方式一样）
+ * 每次进入一个房间，两路都会更新：正在看的那一路先取，另一路跟在后面取并存进缓存。所以即使一直「只看成员」，
+ * 进过的房间也会把全部消息存下来。全部消息量很大，每个房间本地最多保留最新的 MAX_ALL_CACHED 条。
+ * 未读数只按成员这一路算。
  */
+export type { RoomStream } from './roomCache';
+
 export interface RoomMember {
   ownerId: number; // 成员的用户 ID（serverOwner）
   name: string;
@@ -55,16 +68,27 @@ export interface RoomData {
   opened: boolean;               // 已经加载过第一批
   fromCache?: boolean;           // 这次打开时用了本地缓存
   syncing?: boolean;             // 正在补上比本地新的消息
+  cacheMore?: boolean;           // 本地缓存里还有更早的消息没读进来（往上滚动时先读本地的）
 }
 
 export interface RoomState {
   follows: Array<RoomMember>;
   current?: RoomMember;
-  rooms: Record<number, RoomData>;
+  rooms: Record<number, RoomData>;    // 只有成员的消息
+  allRooms: Record<number, RoomData>; // 所有人的消息
+  mode: RoomStream;                   // 页面现在看的是哪一路。每次启动都从「只看成员」开始
 }
 
 const FOLLOWS_KEY: string = 'ROOM_FOLLOWS';
 const LAST_ROOM_KEY: string = 'ROOM_LAST';
+const CACHE_CHUNK: number = 500;       // 从本地缓存一次读多少条
+const MAX_ALL_CACHED: number = 20_000; // 「全部消息」每个房间本地最多保留多少条（最新的）
+const MAX_ALL_CACHED_KEY: string = 'ROOM_ALL_CACHE_MAX'; // 想改上面这个上限时，在 localStorage 里写这个值（测试时也用它）
+const PAGE_GAP: number = 120;          // 补「全部消息」时每取一批歇一下（毫秒），不要一口气发太多请求
+
+// 补新消息时最多往回取多少批（每批 50 条）。超过说明离上次太久，放弃旧缓存，从最新的重新开始
+const MAX_CATCH_UP_PAGES: Record<RoomStream, number> = { owner: 60, all: 100 };
+const roomsKey: Record<RoomStream, 'rooms' | 'allRooms'> = { owner: 'rooms', all: 'allRooms' };
 const listeners: Set<() => void> = new Set();
 
 function readJson<T>(key: string, fallback: T): T {
@@ -84,7 +108,9 @@ function isMember(value: unknown): value is RoomMember {
 let state: RoomState = {
   follows: typeof localStorage === 'undefined' ? [] : readJson<Array<unknown>>(FOLLOWS_KEY, []).filter(isMember),
   current: undefined,
-  rooms: {}
+  rooms: {},
+  allRooms: {},
+  mode: 'owner'
 };
 
 function setState(patch: Partial<RoomState>): void {
@@ -97,8 +123,24 @@ function emptyRoom(): RoomData {
   return { items: [], nextTime: 0, hasMore: true, loading: false, opened: false };
 }
 
-function setRoom(ownerId: number, patch: Partial<RoomData>): void {
-  setState({ rooms: { ...state.rooms, [ownerId]: { ...emptyRoom(), ...state.rooms[ownerId], ...patch } } });
+function getRoom(stream: RoomStream, ownerId: number): RoomData | undefined {
+  return state[roomsKey[stream]][ownerId];
+}
+
+function setRoom(stream: RoomStream, ownerId: number, patch: Partial<RoomData>): void {
+  const key: 'rooms' | 'allRooms' = roomsKey[stream];
+
+  setState({ [key]: { ...state[key], [ownerId]: { ...emptyRoom(), ...state[key][ownerId], ...patch } } });
+}
+
+function maxAllCached(): number {
+  const saved: number = Number(readJson<unknown>(MAX_ALL_CACHED_KEY, undefined));
+
+  return Number.isInteger(saved) && saved >= 100 ? saved : MAX_ALL_CACHED;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve: () => void): unknown => setTimeout(resolve, ms));
 }
 
 export function getRoomState(): RoomState {
@@ -159,8 +201,8 @@ function keyOf(raw: CustomMessageV2): string {
   return raw.msgIdClient || String(raw.msgIdServer) || `${ raw.msgTime }`;
 }
 
-/* 把接口返回的一批消息（从新到旧）变成显示用的列表（从旧到新），只保留成员本人发的 */
-export function toItems(messages: Array<CustomMessageV2>): Array<RoomMessageItem> {
+/* 把接口返回的一批消息（从新到旧）变成显示用的列表（从旧到新）。owner 只保留成员发的，all 全部保留 */
+export function toItems(messages: Array<CustomMessageV2>, stream: RoomStream = 'owner'): Array<RoomMessageItem> {
   const items: Array<RoomMessageItem> = [];
 
   for (const raw of messages) {
@@ -168,7 +210,7 @@ export function toItems(messages: Array<CustomMessageV2>): Array<RoomMessageItem
       const message: FormatCustomMessage = FormatData(raw);
       const hidden: boolean = message.type === 'custom' && ['PRESENT_TEXT', 'RED_PACKET_2024'].includes(message.attach.messageType);
 
-      if (message.user?.roleId === 3 && !hidden) items.push({ key: keyOf(raw), raw, message });
+      if ((stream === 'all' || message.user?.roleId === 3) && !hidden) items.push({ key: keyOf(raw), raw, message });
     } catch (err) {
       console.error('房间消息解析失败', err, raw);
     }
@@ -192,10 +234,22 @@ export function mergeItems(older: Array<RoomMessageItem>, newer: Array<RoomMessa
   return result.sort((a: RoomMessageItem, b: RoomMessageItem): number => a.raw.msgTime - b.raw.msgTime);
 }
 
-async function ensureRoom(member: RoomMember): Promise<RoomData> {
-  const room: RoomData = state.rooms[member.ownerId] ?? emptyRoom();
+interface Channel {
+  serverId: number;
+  channelId: number;
+}
 
-  if (room.serverId && room.channelId) return room;
+/* 成员房间的地址（serverId / channelId）。两路消息共用，查到一次就记下来 */
+async function ensureChannel(member: RoomMember): Promise<Channel> {
+  for (const stream of ['owner', 'all'] as const) {
+    const room: RoomData | undefined = getRoom(stream, member.ownerId);
+
+    if (room?.serverId && room.channelId) return { serverId: room.serverId, channelId: room.channelId };
+  }
+
+  const saved: Channel | undefined = getChannel(member.ownerId);
+
+  if (saved) return saved;
 
   const res: ServerJumpResult | undefined = await requestServerJump(member.ownerId);
 
@@ -203,9 +257,14 @@ async function ensureRoom(member: RoomMember): Promise<RoomData> {
 
   if (!res.content?.channelId || !res.content?.serverId) throw new Error(res.message || '没有找到这个成员的房间');
 
-  setRoom(member.ownerId, { serverId: res.content.serverId, channelId: res.content.channelId });
+  setChannel(member.ownerId, res.content.serverId, res.content.channelId);
 
-  return state.rooms[member.ownerId];
+  return { serverId: res.content.serverId, channelId: res.content.channelId };
+}
+
+/* 房间的消息有变化：交给未读统计（只按成员这一路算） */
+function reportMessages(ownerId: number): void {
+  noteMessages(ownerId, (state.rooms[ownerId]?.items ?? []).map((item: RoomMessageItem): number => item.raw.msgTime));
 }
 
 function errorText(err: unknown): string {
@@ -216,26 +275,31 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-const MAX_CATCH_UP_PAGES: number = 60; // 补新消息时最多往回取多少批（每批 50 条）
-
-/* 把房间现在的消息和翻页位置存到本机 */
-function saveRoom(ownerId: number, items: Array<RoomMessageItem>): void {
-  const room: RoomData | undefined = state.rooms[ownerId];
+/* 把房间现在的翻页位置和新取到的消息存到本机 */
+function saveRoom(stream: RoomStream, ownerId: number, items: Array<RoomMessageItem>): void {
+  const room: RoomData | undefined = getRoom(stream, ownerId);
 
   if (!room?.opened) return;
 
-  writeRoomCache({
+  writeRoomCache(stream, {
     ownerId,
     serverId: room.serverId,
     channelId: room.channelId,
     nextTime: room.nextTime,
     hasMore: room.hasMore,
     updatedAt: Date.now()
-  }, items.map((item: RoomMessageItem): { key: string; raw: CustomMessageV2 } => ({ key: item.key, raw: item.raw })));
+  }, items.map((item: RoomMessageItem): { key: string; raw: CustomMessageV2 } => ({ key: item.key, raw: item.raw })),
+  stream === 'all' ? maxAllCached() : undefined);
 }
 
-async function requestPage(room: RoomData, nextTime: number): Promise<{ messages: Array<CustomMessageV2>; nextTime: number }> {
-  const res: HomeMessageResult | undefined = await requestHomeownerMessage(room.channelId!, room.serverId!, nextTime);
+async function requestPage(
+  stream: RoomStream,
+  channel: Channel,
+  nextTime: number
+): Promise<{ messages: Array<CustomMessageV2>; nextTime: number }> {
+  const res: HomeMessageResult | undefined = stream === 'all'
+    ? await requestAllMessage(channel.channelId, channel.serverId, nextTime)
+    : await requestHomeownerMessage(channel.channelId, channel.serverId, nextTime);
 
   if (!res) throw new Error('请先登录口袋48账号');
 
@@ -245,29 +309,48 @@ async function requestPage(room: RoomData, nextTime: number): Promise<{ messages
 }
 
 /**
- * 取更早的一批消息（房间第一次打开、本地又没有缓存时，就是最新的一批）
+ * 取更早的一批消息：本地缓存里还有更早的就先读本地的，读完了再去网络取。
+ * 房间第一次打开、本地又没有缓存时，取到的就是最新的一批。
  * @param { RoomMember } member
+ * @param { RoomStream } [stream = 'owner']
  */
-export async function loadOlder(member: RoomMember): Promise<void> {
-  const current: RoomData = state.rooms[member.ownerId] ?? emptyRoom();
+export async function loadOlder(member: RoomMember, stream: RoomStream = 'owner'): Promise<void> {
+  const current: RoomData = getRoom(stream, member.ownerId) ?? emptyRoom();
 
-  if (current.loading || (current.opened && !current.hasMore)) return;
+  if (current.loading || (current.opened && !current.hasMore && !current.cacheMore)) return;
 
-  if (!getPocket48Token()) {
-    setRoom(member.ownerId, { error: '请先登录口袋48账号' });
+  if (current.opened && current.cacheMore) {
+    setRoom(stream, member.ownerId, { loading: true, error: undefined });
+
+    const cache: RoomCacheData = await readRoomCache(stream, member.ownerId, { before: current.items[0]?.raw.msgTime, limit: CACHE_CHUNK });
+    const latest: RoomData = getRoom(stream, member.ownerId)!;
+
+    setRoom(stream, member.ownerId, {
+      items: mergeItems(toItems([...cache.messages].reverse(), stream), latest.items),
+      cacheMore: cache.more,
+      loading: false
+    });
 
     return;
   }
 
-  setRoom(member.ownerId, { loading: true, error: undefined });
+  if (!getPocket48Token()) {
+    setRoom(stream, member.ownerId, { error: '请先登录口袋48账号' });
+
+    return;
+  }
+
+  setRoom(stream, member.ownerId, { loading: true, error: undefined });
 
   try {
-    const room: RoomData = await ensureRoom(member);
-    const page: { messages: Array<CustomMessageV2>; nextTime: number } = await requestPage(room, room.opened ? room.nextTime : 0);
-    const latest: RoomData = state.rooms[member.ownerId];
-    const added: Array<RoomMessageItem> = toItems(page.messages);
+    const channel: Channel = await ensureChannel(member);
+    const room: RoomData = getRoom(stream, member.ownerId)!;
+    const page: { messages: Array<CustomMessageV2>; nextTime: number } = await requestPage(stream, channel, room.opened ? room.nextTime : 0);
+    const latest: RoomData = getRoom(stream, member.ownerId)!;
+    const added: Array<RoomMessageItem> = toItems(page.messages, stream);
 
-    setRoom(member.ownerId, {
+    setRoom(stream, member.ownerId, {
+      ...channel,
       items: mergeItems(latest.items, added),
       nextTime: page.nextTime,
       // 没有返回消息，或者位置不再变化，说明已经翻到头了
@@ -275,36 +358,41 @@ export async function loadOlder(member: RoomMember): Promise<void> {
       loading: false,
       opened: true
     });
-    saveRoom(member.ownerId, added);
+    saveRoom(stream, member.ownerId, added);
+    stream === 'owner' && reportMessages(member.ownerId);
   } catch (err) {
     console.error(err);
-    setRoom(member.ownerId, { loading: false, error: errorText(err) });
+    setRoom(stream, member.ownerId, { loading: false, error: errorText(err) });
   }
 }
 
 /**
  * 取最新的消息，并一直往回取到和已有的消息接上为止（中间不留空档）。
- * 用在：打开有本地缓存的房间、点「刷新」、每分钟的自动刷新。
+ * 用在：打开有本地缓存的房间、再次进入房间、点「刷新」、每分钟的自动刷新。
  * @param { RoomMember } member
+ * @param { RoomStream } [stream = 'owner']
  */
-export async function syncNewest(member: RoomMember): Promise<void> {
-  const current: RoomData | undefined = state.rooms[member.ownerId];
+export async function syncNewest(member: RoomMember, stream: RoomStream = 'owner'): Promise<void> {
+  const current: RoomData | undefined = getRoom(stream, member.ownerId);
 
   if (!current?.opened || current.syncing || current.loading) return;
 
   if (!getPocket48Token()) return;
 
-  setRoom(member.ownerId, { syncing: true, error: undefined });
+  setRoom(stream, member.ownerId, { syncing: true, error: undefined });
 
   try {
-    const room: RoomData = await ensureRoom(member);
+    const channel: Channel = await ensureChannel(member);
+    const room: RoomData = getRoom(stream, member.ownerId)!;
     const newestKnown: number = room.items.length > 0 ? room.items[room.items.length - 1].raw.msgTime : 0;
     const fetched: Array<CustomMessageV2> = [];
     let nextTime: number = 0;
     let connected: boolean = false;
 
-    for (let i: number = 0; i < MAX_CATCH_UP_PAGES; i++) {
-      const page: { messages: Array<CustomMessageV2>; nextTime: number } = await requestPage(room, nextTime);
+    for (let i: number = 0; i < MAX_CATCH_UP_PAGES[stream]; i++) {
+      if (i > 0 && stream === 'all') await sleep(PAGE_GAP);
+
+      const page: { messages: Array<CustomMessageV2>; nextTime: number } = await requestPage(stream, channel, nextTime);
 
       fetched.push(...page.messages);
 
@@ -320,26 +408,72 @@ export async function syncNewest(member: RoomMember): Promise<void> {
       nextTime = page.nextTime;
     }
 
-    const added: Array<RoomMessageItem> = toItems(fetched);
-    const latest: RoomData = state.rooms[member.ownerId];
+    const added: Array<RoomMessageItem> = toItems(fetched, stream);
+    const latest: RoomData = getRoom(stream, member.ownerId)!;
 
     if (connected) {
-      setRoom(member.ownerId, { items: mergeItems(latest.items, added), syncing: false });
-      saveRoom(member.ownerId, added);
+      setRoom(stream, member.ownerId, { items: mergeItems(latest.items, added), syncing: false });
+      saveRoom(stream, member.ownerId, added);
     } else {
       // 离上次太久，新消息多到接不上：放弃旧的缓存，只保留刚取到的这些，更早的往上滚动时再取
-      await clearRoomCache(member.ownerId);
-      setRoom(member.ownerId, { items: added, nextTime, hasMore: true, syncing: false, fromCache: false });
-      saveRoom(member.ownerId, added);
+      await clearRoomCache(stream, member.ownerId);
+      setRoom(stream, member.ownerId, { items: added, nextTime, hasMore: true, cacheMore: false, syncing: false, fromCache: false });
+      saveRoom(stream, member.ownerId, added);
     }
+
+    stream === 'owner' && reportMessages(member.ownerId);
   } catch (err) {
     console.error(err);
     // 补新消息失败不影响看本地已有的内容，只在本地一条都没有时才显示错误
-    setRoom(member.ownerId, { syncing: false, error: state.rooms[member.ownerId]?.items.length ? undefined : errorText(err) });
+    setRoom(stream, member.ownerId, { syncing: false, error: getRoom(stream, member.ownerId)?.items.length ? undefined : errorText(err) });
   }
 }
 
-/* 打开一个成员的房间：先显示本地缓存的消息，再补上新的 */
+/* 打开房间的一路消息：先显示本地缓存里最新的一批，再补上新的；这次运行里已经打开过的，只补新的 */
+async function openStream(member: RoomMember, stream: RoomStream): Promise<void> {
+  const existing: RoomData | undefined = getRoom(stream, member.ownerId);
+
+  if (existing?.opened) return syncNewest(member, stream);
+
+  if (existing?.loading) return;
+
+  setRoom(stream, member.ownerId, { loading: true, error: undefined });
+
+  const cache: RoomCacheData = await readRoomCache(stream, member.ownerId, { limit: CACHE_CHUNK });
+
+  if (getRoom(stream, member.ownerId)?.opened) return; // 读缓存期间已经被别的操作打开了
+
+  const items: Array<RoomMessageItem> = toItems([...cache.messages].reverse(), stream);
+
+  if (cache.meta && items.length > 0) {
+    setRoom(stream, member.ownerId, {
+      serverId: cache.meta.serverId,
+      channelId: cache.meta.channelId,
+      items,
+      nextTime: cache.meta.nextTime,
+      hasMore: cache.meta.hasMore,
+      cacheMore: cache.more,
+      loading: false,
+      opened: true,
+      fromCache: true
+    });
+    stream === 'owner' && reportMessages(member.ownerId);
+    await syncNewest(member, stream);
+  } else {
+    setRoom(stream, member.ownerId, { loading: false });
+    await loadOlder(member, stream);
+  }
+}
+
+/* 两路都更新：正在看的那一路先来，另一路跟在后面（把它也存进缓存） */
+async function openBothStreams(member: RoomMember): Promise<void> {
+  const first: RoomStream = state.mode;
+
+  await openStream(member, first);
+  await openStream(member, first === 'owner' ? 'all' : 'owner');
+}
+
+/* 进入一个成员的房间 */
 export async function openRoom(member: RoomMember): Promise<void> {
   setState({ current: member });
 
@@ -347,43 +481,39 @@ export async function openRoom(member: RoomMember): Promise<void> {
     localStorage.setItem(LAST_ROOM_KEY, JSON.stringify(member));
   } catch { /* noop */ }
 
-  if (state.rooms[member.ownerId]?.opened || state.rooms[member.ownerId]?.loading) return;
-
-  setRoom(member.ownerId, { loading: true, error: undefined });
-
-  const cache: RoomCacheData = await readRoomCache(member.ownerId);
-
-  if (state.rooms[member.ownerId]?.opened) return; // 读缓存期间已经被别的操作打开了
-
-  const items: Array<RoomMessageItem> = toItems([...cache.messages].reverse());
-
-  if (cache.meta && items.length > 0) {
-    setRoom(member.ownerId, {
-      serverId: cache.meta.serverId,
-      channelId: cache.meta.channelId,
-      items,
-      nextTime: cache.meta.nextTime,
-      hasMore: cache.meta.hasMore,
-      loading: false,
-      opened: true,
-      fromCache: true
-    });
-    await syncNewest(member);
-  } else {
-    setRoom(member.ownerId, { loading: false });
-    await loadOlder(member);
-  }
+  await openBothStreams(member);
 }
 
-/* 清除一个房间的本地缓存，并重新从网络加载 */
+/* 切换「只看成员 / 全部消息」 */
+export function setMode(mode: RoomStream): void {
+  if (state.mode === mode) return;
+
+  setState({ mode });
+  state.current && openStream(state.current, mode);
+}
+
+/* 清除一个房间的本地缓存（两路都清），并重新从网络加载 */
 export async function resetRoomCache(member: RoomMember): Promise<void> {
-  await clearRoomCache(member.ownerId);
-  setState({ rooms: { ...state.rooms, [member.ownerId]: emptyRoom() } });
-  await loadOlder(member);
+  await Promise.all([clearRoomCache('owner', member.ownerId), clearRoomCache('all', member.ownerId)]);
+  setState({
+    rooms: { ...state.rooms, [member.ownerId]: emptyRoom() },
+    allRooms: { ...state.allRooms, [member.ownerId]: emptyRoom() }
+  });
+  await openBothStreams(member);
+}
+
+/* 读出本地缓存里这个房间一路消息的全部内容（导出用），和已经加载的合并，从新到旧 */
+export async function readAllCached(member: RoomMember, stream: RoomStream): Promise<Array<CustomMessageV2>> {
+  const cache: RoomCacheData = await readRoomCache(stream, member.ownerId);
+  const merged: Array<RoomMessageItem> = mergeItems(
+    toItems([...cache.messages].reverse(), stream),
+    getRoom(stream, member.ownerId)?.items ?? []);
+
+  return merged.map((item: RoomMessageItem): CustomMessageV2 => item.raw).reverse();
 }
 
 /* 测试用 */
 export function resetRoomStoreForTest(): void {
-  state = { follows: [], current: undefined, rooms: {} };
+  state = { follows: [], current: undefined, rooms: {}, allRooms: {}, mode: 'owner' };
   listeners.clear();
 }

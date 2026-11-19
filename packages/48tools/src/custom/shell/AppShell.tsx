@@ -28,14 +28,18 @@ import DownloadQueuePanel from '../downloadQueue/DownloadQueuePanel';
 import { useQueueTasks, type QueueTask } from '../downloadQueue/downloadQueue';
 import { useProxyState, proxyStateText } from '../pocket48Proxy/useProxyState';
 import type { ProxyState } from '../pocket48Api/apiErrorText';
+import RoomUnreadBadge from '../room/RoomUnreadBadge';
+import { startUnreadWatcher } from '../room/unreadWatcher';
 
 /**
  * 应用外壳：左边是常驻的侧边栏（所有功能、下载队列、代理状态），右边是页面内容。
  * 原来要先回首页再进别的功能，现在可以直接在侧边栏切换；Ctrl+K 可以搜索功能，Ctrl+B 收起 / 展开侧边栏。
  * 页面本身不用改，仍然由原来的路由渲染。
+ * 关注成员的房间新消息也在这里启动后台检查（custom/room/unreadWatcher），「房间消息」上显示未读总数。
  * 接入点：src/index.tsx 用 <AppShell> 包住 <Routers />。
  */
 const CLOSED_GROUPS_KEY: string = 'SHELL_CLOSED_GROUPS';
+const ROOM_NAV_KEY: string = '48-room-message';
 
 function readClosedGroups(): Array<string> {
   try {
@@ -73,6 +77,7 @@ function NavLinkItem(props: { item: ShellNavItem; active: boolean; collapsed: bo
     >
       { item.icon }
       <span className="shell-item-label">{ item.label }</span>
+      { item.key === ROOM_NAV_KEY ? <RoomUnreadBadge /> : null }
     </Link>
   );
 
@@ -130,6 +135,9 @@ function AppShell(props: Required<PropsWithChildren>): ReactElement {
   useEffect(function(): void {
     document.querySelector('.shell-nav .shell-item.is-active')?.scrollIntoView({ block: 'nearest' });
   }, [location.pathname, collapsed]);
+
+  // 后台检查关注成员的房间有没有新消息（只启动一次，程序开着就一直检查）
+  useEffect(startUnreadWatcher, []);
 
   // 快捷键：Ctrl+K 快速跳转，Ctrl+B 收起 / 展开侧边栏
   useEffect(function(): () => void {

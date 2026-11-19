@@ -77,8 +77,8 @@ export function formatDataArray(data: Array<CustomMessageV2>): Array<FormatCusto
   return newData;
 }
 
-/* 保存的数据格式化 */
-export function formatSendData(data: Array<CustomMessageV2>): Array<SendDataItem> {
+/* 保存的数据格式化（custom：keepAll 为 true 时保留粉丝的消息，口袋房间「全部消息」导出时用） */
+export function formatSendData(data: Array<CustomMessageV2>, keepAll: boolean = false): Array<SendDataItem> {
   const newData: Array<SendDataItem> = [];
 
   data.forEach((o: CustomMessageV2): void => {
@@ -111,7 +111,7 @@ export function formatSendData(data: Array<CustomMessageV2>): Array<SendDataItem
         });
 
         // 是否包含房主的消息
-        if (extInfo.user.roleId !== 3) {
+        if (!keepAll && extInfo.user.roleId !== 3) {
           return;
         }
       }

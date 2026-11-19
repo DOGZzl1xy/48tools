@@ -10,6 +10,8 @@ import type { RoomMessageItem } from './roomStore';
  * 一条房间消息的气泡。按消息类型显示：文字、回复（带被回复的那句话）、图片、语音、视频、
  * 直播通知、翻牌（文字 / 语音 / 视频）、表情图；不认识的类型显示成一行灰色的说明。
  * 每条消息左边是发送者的头像（同一个人连续发的只在第一条显示）；不是房主发的消息会显示名字，气泡颜色也不同。
+ * 发送者分三种：owner（房主本人）、guest（来串门的别的成员）、fan（粉丝，只有看「全部消息」时才有）。
+ * 看「全部消息」时成员的消息（highlight）用主题色标出来，免得淹没在粉丝的消息里。
  * 直播通知可以点：直播中打开直播，结束后打开回放，查不到回放时提示已失效（见 ./liveCard）。
  */
 const typeNames: Record<string, string> = {
@@ -157,8 +159,22 @@ function renderBody(item: RoomMessageItem): { body: ReactNode; plain?: boolean }
     if (type === 'EXPRESSIMAGE') {
       const url: string | undefined = attach.expressImgInfo?.emotionRemote ?? attach.emotionRemote;
 
-      if (url) return { body: <img className="room-sticker" src={ url } alt="表情" loading="lazy" />, plain: true };
+      if (url) return { body: <img className="room-sticker" src={ source(url) } alt="表情" loading="lazy" />, plain: true };
     }
+  }
+
+  // 粉丝送礼物
+  if ((item.raw.msgType as string) === 'GIFT_TEXT') {
+    const gift: { giftName?: string; giftNum?: number; picPath?: string; userName?: string } = JSON.parse(item.raw.bodys).giftInfo ?? {};
+
+    return {
+      body: (
+        <span className="room-gift">
+          { gift.picPath ? <img src={ source(gift.picPath) } alt="" loading="lazy" /> : null }
+          送给 { gift.userName } { gift.giftName } × { gift.giftNum ?? 1 }
+        </span>
+      )
+    };
   }
 
   // 其他类型：显示一行说明，鼠标放上去能看到原始内容
@@ -178,11 +194,13 @@ interface MessageBubbleProps {
   item: RoomMessageItem;
   time: string;        // HH:mm
   showAvatar: boolean; // 同一个人连续发的消息，只在第一条显示头像
-  guest: boolean;      // 不是房主本人发的（别的成员来串门）
+  sender: 'owner' | 'guest' | 'fan'; // 房主本人 / 来串门的别的成员 / 粉丝
+  highlight: boolean;  // 用主题色标出来（看「全部消息」时成员发的）
 }
 
 function MessageBubble(props: MessageBubbleProps): ReactElement {
-  const { item, time, showAvatar, guest }: MessageBubbleProps = props;
+  const { item, time, showAvatar, sender, highlight }: MessageBubbleProps = props;
+  const showName: boolean = showAvatar && (sender !== 'owner' || highlight);
   const user: { nickName?: string; avatar?: string } = item.message.user ?? {};
   let content: { body: ReactNode; plain?: boolean };
 
@@ -194,7 +212,7 @@ function MessageBubble(props: MessageBubbleProps): ReactElement {
   }
 
   return (
-    <div className={ `room-message${ guest ? ' is-guest' : '' }${ showAvatar ? ' is-first' : '' }` }>
+    <div className={ `room-message is-${ sender }${ highlight ? ' is-highlight' : '' }${ showAvatar ? ' is-first' : '' }` }>
       <div className="room-avatar">
         {
           showAvatar ? (
@@ -205,7 +223,7 @@ function MessageBubble(props: MessageBubbleProps): ReactElement {
         }
       </div>
       <div className="room-message-main">
-        { showAvatar && guest ? <div className="room-sender">{ user.nickName }</div> : null }
+        { showName ? <div className="room-sender">{ user.nickName }</div> : null }
         <div className="room-message-row">
           <div className={ content.plain ? 'room-plain' : 'room-bubble' }>{ content.body }</div>
           <time>{ time }</time>
