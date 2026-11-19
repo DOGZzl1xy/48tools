@@ -7,12 +7,21 @@ import { getPocket48LocalConfig } from '../pocket48Proxy/pocket48Proxy';
  * 也就是：界面上的设置 > local/pocket48.json > 默认值。
  */
 export type LiveRecordFormat = 'flv' | 'mp4' | 'mp4-compress';
+export type SttProvider = 'gemini' | 'openai'; // 语音转文字用哪种接口（见 custom/transcribe）
 
 export interface CustomSettings {
   downloadDir?: string;               // 保存文件时默认打开的文件夹
   liveRecordDir?: string;             // 直播自动录制保存的文件夹（不设置就用 downloadDir）
   liveRecordFormat?: LiveRecordFormat; // 直播录完后的格式
   accentColor?: string;               // 主题色
+  sttProvider?: SttProvider;          // 语音转文字：接口类型
+  sttGeminiKey?: string;              // 语音转文字：Google Gemini 的 API key（两种接口各存各的，切换类型时不会把 key 发给别的服务商）
+  sttGeminiModel?: string;
+  sttGeminiBaseUrl?: string;
+  sttOpenaiKey?: string;              // 语音转文字：OpenAI 兼容接口的 API key
+  sttOpenaiModel?: string;
+  sttOpenaiBaseUrl?: string;
+  sttHints?: boolean;                 // 语音转文字：把语音前后的文字一起发给接口当参考（默认开，只有关掉时才保存成 false）
 }
 
 const STORAGE_KEY: string = 'CUSTOM_SETTINGS';

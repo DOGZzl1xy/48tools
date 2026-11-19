@@ -19,6 +19,7 @@ import { useAppDataDir, type UseAppDataDirReturnType } from '../../functionalCom
 import { showOpenDialog } from '../../utils/remote/dialog';
 import Pocket48ProxyOption from '../pocket48Proxy/Pocket48ProxyOption';
 import BackgroundOption from './BackgroundOption';
+import TranscribeOption from '../transcribe/TranscribeOption';
 import { safeOpenExternal } from '../security/safeOpenExternal';
 import { resolveLocalDir } from '../download/defaultSaveDir';
 import {
@@ -31,7 +32,7 @@ import {
 } from './settingsStore';
 
 /**
- * 设置页面：账号、保存位置、直播录制格式、代理、后台运行、外观、工具路径、关于。
+ * 设置页面：账号、保存位置、直播录制格式、代理、后台运行、语音转文字、外观、工具路径、关于。
  * 入口在侧边栏底部的「设置」。账号、FFmpeg、代理等沿用原来的组件（只是集中放到这里）。
  * 接入点：router/Routers.tsx 的 Settings 路由。
  */
@@ -133,6 +134,11 @@ function SettingsPage(props: {}): ReactElement {
       <section>
         <h2>后台运行</h2>
         <BackgroundOption />
+      </section>
+
+      <section>
+        <h2>语音转文字</h2>
+        <TranscribeOption />
       </section>
 
       <section>

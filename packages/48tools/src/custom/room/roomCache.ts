@@ -158,6 +158,34 @@ export async function readRoomCache(
 }
 
 /**
+ * 读一个房间某段时间里的消息（从旧到新）。太多时只要离结束时间最近的 limit 条。读不到（或出错）时返回空。
+ * 语音转文字找「语音前后的文字」时用（见 ../transcribe/transcribeStore）
+ */
+export async function readRoomCacheBetween(
+  stream: RoomStream,
+  ownerId: number,
+  from: number,
+  to: number,
+  limit: number = 1_500
+): Promise<Array<CustomMessageV2>> {
+  try {
+    const db: IDBDatabase = await openDb();
+    const transaction: IDBTransaction = db.transaction([stores[stream].messages], 'readonly');
+    const records: Array<MessageRecord> = await walk(
+      transaction.objectStore(stores[stream].messages).index(TIME_INDEX),
+      IDBKeyRange.bound([ownerId, from], [ownerId, to]),
+      'prev',
+      limit);
+
+    return records.reverse().map((record: MessageRecord): CustomMessageV2 => record.raw);
+  } catch (err) {
+    console.error('读取房间缓存失败', err);
+
+    return [];
+  }
+}
+
+/**
  * 写入消息和房间信息（已有的消息会被覆盖，不会重复）
  * @param { RoomStream } stream
  * @param { RoomCacheMeta } meta

@@ -4,6 +4,7 @@ import type { useAppProps } from 'antd/es/app/context';
 import { PlayCircleOutlined as IconPlayCircleOutlined, LoadingOutlined as IconLoadingOutlined } from '@ant-design/icons';
 import { source, mp4Source } from '../../utils/snh48';
 import { openLivePush, type OpenLiveResult } from './liveCard';
+import VoiceMessage from '../transcribe/VoiceMessage';
 import type { RoomMessageItem } from './roomStore';
 
 /**
@@ -12,6 +13,7 @@ import type { RoomMessageItem } from './roomStore';
  * 每条消息左边是发送者的头像（同一个人连续发的只在第一条显示）；不是房主发的消息会显示名字，气泡颜色也不同。
  * 发送者分三种：owner（房主本人）、guest（来串门的别的成员）、fan（粉丝，只有看「全部消息」时才有）。
  * 看「全部消息」时成员的消息（highlight）用主题色标出来，免得淹没在粉丝的消息里。
+ * 语音（语音消息、翻牌的语音回答）后面有「转文字」，见 ../transcribe/VoiceMessage。
  * 直播通知可以点：直播中打开直播，结束后打开回放，查不到回放时提示已失效（见 ./liveCard）。
  */
 const typeNames: Record<string, string> = {
@@ -95,7 +97,18 @@ function renderBody(item: RoomMessageItem): { body: ReactNode; plain?: boolean }
     return { body: <Image className="room-image" src={ message.attach.url } loading="lazy" />, plain: true };
   }
 
-  if (message.type === 'audio') return { body: <audio className="room-audio" src={ message.attach.url } controls={ true } preload="none" /> };
+  if (message.type === 'audio') {
+    // 语音消息自带 md5，用它当标识（同一段语音只转一次）；没有就用地址
+    return {
+      body: (
+        <VoiceMessage id={ message.attach.md5 || message.attach.url }
+          url={ message.attach.url }
+          ext={ message.attach.ext }
+          time={ item.raw.msgTime }
+        />
+      )
+    };
+  }
 
   if (message.type === 'video') {
     return { body: <video className="room-video" src={ message.attach.url } controls={ true } preload="metadata" />, plain: true };
@@ -148,7 +161,7 @@ function renderBody(item: RoomMessageItem): { body: ReactNode; plain?: boolean }
             <Quote name="翻牌提问">{ info!.question }</Quote>
             {
               type === 'FLIPCARD_AUDIO'
-                ? <audio className="room-audio" src={ url } controls={ true } preload="none" />
+                ? <VoiceMessage id={ url } url={ url } time={ item.raw.msgTime } question={ info!.question } />
                 : <video className="room-video" src={ url } controls={ true } preload="metadata" />
             }
           </div>

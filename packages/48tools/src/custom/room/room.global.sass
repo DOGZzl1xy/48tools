@@ -339,6 +339,84 @@
   width: 280px
   height: 36px
 
+/* 语音：播放条 + 「转文字」按钮，转好的文字在下面（见 custom/transcribe/VoiceMessage） */
+.room-voice
+  max-width: 372px
+
+.room-voice-row
+  display: flex
+  align-items: center
+  gap: 8px
+
+.room-voice-button
+  display: inline-flex
+  flex: none
+  align-items: center
+  gap: 4px
+  height: 26px
+  padding: 0 8px
+  border: 0
+  border-radius: 13px
+  background: var(--shell-surface)
+  color: var(--shell-text-secondary)
+  font-size: 12px
+  white-space: nowrap
+  cursor: pointer
+  transition: background .12s, color .12s
+
+  &:hover
+    background: var(--shell-active-bg)
+    color: var(--shell-primary)
+
+  &:focus-visible
+    outline: 2px solid var(--shell-primary)
+    outline-offset: 1px
+
+.room-voice-text
+  margin-top: 6px
+  padding-top: 6px
+  border-top: 1px solid var(--shell-border)
+  font-size: 13.5px
+  line-height: 1.6
+  white-space: pre-wrap
+  word-break: break-word
+
+  i
+    color: var(--shell-text-tertiary)
+
+  button
+    margin-left: 6px
+    padding: 0 2px
+    border: 0
+    background: none
+    color: var(--shell-text-tertiary)
+    font-size: 12px
+    cursor: pointer
+
+    &:hover
+      color: var(--shell-primary)
+
+    &:focus-visible
+      outline: 2px solid var(--shell-primary)
+      border-radius: 3px
+
+  a
+    margin-left: 8px
+
+  &.is-loading
+    display: flex
+    align-items: center
+    gap: 6px
+    color: var(--shell-text-tertiary)
+    font-size: 12.5px
+
+  &.is-error
+    color: #ff4d4f
+    font-size: 12.5px
+
+    button
+      color: var(--shell-primary)
+
 .room-sticker
   display: block
   max-width: 96px
