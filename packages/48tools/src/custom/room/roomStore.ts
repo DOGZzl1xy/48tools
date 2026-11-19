@@ -11,6 +11,7 @@ import {
 } from '@48tools-api/48';
 import { FormatData } from '../../pages/48/RoomMessage/utils/formatData';
 import { source, getPocket48Token } from '../../utils/snh48';
+import { readRoomCache, writeRoomCache, clearRoomCache, type RoomCacheData } from './roomCache';
 import type { FormatCustomMessage } from '../../pages/48/types';
 
 /**
@@ -25,7 +26,11 @@ import type { FormatCustomMessage } from '../../pages/48/types';
  *      参数 { serverId, channelId, nextTime, limit }。第一次 nextTime 传 0，拿到最新的一批；
  *      返回里的 nextTime 再传回去，就是更早的一批，这样一直往前翻
  * 这三个请求都在 services/48/index.ts 里（原版就有），这里只是换了一种组织方式：
- * 关注列表存在本机（localStorage），消息按房间缓存在内存里，往上滚动时自动取更早的一批。
+ * 关注列表存在本机（localStorage），往上滚动时自动取更早的一批。
+ *
+ * 本地缓存（./roomCache，IndexedDB）：取到的消息会存到本机。下次打开房间时先显示本地的消息，
+ * 再从最新的一批开始往回取，直到和本地的消息接上为止，所以只需要取「上次之后新发的」那部分。
+ * 更早的消息仍然是往上滚动时才取，取到后也会存下来。
  */
 export interface RoomMember {
   ownerId: number; // 成员的用户 ID（serverOwner）
@@ -48,6 +53,8 @@ export interface RoomData {
   loading: boolean;
   error?: string;
   opened: boolean;               // 已经加载过第一批
+  fromCache?: boolean;           // 这次打开时用了本地缓存
+  syncing?: boolean;             // 正在补上比本地新的消息
 }
 
 export interface RoomState {
@@ -209,15 +216,42 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+const MAX_CATCH_UP_PAGES: number = 60; // 补新消息时最多往回取多少批（每批 50 条）
+
+/* 把房间现在的消息和翻页位置存到本机 */
+function saveRoom(ownerId: number, items: Array<RoomMessageItem>): void {
+  const room: RoomData | undefined = state.rooms[ownerId];
+
+  if (!room?.opened) return;
+
+  writeRoomCache({
+    ownerId,
+    serverId: room.serverId,
+    channelId: room.channelId,
+    nextTime: room.nextTime,
+    hasMore: room.hasMore,
+    updatedAt: Date.now()
+  }, items.map((item: RoomMessageItem): { key: string; raw: CustomMessageV2 } => ({ key: item.key, raw: item.raw })));
+}
+
+async function requestPage(room: RoomData, nextTime: number): Promise<{ messages: Array<CustomMessageV2>; nextTime: number }> {
+  const res: HomeMessageResult | undefined = await requestHomeownerMessage(room.channelId!, room.serverId!, nextTime);
+
+  if (!res) throw new Error('请先登录口袋48账号');
+
+  if (!res.success && !res.content) throw new Error(res.message || '获取消息失败');
+
+  return { messages: res.content?.message ?? [], nextTime: res.content?.nextTime ?? 0 };
+}
+
 /**
- * 取一批消息
+ * 取更早的一批消息（房间第一次打开、本地又没有缓存时，就是最新的一批）
  * @param { RoomMember } member
- * @param { 'older' | 'newest' } direction - older：更早的一批；newest：最新的一批（刷新）
  */
-export async function loadMessages(member: RoomMember, direction: 'older' | 'newest'): Promise<void> {
+export async function loadOlder(member: RoomMember): Promise<void> {
   const current: RoomData = state.rooms[member.ownerId] ?? emptyRoom();
 
-  if (current.loading || (direction === 'older' && current.opened && !current.hasMore)) return;
+  if (current.loading || (current.opened && !current.hasMore)) return;
 
   if (!getPocket48Token()) {
     setRoom(member.ownerId, { error: '请先登录口袋48账号' });
@@ -229,46 +263,123 @@ export async function loadMessages(member: RoomMember, direction: 'older' | 'new
 
   try {
     const room: RoomData = await ensureRoom(member);
-    const fromStart: boolean = direction === 'newest' || !room.opened;
-    const res: HomeMessageResult | undefined = await requestHomeownerMessage(room.channelId!, room.serverId!, fromStart ? 0 : room.nextTime);
-
-    if (!res) throw new Error('请先登录口袋48账号');
-
-    if (!res.success && !res.content) throw new Error(res.message || '获取消息失败');
-
-    const messages: Array<CustomMessageV2> = res.content?.message ?? [];
+    const page: { messages: Array<CustomMessageV2>; nextTime: number } = await requestPage(room, room.opened ? room.nextTime : 0);
     const latest: RoomData = state.rooms[member.ownerId];
-    const items: Array<RoomMessageItem> = mergeItems(latest.items, toItems(messages));
-    const nextTime: number = res.content?.nextTime ?? 0;
+    const added: Array<RoomMessageItem> = toItems(page.messages);
 
-    if (direction === 'newest' && latest.opened) {
-      // 刷新：只把新的消息并进来，往前翻的位置不变
-      setRoom(member.ownerId, { items, loading: false });
-    } else {
-      setRoom(member.ownerId, {
-        items,
-        nextTime,
-        // 没有返回消息，或者位置不再变化，说明已经翻到头了
-        hasMore: messages.length > 0 && nextTime > 0 && nextTime !== latest.nextTime,
-        loading: false,
-        opened: true
-      });
-    }
+    setRoom(member.ownerId, {
+      items: mergeItems(latest.items, added),
+      nextTime: page.nextTime,
+      // 没有返回消息，或者位置不再变化，说明已经翻到头了
+      hasMore: page.messages.length > 0 && page.nextTime > 0 && page.nextTime !== latest.nextTime,
+      loading: false,
+      opened: true
+    });
+    saveRoom(member.ownerId, added);
   } catch (err) {
     console.error(err);
     setRoom(member.ownerId, { loading: false, error: errorText(err) });
   }
 }
 
-/* 打开一个成员的房间 */
-export function openRoom(member: RoomMember): void {
+/**
+ * 取最新的消息，并一直往回取到和已有的消息接上为止（中间不留空档）。
+ * 用在：打开有本地缓存的房间、点「刷新」、每分钟的自动刷新。
+ * @param { RoomMember } member
+ */
+export async function syncNewest(member: RoomMember): Promise<void> {
+  const current: RoomData | undefined = state.rooms[member.ownerId];
+
+  if (!current?.opened || current.syncing || current.loading) return;
+
+  if (!getPocket48Token()) return;
+
+  setRoom(member.ownerId, { syncing: true, error: undefined });
+
+  try {
+    const room: RoomData = await ensureRoom(member);
+    const newestKnown: number = room.items.length > 0 ? room.items[room.items.length - 1].raw.msgTime : 0;
+    const fetched: Array<CustomMessageV2> = [];
+    let nextTime: number = 0;
+    let connected: boolean = false;
+
+    for (let i: number = 0; i < MAX_CATCH_UP_PAGES; i++) {
+      const page: { messages: Array<CustomMessageV2>; nextTime: number } = await requestPage(room, nextTime);
+
+      fetched.push(...page.messages);
+
+      // 这一批里最早的一条已经不比本地最新的晚：接上了
+      const oldest: number = page.messages.reduce((min: number, raw: CustomMessageV2): number => Math.min(min, raw.msgTime), Infinity);
+
+      // 本地一条都没有时只取最新的一批
+      if (newestKnown === 0 || page.messages.length === 0 || oldest <= newestKnown || page.nextTime <= 0 || page.nextTime === nextTime) {
+        connected = true;
+        break;
+      }
+
+      nextTime = page.nextTime;
+    }
+
+    const added: Array<RoomMessageItem> = toItems(fetched);
+    const latest: RoomData = state.rooms[member.ownerId];
+
+    if (connected) {
+      setRoom(member.ownerId, { items: mergeItems(latest.items, added), syncing: false });
+      saveRoom(member.ownerId, added);
+    } else {
+      // 离上次太久，新消息多到接不上：放弃旧的缓存，只保留刚取到的这些，更早的往上滚动时再取
+      await clearRoomCache(member.ownerId);
+      setRoom(member.ownerId, { items: added, nextTime, hasMore: true, syncing: false, fromCache: false });
+      saveRoom(member.ownerId, added);
+    }
+  } catch (err) {
+    console.error(err);
+    // 补新消息失败不影响看本地已有的内容，只在本地一条都没有时才显示错误
+    setRoom(member.ownerId, { syncing: false, error: state.rooms[member.ownerId]?.items.length ? undefined : errorText(err) });
+  }
+}
+
+/* 打开一个成员的房间：先显示本地缓存的消息，再补上新的 */
+export async function openRoom(member: RoomMember): Promise<void> {
   setState({ current: member });
 
   try {
     localStorage.setItem(LAST_ROOM_KEY, JSON.stringify(member));
   } catch { /* noop */ }
 
-  if (!state.rooms[member.ownerId]?.opened) loadMessages(member, 'older');
+  if (state.rooms[member.ownerId]?.opened || state.rooms[member.ownerId]?.loading) return;
+
+  setRoom(member.ownerId, { loading: true, error: undefined });
+
+  const cache: RoomCacheData = await readRoomCache(member.ownerId);
+
+  if (state.rooms[member.ownerId]?.opened) return; // 读缓存期间已经被别的操作打开了
+
+  const items: Array<RoomMessageItem> = toItems([...cache.messages].reverse());
+
+  if (cache.meta && items.length > 0) {
+    setRoom(member.ownerId, {
+      serverId: cache.meta.serverId,
+      channelId: cache.meta.channelId,
+      items,
+      nextTime: cache.meta.nextTime,
+      hasMore: cache.meta.hasMore,
+      loading: false,
+      opened: true,
+      fromCache: true
+    });
+    await syncNewest(member);
+  } else {
+    setRoom(member.ownerId, { loading: false });
+    await loadOlder(member);
+  }
+}
+
+/* 清除一个房间的本地缓存，并重新从网络加载 */
+export async function resetRoomCache(member: RoomMember): Promise<void> {
+  await clearRoomCache(member.ownerId);
+  setState({ rooms: { ...state.rooms, [member.ownerId]: emptyRoom() } });
+  await loadOlder(member);
 }
 
 /* 测试用 */

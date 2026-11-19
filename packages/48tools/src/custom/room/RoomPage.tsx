@@ -39,7 +39,9 @@ import MessageBubble from './MessageBubble';
 import {
   useRoomState,
   openRoom,
-  loadMessages,
+  loadOlder,
+  syncNewest,
+  resetRoomCache,
   searchMembers,
   toggleFollow,
   getLastRoom,
@@ -54,6 +56,8 @@ import {
  *   - 左边：搜索成员（结果带头像），关注列表。点成员进入房间，点星标关注 / 取消关注
  *   - 右边：这个成员在房间里发的消息，最新的在最下面；往上滚动会自动加载更早的消息，不用再反复点「加载数据」
  *   - 房间打开时每分钟自动取一次最新消息；「更多」里可以导出 HTML / JSON、下载房间背景图（沿用原版的导出代码）
+ *   - 取到的消息存在本机（./roomCache）：下次打开先显示本地的，再补上新发的。本地消息很多时只先画最近的一部分，
+ *     往上滚动再逐步画出更早的，画完本地的才去网络取
  * 数据和接口说明见 ./roomStore。原版页面（pages/48/RoomMessage）保留不动。
  * 接入点：pages/48/Index.tsx 的 RoomMessage 路由。
  */
@@ -64,6 +68,8 @@ function hasMember(list: Array<RoomMember>, ownerId: number): boolean {
   return list.some((member: RoomMember): boolean => member.ownerId === ownerId);
 }
 const REFRESH_INTERVAL: number = 60_000;
+const RENDER_FIRST: number = 150; // 打开房间时先画最近的多少条
+const RENDER_STEP: number = 150;  // 往上滚动时每次多画多少条
 
 interface MemberRowProps {
   member: RoomMember;
@@ -175,7 +181,9 @@ function MemberPanel(props: { state: RoomState; loggedIn: boolean }): ReactEleme
               member={ member }
               active={ state.current?.ownerId === member.ownerId }
               followed={ hasMember(state.follows, member.ownerId) }
-              onOpen={ (): void => openRoom(member) }
+              onOpen={ (): void => {
+                openRoom(member);
+              } }
             />
           ))
         }
@@ -199,14 +207,20 @@ function ChatView(props: { member: RoomMember; room: RoomData; followed: boolean
   const contentRef: RefObject<HTMLDivElement | null> = useRef(null);
   const position: RefObject<{ ownerId: number; firstKey?: string; lastKey?: string; height: number; top: number; atBottom: boolean }>
     = useRef({ ownerId: 0, height: 0, top: 0, atBottom: true });
-  const { items }: RoomData = room;
+  const [renderCount, setRenderCount]: [number, D<S<number>>] = useState(RENDER_FIRST);
+  const allItems: Array<RoomMessageItem> = room.items;
+  const items: Array<RoomMessageItem> = allItems.length > renderCount ? allItems.slice(allItems.length - renderCount) : allItems;
 
-  /* 滚动到靠近顶部时，自动取更早的一批 */
+  /* 滚动到靠近顶部时：本地还有没画出来的就先画出来，都画完了再去取更早的一批 */
   function loadOlderIfNeeded(): void {
     const el: HTMLDivElement | null = scrollRef.current;
 
-    if (el && room.opened && room.hasMore && !room.loading && !room.error && el.scrollTop < 400) {
-      loadMessages(member, 'older');
+    if (!el || !room.opened || el.scrollTop >= 400) return;
+
+    if (allItems.length > renderCount) {
+      setRenderCount((prev: number): number => prev + RENDER_STEP);
+    } else if (room.hasMore && !room.loading && !room.error) {
+      loadOlder(member);
     }
   }
 
@@ -215,8 +229,15 @@ function ChatView(props: { member: RoomMember; room: RoomData; followed: boolean
 
     if (!el) return;
 
+    // 只有用户自己往上滚，才算离开了底部。图片加载把内容撑高时也会触发滚动事件，这时位置没有往上走，
+    // 不能当成离开底部，否则就不会再自动贴到底部了
+    if (el.scrollTop < position.current.top - 4) {
+      position.current.atBottom = false;
+    } else if (el.scrollHeight - el.scrollTop - el.clientHeight < 60) {
+      position.current.atBottom = true;
+    }
+
     position.current.top = el.scrollTop;
-    position.current.atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
     loadOlderIfNeeded();
   }
 
@@ -249,7 +270,12 @@ function ChatView(props: { member: RoomMember; room: RoomData; followed: boolean
   }, [items, member.ownerId]);
 
   // 内容不满一屏，或者刚好停在顶部时，继续取更早的消息
-  useEffect(loadOlderIfNeeded, [items.length, room.loading, room.opened, member.ownerId]);
+  useEffect(loadOlderIfNeeded, [items.length, allItems.length, room.loading, room.opened, member.ownerId]);
+
+  // 换房间时重新从最近的一部分开始画
+  useEffect(function(): void {
+    setRenderCount(RENDER_FIRST);
+  }, [member.ownerId]);
 
   // 图片加载完会把内容撑高：在底部时保持在底部
   useEffect(function(): () => void {
@@ -272,7 +298,7 @@ function ChatView(props: { member: RoomMember; room: RoomData; followed: boolean
   // 房间打开时每分钟取一次最新消息
   useEffect(function(): () => void {
     const timer: number = window.setInterval((): void => {
-      loadMessages(member, 'newest');
+      syncNewest(member);
     }, REFRESH_INTERVAL);
 
     return (): void => window.clearInterval(timer);
@@ -280,7 +306,7 @@ function ChatView(props: { member: RoomMember; room: RoomData; followed: boolean
 
   /* 导出：沿用原版的格式和生成代码 */
   async function handleExport(type: 'html' | 'json'): Promise<void> {
-    const raw: Array<RoomMessageItem['raw']> = items.map((item: RoomMessageItem): RoomMessageItem['raw'] => item.raw).reverse(); // 从新到旧
+    const raw: Array<RoomMessageItem['raw']> = allItems.map((item: RoomMessageItem): RoomMessageItem['raw'] => item.raw).reverse(); // 从新到旧
 
     try {
       const result: SaveDialogReturnValue = await showSaveDialog({
@@ -356,7 +382,9 @@ function ChatView(props: { member: RoomMember; room: RoomData; followed: boolean
         <div className="room-chat-title">
           <b>{ member.name }</b>
           <small>
-            已加载 { items.length } 条
+            已加载 { allItems.length } 条
+            { room.fromCache ? ' · 含本地缓存' : '' }
+            { room.syncing ? ' · 正在取新消息…' : '' }
             { room.opened && !room.hasMore ? ' · 已经是最早的消息' : '' }
           </small>
         </div>
@@ -367,18 +395,30 @@ function ChatView(props: { member: RoomMember; room: RoomData; followed: boolean
           { followed ? '已关注' : '关注' }
         </Button>
         <Tooltip title="取最新消息（每分钟也会自动取一次）">
-          <Button icon={ <IconReloadOutlined /> } loading={ room.loading } onClick={ (): Promise<void> => loadMessages(member, 'newest') } />
+          <Button icon={ <IconReloadOutlined /> }
+            loading={ room.loading || room.syncing }
+            onClick={ (): Promise<void> => syncNewest(member) }
+          />
         </Tooltip>
         <Dropdown trigger={ ['click'] }
           placement="bottomRight"
           menu={{
             items: [
-              { key: 'html', label: '导出已加载的消息（HTML）', disabled: items.length === 0 },
-              { key: 'json', label: '导出已加载的消息（JSON）', disabled: items.length === 0 },
-              { key: 'bg', label: '下载房间背景图' }
+              { key: 'html', label: '导出已加载的消息（HTML）', disabled: allItems.length === 0 },
+              { key: 'json', label: '导出已加载的消息（JSON）', disabled: allItems.length === 0 },
+              { key: 'bg', label: '下载房间背景图' },
+              { type: 'divider' },
+              { key: 'reset', label: '清除这个房间的本地缓存并重新加载', danger: true }
             ],
             onClick(info: { key: string }): void {
-              info.key === 'bg' ? handleDownloadBackground() : handleExport(info.key as 'html' | 'json');
+              if (info.key === 'bg') {
+                handleDownloadBackground();
+              } else if (info.key === 'reset') {
+                setRenderCount(RENDER_FIRST);
+                resetRoomCache(member);
+              } else {
+                handleExport(info.key as 'html' | 'json');
+              }
             }
           }}
         >
@@ -395,11 +435,11 @@ function ChatView(props: { member: RoomMember; room: RoomData; followed: boolean
               room.error ? (
                 <Fragment>
                   加载失败：{ room.error }
-                  <Button type="link" size="small" onClick={ (): Promise<void> => loadMessages(member, 'older') }>重试</Button>
+                  <Button type="link" size="small" onClick={ (): Promise<void> => loadOlder(member) }>重试</Button>
                 </Fragment>
               ) : null
             }
-            { room.opened && !room.hasMore && !room.loading && items.length > 0 ? '没有更早的消息了' : null }
+            { room.opened && !room.hasMore && !room.loading && allItems.length > 0 && items.length === allItems.length ? '没有更早的消息了' : null }
           </div>
           {
             items.map((item: RoomMessageItem): ReactElement => {
@@ -428,7 +468,7 @@ function ChatView(props: { member: RoomMember; room: RoomData; followed: boolean
           }
           { !room.opened && room.loading ? <div className="room-center"><Spin /></div> : null }
           {
-            room.opened && items.length === 0 && !room.loading && !room.error
+            room.opened && allItems.length === 0 && !room.loading && !room.error
               ? <Empty className="pt-[60px]" description="这个房间还没有消息" />
               : null
           }

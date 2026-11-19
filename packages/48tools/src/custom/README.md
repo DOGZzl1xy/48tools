@@ -19,7 +19,7 @@
 | 应用外壳：常驻侧边栏（功能列表、下载队列、代理状态）、页面切换动效、Ctrl+K 搜索功能、Ctrl+B 收起侧边栏 | `shell/AppShell.tsx`、`shell/navConfig.tsx`、`shell/shellStore.ts`、`shell/CommandPalette.tsx`、`shell/shell.global.sass` | `src/index.tsx`（包住 `<Routers />`） |
 | 自绘标题栏（Windows）：系统标题栏隐藏，标题由界面显示，右上角仍是系统的最小化 / 最大化 / 关闭按钮 | `shell/AppShell.tsx`、`packages/main/src/custom/windowTuning.mts` | `packages/main/src/ProcessWindow.mts` |
 | 设置页面：账号、保存位置、直播录制格式、代理、明暗主题、主题色、工具路径（界面上的设置 > `local/pocket48.json` > 默认值） | `settings/SettingsPage.tsx`、`settings/settingsStore.ts`、`settings/settings.global.sass` | `router/Routers.tsx`（`Settings` 路由）、`components/basic/AntdConfig/AntdConfig.tsx`（主题色） |
-| 口袋房间消息改成聊天界面：搜索成员（带头像）、关注列表、上滑自动加载更早的消息、每分钟自动取最新消息、每条消息带发送者头像（别的成员串门发的消息显示名字）、点「直播」卡片播放直播或回放（查不到时提示已失效）、导出（原版页面 `pages/48/RoomMessage` 保留不动） | `room/RoomPage.tsx`、`room/roomStore.ts`、`room/MessageBubble.tsx`、`room/liveCard.ts`、`room/room.global.sass` | `pages/48/Index.tsx` 的 `RoomMessage` 路由 |
+| 口袋房间消息改成聊天界面：搜索成员（带头像）、关注列表、上滑自动加载更早的消息、每分钟自动取最新消息、每条消息带发送者头像（别的成员串门发的消息显示名字）、点「直播」卡片播放直播或回放（查不到时提示已失效）、消息缓存在本机（IndexedDB，下次打开先显示本地的，再补上新发的）、导出（原版页面 `pages/48/RoomMessage` 保留不动） | `room/RoomPage.tsx`、`room/roomStore.ts`、`room/MessageBubble.tsx`、`room/liveCard.ts`、`room/roomCache.ts`、`room/room.global.sass` | `pages/48/Index.tsx` 的 `RoomMessage` 路由 |
 | 顶层页面的「返回」换成页面标题（子页面仍然显示返回） | `shell/PageTitle.tsx` | `components/Header/Header.tsx` |
 | 新首页：常用功能卡片、当前任务、全部功能、设置、关于（原版首页 `pages/Index/Index.tsx` 保留不动） | `home/HomeDashboard.tsx`、`home/home.global.sass` | `router/Routers.tsx` 的首页路由 |
 | 表格「操作」列：常用按钮 + 「更多」菜单；「标题」列带封面；窄窗口时表格横向滚动 | `table/RowActions.tsx`、`table/MediaTitleCell.tsx` | `Pocket48Record.tsx`、`Pocket48Live.tsx` 的列定义和 `<Table>` |
