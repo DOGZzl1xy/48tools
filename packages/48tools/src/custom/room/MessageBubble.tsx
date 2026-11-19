@@ -1,20 +1,17 @@
-import { memo, type ReactElement, type ReactNode } from 'react';
-import { Avatar, Image, Tooltip } from 'antd';
-import { PlayCircleOutlined as IconPlayCircleOutlined } from '@ant-design/icons';
+import { memo, useState, type ReactElement, type ReactNode, type Dispatch as D, type SetStateAction as S } from 'react';
+import { App, Avatar, Image, Tooltip } from 'antd';
+import type { useAppProps } from 'antd/es/app/context';
+import { PlayCircleOutlined as IconPlayCircleOutlined, LoadingOutlined as IconLoadingOutlined } from '@ant-design/icons';
 import { source, mp4Source } from '../../utils/snh48';
+import { openLivePush, type OpenLiveResult } from './liveCard';
 import type { RoomMessageItem } from './roomStore';
 
 /**
- * 一条房间消息：左边是发消息的人的头像，右边是气泡。按消息类型显示：文字、回复（带被回复的那句话）、图片、语音、视频、
+ * 一条房间消息的气泡。按消息类型显示：文字、回复（带被回复的那句话）、图片、语音、视频、
  * 直播通知、翻牌（文字 / 语音 / 视频）、表情图；不认识的类型显示成一行灰色的说明。
- * 房间里偶尔会有别的成员来发消息，所以每条都带头像；不是房主发的还会显示名字。
- * 直播通知卡片可以点击：直播中打开直播播放，已结束打开回放（见 ./openLive）。
+ * 每条消息左边是发送者的头像（同一个人连续发的只在第一条显示）；不是房主发的消息会显示名字，气泡颜色也不同。
+ * 直播通知可以点：直播中打开直播，结束后打开回放，查不到回放时提示已失效（见 ./liveCard）。
  */
-export interface LivePushInfo {
-  liveId: string;
-  liveTitle: string;
-  liveCover?: string;
-}
 const typeNames: Record<string, string> = {
   EXPRESS: '表情',
   DELETE: '删除了一条消息',
@@ -32,6 +29,47 @@ const typeNames: Record<string, string> = {
   VIDEO: '视频'
 };
 
+/* 「开始直播」卡片：点击播放直播或回放 */
+function LiveCard(props: { info: { liveId: string; liveTitle: string; liveCover?: string } }): ReactElement {
+  const { info }: { info: { liveId: string; liveTitle: string; liveCover?: string } } = props;
+  const { message: messageApi }: useAppProps = App.useApp();
+  const [loading, setLoading]: [boolean, D<S<boolean>>] = useState(false);
+
+  async function handleClick(): Promise<void> {
+    if (loading) return;
+
+    setLoading(true);
+
+    try {
+      const result: OpenLiveResult = await openLivePush(info);
+
+      if (result === 'expired') {
+        messageApi.warning('直播回放已失效');
+      } else {
+        messageApi.success(result === 'live' ? '正在直播，已打开直播窗口' : '直播已结束，已打开回放');
+      }
+    } catch (err) {
+      console.error(err);
+      messageApi.error('打开失败，请稍后再试');
+    }
+
+    setLoading(false);
+  }
+
+  return (
+    <button className="room-card" type="button" onClick={ handleClick }>
+      { info.liveCover ? <img src={ source(info.liveCover) } alt="" loading="lazy" /> : null }
+      <span className="room-card-text">
+        <small>
+          { loading ? <IconLoadingOutlined /> : <IconPlayCircleOutlined /> }
+          &nbsp;直播 · 点击观看
+        </small>
+        <b>{ info.liveTitle }</b>
+      </span>
+    </button>
+  );
+}
+
 function Quote(props: { name?: string; children: ReactNode }): ReactElement {
   return (
     <blockquote className="room-quote">
@@ -46,7 +84,7 @@ function pick<T>(...values: Array<T | undefined | null>): T | undefined {
   return values.find((value: T | undefined | null): boolean => value !== undefined && value !== null) ?? undefined;
 }
 
-function renderBody(item: RoomMessageItem, onOpenLive?: (info: LivePushInfo) => void): { body: ReactNode; plain?: boolean } {
+function renderBody(item: RoomMessageItem): { body: ReactNode; plain?: boolean } {
   const message: any = item.message;
 
   if (message.type === 'text') return { body: <p className="room-text">{ message.body }</p> };
@@ -79,23 +117,7 @@ function renderBody(item: RoomMessageItem, onOpenLive?: (info: LivePushInfo) => 
     }
 
     if (type === 'LIVEPUSH') {
-      return {
-        body: (
-          <button className="room-card"
-            type="button"
-            title="点击观看：直播中会打开直播，已经结束会打开回放"
-            data-live-id={ attach.livePushInfo.liveId }
-            onClick={ (): void => onOpenLive?.(attach.livePushInfo) }
-          >
-            { attach.livePushInfo.liveCover ? <img src={ source(attach.livePushInfo.liveCover) } alt="" loading="lazy" /> : null }
-            <div>
-              <small><IconPlayCircleOutlined /> 开始直播 · 点击观看</small>
-              <b>{ attach.livePushInfo.liveTitle }</b>
-            </div>
-          </button>
-        ),
-        plain: true
-      };
+      return { body: <LiveCard info={ attach.livePushInfo } />, plain: true };
     }
 
     if (type === 'FLIPCARD') {
@@ -154,31 +176,36 @@ function renderBody(item: RoomMessageItem, onOpenLive?: (info: LivePushInfo) => 
 
 interface MessageBubbleProps {
   item: RoomMessageItem;
-  time: string;    // HH:mm
-  ownerId: number; // 房主（这个房间的成员）的用户 ID
-  onOpenLive?: (info: LivePushInfo) => void;
+  time: string;        // HH:mm
+  showAvatar: boolean; // 同一个人连续发的消息，只在第一条显示头像
+  guest: boolean;      // 不是房主本人发的（别的成员来串门）
 }
 
 function MessageBubble(props: MessageBubbleProps): ReactElement {
-  const { item, time, ownerId, onOpenLive }: MessageBubbleProps = props;
-  const user: { avatar?: string; nickName?: string; userId?: number } = item.message.user ?? {};
-  const isGuest: boolean = Number(user.userId) !== ownerId; // 不是房主发的（别的成员来串门）
+  const { item, time, showAvatar, guest }: MessageBubbleProps = props;
+  const user: { nickName?: string; avatar?: string } = item.message.user ?? {};
   let content: { body: ReactNode; plain?: boolean };
 
   try {
-    content = renderBody(item, onOpenLive);
+    content = renderBody(item);
   } catch (err) {
     console.error(err, item);
     content = { body: <span className="room-note">[无法显示的消息：{ item.raw.msgType }]</span>, plain: true };
   }
 
   return (
-    <div className={ `room-message${ isGuest ? ' is-guest' : '' }` }>
-      <Tooltip title={ user.nickName } placement="left" mouseEnterDelay={ 0.4 }>
-        <Avatar className="room-avatar" size={ 34 } src={ user.avatar || undefined }>{ (user.nickName ?? '?').slice(-2) }</Avatar>
-      </Tooltip>
+    <div className={ `room-message${ guest ? ' is-guest' : '' }${ showAvatar ? ' is-first' : '' }` }>
+      <div className="room-avatar">
+        {
+          showAvatar ? (
+            <Tooltip title={ user.nickName } placement="left" mouseEnterDelay={ 0.3 }>
+              <Avatar size={ 32 } src={ user.avatar || undefined }>{ (user.nickName ?? '?').slice(-2) }</Avatar>
+            </Tooltip>
+          ) : null
+        }
+      </div>
       <div className="room-message-main">
-        { isGuest ? <div className="room-sender">{ user.nickName }</div> : null }
+        { showAvatar && guest ? <div className="room-sender">{ user.nickName }</div> : null }
         <div className="room-message-row">
           <div className={ content.plain ? 'room-plain' : 'room-bubble' }>{ content.body }</div>
           <time>{ time }</time>

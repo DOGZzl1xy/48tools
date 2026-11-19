@@ -188,7 +188,10 @@
   align-items: flex-start
   gap: 10px
   max-width: 82%
-  margin-top: 8px
+  margin-top: 4px
+
+  &.is-first
+    margin-top: 12px
 
   time
     flex: none
@@ -196,9 +199,13 @@
     color: var(--shell-text-tertiary)
     font-size: 11px
 
+  // 别的成员发的消息：气泡用主题色的浅色，名字也用主题色
+  &.is-guest .room-bubble
+    background: var(--shell-active-bg)
+
 .room-avatar
   flex: none
-  margin-top: 1px
+  width: 32px
 
 .room-message-main
   min-width: 0
@@ -208,15 +215,11 @@
   align-items: flex-end
   gap: 8px
 
-// 不是房主发的消息：显示名字，气泡换一个颜色
 .room-sender
   margin: 0 0 3px 2px
   color: var(--shell-primary)
   font-size: 12px
   font-weight: 600
-
-.room-message.is-guest .room-bubble
-  background: var(--shell-active-bg)
 
 .room-bubble
   min-width: 0
@@ -281,16 +284,16 @@
   padding: 10px
   border: 1px solid var(--shell-border)
   border-radius: 12px
-  background: transparent
-  color: inherit
+  background: var(--shell-surface)
+  color: var(--shell-text)
   font: inherit
   text-align: left
   cursor: pointer
-  transition: border-color .12s, background-color .12s
+  transition: border-color .15s, box-shadow .15s
 
   &:hover
     border-color: var(--shell-primary)
-    background: var(--shell-hover)
+    box-shadow: 0 4px 14px -8px rgba(0, 0, 0, .3)
 
   &:focus-visible
     outline: 2px solid var(--shell-primary)
@@ -303,7 +306,7 @@
     border-radius: 8px
     object-fit: cover
 
-  div
+  .room-card-text
     display: flex
     flex-direction: column
     min-width: 0
