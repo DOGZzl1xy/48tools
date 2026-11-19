@@ -1,5 +1,5 @@
 import * as fs from 'node:fs';
-import { getPocket48LocalConfig } from '../pocket48Proxy/pocket48Proxy';
+import { getSetting } from '../settings/settingsStore';
 import { resolveLocalDir } from '../download/defaultSaveDir';
 import { queueTaskStart, queueTaskEnd } from '../downloadQueue/downloadQueue';
 import { convertRecordingFiles, findRecordingFiles, type RecordFormat } from './convertRecording';
@@ -20,13 +20,11 @@ export interface LiveRecordingInfo {
 
 /* 自动录制保存的文件夹 */
 export function getLiveRecordDir(dir: string): string {
-  const config: ReturnType<typeof getPocket48LocalConfig> = getPocket48LocalConfig();
-
-  return resolveLocalDir(config.liveRecordDir) ?? resolveLocalDir(config.downloadDir) ?? dir;
+  return resolveLocalDir(getSetting('liveRecordDir')) ?? resolveLocalDir(getSetting('downloadDir')) ?? dir;
 }
 
 export function getLiveRecordFormat(): RecordFormat {
-  const format: string | undefined = getPocket48LocalConfig().liveRecordFormat;
+  const format: string | undefined = getSetting('liveRecordFormat');
 
   return format === 'mp4' || format === 'mp4-compress' ? format : 'flv';
 }

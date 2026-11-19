@@ -2,10 +2,49 @@
 
 .shell
   display: flex
+  flex-direction: column
   height: 100vh
   overflow: hidden
   background: var(--shell-bg)
   color: var(--shell-text)
+  // 内容面板里一整页能用的高度（需要自己撑满高度的页面用，例如房间消息）
+  --shell-page-height: calc(100vh - 18px)
+
+.shell-body
+  display: flex
+  flex: 1
+  min-height: 0
+
+// ---------- 标题栏（系统标题栏被隐藏时由界面自己画，右边留给系统的最小化 / 最大化 / 关闭按钮） ----------
+.shell-titlebar
+  display: flex
+  flex: none
+  align-items: center
+  gap: 6px
+  height: env(titlebar-area-height, 38px)
+  padding: 0 150px 0 12px
+  user-select: none
+  -webkit-app-region: drag
+
+  .shell-icon-button
+    -webkit-app-region: no-drag
+
+.shell-titlebar-title
+  overflow: hidden
+  color: var(--shell-text-secondary)
+  font-size: 12.5px
+  font-weight: 500
+  text-overflow: ellipsis
+  white-space: nowrap
+
+.shell.has-titlebar
+  --shell-page-height: calc(100vh - env(titlebar-area-height, 38px) - 10px)
+
+  .shell-sidebar
+    padding-top: 2px
+
+  .shell-main
+    margin-top: 0
 
 // ---------- 侧边栏 ----------
 .shell-sidebar

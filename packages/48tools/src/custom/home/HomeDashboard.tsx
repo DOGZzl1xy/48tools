@@ -1,21 +1,14 @@
-import { ipcRenderer } from 'electron';
-import { Fragment, use, type ReactElement, type MouseEvent } from 'react';
+import { Fragment, type ReactElement } from 'react';
 import { Link } from 'react-router';
-import { Button, Collapse, Image, Progress, Space, Tag, Tooltip, Typography } from 'antd';
+import { Button, Collapse, Image, Progress, Space, Tag, Typography } from 'antd';
 import {
   ArrowRightOutlined as IconArrowRightOutlined,
   FileSyncOutlined as IconFileSyncOutlined,
-  ToolTwoTone as IconToolTwoTone,
-  BugTwoTone as IconBugTwoTone
+  SettingOutlined as IconSettingOutlined
 } from '@ant-design/icons';
-import { WinIpcChannel } from '@48tools/main/src/channelEnum';
 import './home.global.sass';
 import ButtonLink from '../../components/ButtonLink/ButtonLink';
-import FFmpegOption from '../../pages/Index/FFmpegOption/FFmpegOption';
-import ExecutablePath from '../../pages/Index/ExecutablePath/ExecutablePath';
 import Pocket48ProxyOption from '../pocket48Proxy/Pocket48ProxyOption';
-import ThemeContext, { type Theme } from '../../components/basic/Theme/ThemeContext';
-import { useAppDataDir, type UseAppDataDirReturnType } from '../../functionalComponents/Pocket48Login/useAppDataDir/useAppDataDir';
 import imageUrlZfbAvif from '../../pages/Index/images/zfb.avif';
 import imageUrlWxAvif from '../../pages/Index/images/wx.avif';
 import { shellNavGroups, shellNavItems, type ShellNavGroup, type ShellNavItem } from '../shell/navConfig';
@@ -24,16 +17,12 @@ import { useQueueTasks, type QueueTask } from '../downloadQueue/downloadQueue';
 import { safeOpenExternal } from '../security/safeOpenExternal';
 
 /**
- * 新的首页：常用功能的大卡片、当前任务、全部功能、设置、关于。
- * 原版首页（pages/Index/Index.tsx）保留不动，设置按钮和赞助信息都复用原版的组件和图片。
+ * 新的首页：常用功能的大卡片、当前任务、全部功能、设置入口、关于。
+ * 原版首页（pages/Index/Index.tsx）保留不动，赞助信息复用原版的图片；各项设置在 custom/settings/SettingsPage。
  * 接入点：router/Routers.tsx 的首页路由。
  */
 const featuredKeys: Array<string> = ['pocket48-record', 'pocket48-live'];
 const featured: Array<ShellNavItem> = shellNavItems.filter((item: ShellNavItem): boolean => featuredKeys.includes(item.key));
-
-function handleOpenDeveloperToolsClick(event: MouseEvent): void {
-  ipcRenderer.send(WinIpcChannel.DeveloperTools);
-}
 
 function FeaturedCard(props: { item: ShellNavItem }): ReactElement {
   const { item }: { item: ShellNavItem } = props;
@@ -86,9 +75,6 @@ function RunningTasks(props: {}): ReactElement {
 }
 
 function HomeDashboard(props: {}): ReactElement {
-  const { ChangeThemeElement }: Theme = use(ThemeContext);
-  const { buttonRender, modalRender }: UseAppDataDirReturnType = useAppDataDir();
-
   return (
     <div className="home">
       <header className="home-header">
@@ -132,33 +118,16 @@ function HomeDashboard(props: {}): ReactElement {
       <section>
         <h2>设置</h2>
         <Space wrap={ true }>
-          <FFmpegOption />
-          { buttonRender() }
-          <ExecutablePath />
+          <ButtonLink linkProps={{ to: '/Settings' }} buttonProps={{ icon: <IconSettingOutlined /> }}>打开设置</ButtonLink>
           <Pocket48ProxyOption />
+          <Button id="help-doc"
+            icon={ <IconFileSyncOutlined /> }
+            onClick={ (): void => safeOpenExternal('https://yzb1g5r02h.feishu.cn/docx/MxfydWlNaovZ5sxsbJ5crnAlnVb') }
+          >
+            使用手册
+          </Button>
         </Space>
-        <div className="mt-[8px]">
-          <Space wrap={ true }>
-            <Button id="help-doc"
-              icon={ <IconFileSyncOutlined /> }
-              onClick={ (): void => safeOpenExternal('https://yzb1g5r02h.feishu.cn/docx/MxfydWlNaovZ5sxsbJ5crnAlnVb') }
-            >
-              使用手册
-            </Button>
-            { ChangeThemeElement }
-            <Tooltip title="开发者工具">
-              <Button type="text" icon={ <IconToolTwoTone /> } onClick={ handleOpenDeveloperToolsClick } />
-            </Tooltip>
-            <Tooltip title="问题反馈（原版仓库）">
-              <Button id="issues"
-                type="text"
-                icon={ <IconBugTwoTone /> }
-                onClick={ (): void => safeOpenExternal('https://github.com/duan602728596/48tools/issues') }
-              />
-            </Tooltip>
-            <ButtonLink linkProps={{ to: '/Agreement/Agreement' }} buttonProps={{ type: 'text' }}>License</ButtonLink>
-          </Space>
-        </div>
+        <p className="home-empty mt-[8px]">账号、保存位置、主题颜色、FFmpeg 等都在设置里。</p>
       </section>
 
       <section>
@@ -189,7 +158,6 @@ function HomeDashboard(props: {}): ReactElement {
           }] }
         />
       </section>
-      { modalRender() }
     </div>
   );
 }

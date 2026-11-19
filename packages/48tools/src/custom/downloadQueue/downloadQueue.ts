@@ -49,6 +49,13 @@ function find(id: string): QueueTask | undefined {
   return tasks.find((task: QueueTask): boolean => task.id === id);
 }
 
+/* 用一个新的对象替换任务。界面（开启了 React Compiler）按对象有没有变化决定要不要重画，所以不能直接改原来的对象 */
+function replace(task: QueueTask, patch: Partial<QueueTask>): void {
+  const next: QueueTask = { ...task, ...patch };
+
+  tasks = tasks.map((item: QueueTask): QueueTask => item === task ? next : item);
+}
+
 /* 开始一个任务；同一个 id 再次开始时覆盖旧记录 */
 export function queueTaskStart(init: QueueTaskInit): void {
   tasks = tasks.filter((task: QueueTask): boolean => task.id !== init.id);
@@ -71,10 +78,10 @@ export function queueTaskProgress(id: string, percent: number | undefined, detai
 
   if (!task || task.status !== 'running') return;
 
-  if (percent !== undefined) task.percent = Math.max(task.percent ?? 0, Math.min(100, percent));
-
-  if (detail !== undefined) task.detail = detail;
-
+  replace(task, {
+    percent: percent !== undefined ? Math.max(task.percent ?? 0, Math.min(100, percent)) : task.percent,
+    detail: detail !== undefined ? detail : task.detail
+  });
   emitLater();
 }
 
@@ -84,14 +91,14 @@ export function queueTaskEnd(id: string, status: Exclude<QueueTaskStatus, 'runni
 
   if (!task || task.status !== 'running') return;
 
-  task.status = status;
-  task.error = error;
-  task.detail = detail;
-  task.endTime = Date.now();
-  task.stop = undefined;
-
-  if (status === 'done' && task.percent !== undefined) task.percent = 100;
-
+  replace(task, {
+    status,
+    error,
+    detail,
+    endTime: Date.now(),
+    stop: undefined,
+    percent: status === 'done' && task.percent !== undefined ? 100 : task.percent
+  });
   emit();
 }
 

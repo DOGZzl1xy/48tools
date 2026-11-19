@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import { useRoutes, Navigate } from 'react-router';
 import HomeDashboard from '../custom/home/HomeDashboard'; // 新首页，原版首页是 pages/Index/Index
+import SettingsPage from '../custom/settings/SettingsPage';
 import Pocket48 from '../pages/48/Index';
 import Bilibili from '../pages/Bilibili/Index';
 import AcFun from '../pages/AcFun/Index';
@@ -25,6 +26,7 @@ function Routers(props: {}): ReactElement | null {
         return <HomeDashboard />;
       }
     },
+    { path: 'Settings', element: <SettingsPage /> },
     { path: '48/*', element: <Pocket48 /> },
     { path: 'Bilibili/*', element: <Bilibili /> },
     { path: 'AcFun/*', element: <AcFun /> },

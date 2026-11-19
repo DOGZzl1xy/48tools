@@ -1,6 +1,5 @@
 import type { ThemeConfig } from 'antd';
 import darkDerivative from 'antd/es/theme/themes/dark/index';
-import { cyan } from '@ant-design/colors';
 
 /**
  * 现代化的 antd 主题：系统界面字体、分层的背景（窗口底色 + 内容面板）、更轻的表格和边框、更快的动效。
@@ -27,13 +26,16 @@ export const layoutBgLight: string = '#f3f4f6';
 export const layoutBgDark: string = '#0b0d10';
 const containerBgDark: string = '#15181d';
 
-export function createModernTheme(isDark: boolean | undefined): ThemeConfig {
+/**
+ * @param { boolean | undefined } isDark
+ * @param { string } [primary] - 主题色（设置页里选的，见 custom/settings/settingsStore）
+ */
+export function createModernTheme(isDark: boolean | undefined, primary: string = isDark ? '#13c2c2' : '#08979c'): ThemeConfig {
   return {
     algorithm: isDark ? darkDerivative : undefined,
     token: {
-      // 浅色下用深一级的青色，白字对比度更好
-      colorPrimary: isDark ? cyan.primary : cyan[6],
-      colorLink: isDark ? cyan.primary : cyan[6],
+      colorPrimary: primary,
+      colorLink: primary,
       fontFamily,
       borderRadius: 8,
       borderRadiusSM: 6,

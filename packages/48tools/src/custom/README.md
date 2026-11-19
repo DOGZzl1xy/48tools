@@ -17,6 +17,9 @@
 | 自动抓取：按成员 ID 匹配（原版写错不生效）、昵称不再当正则、出错有提示、一个成员出错不影响其他成员 | `live/autoGrabHelpers.ts` | `utils/autoGrab.ts` |
 | 自动录制保存到 `local/pocket48.json` 的 `liveRecordDir`（没有就用 `downloadDir`）；录完按 `liveRecordFormat` 转成 mp4（无损封装或压缩） | `live/liveRecording.ts`、`live/convertRecording.ts`、`live/LiveRecordDirHint.tsx` | `utils/autoGrab.ts`、`Pocket48Live.tsx`（录制开始 / 结束）、`LiveOptions.tsx`（提示） |
 | 应用外壳：常驻侧边栏（功能列表、下载队列、代理状态）、页面切换动效、Ctrl+K 搜索功能、Ctrl+B 收起侧边栏 | `shell/AppShell.tsx`、`shell/navConfig.tsx`、`shell/shellStore.ts`、`shell/CommandPalette.tsx`、`shell/shell.global.sass` | `src/index.tsx`（包住 `<Routers />`） |
+| 自绘标题栏（Windows）：系统标题栏隐藏，标题由界面显示，右上角仍是系统的最小化 / 最大化 / 关闭按钮 | `shell/AppShell.tsx`、`packages/main/src/custom/windowTuning.mts` | `packages/main/src/ProcessWindow.mts` |
+| 设置页面：账号、保存位置、直播录制格式、代理、明暗主题、主题色、工具路径（界面上的设置 > `local/pocket48.json` > 默认值） | `settings/SettingsPage.tsx`、`settings/settingsStore.ts`、`settings/settings.global.sass` | `router/Routers.tsx`（`Settings` 路由）、`components/basic/AntdConfig/AntdConfig.tsx`（主题色） |
+| 口袋房间消息改成聊天界面：搜索成员（带头像）、关注列表、上滑自动加载更早的消息、每分钟自动取最新消息、导出（原版页面 `pages/48/RoomMessage` 保留不动） | `room/RoomPage.tsx`、`room/roomStore.ts`、`room/MessageBubble.tsx`、`room/room.global.sass` | `pages/48/Index.tsx` 的 `RoomMessage` 路由 |
 | 顶层页面的「返回」换成页面标题（子页面仍然显示返回） | `shell/PageTitle.tsx` | `components/Header/Header.tsx` |
 | 新首页：常用功能卡片、当前任务、全部功能、设置、关于（原版首页 `pages/Index/Index.tsx` 保留不动） | `home/HomeDashboard.tsx`、`home/home.global.sass` | `router/Routers.tsx` 的首页路由 |
 | 表格「操作」列：常用按钮 + 「更多」菜单；「标题」列带封面；窄窗口时表格横向滚动 | `table/RowActions.tsx`、`table/MediaTitleCell.tsx` | `Pocket48Record.tsx`、`Pocket48Live.tsx` 的列定义和 `<Table>` |
@@ -57,6 +60,10 @@
 - 界面代码（`packages/48tools`）的生产构建会用 `babel-plugin-delay-require` 把 node 模块（`fs`、`path`、`process` 等）改成用到时才加载，
   加载语句插在所在代码块的开头。所以**不要在 `for` / `while` 的头部直接调用 node 模块**（例如 `for (const x of [process.cwd()])`），
   先把值存到变量里再循环。开发模式不会出问题，只有打包后才报错；打包脚本会检查这种写法，并在打包后启动一次程序确认没有报错。
+- 界面代码开启了 React Compiler（自动缓存组件的渲染结果）。组件渲染时**不要直接读会变化的外部数据**
+  （例如 `localStorage`、模块里的变量、`getSetting()`、`isFollowed()`），也不要原地修改已经交给界面的对象；
+  否则数据变了界面不刷新。正确的做法：数据放进 store，用 `useSyncExternalStore` 之类的 hook 取出来，再从它算出要显示的值；
+  更新时生成新的对象（参考 `downloadQueue/downloadQueue.ts`、`settings/settingsStore.ts`、`room/roomStore.ts`）。
 - 口袋48的接口地址和请求头都是抓包得来的，过期时界面会提示「可能需要重新抓包更新」，到时更新
   `pocket48Headers/pocket48ClientInfo.ts` 和 `services/48/index.ts`。
 

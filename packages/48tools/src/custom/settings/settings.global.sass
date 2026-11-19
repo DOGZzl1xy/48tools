@@ -1,0 +1,78 @@
+// 设置页面（custom/settings/SettingsPage）的样式，颜色变量来自 custom/shell/AppShell。
+
+.settings
+  max-width: 860px
+  margin: 0 auto
+  padding: 28px 32px 48px
+
+  h1
+    margin: 0
+    font-size: 24px
+    font-weight: 700
+
+  section
+    margin-top: 26px
+
+  h2
+    margin: 0 0 4px
+    color: var(--shell-text-tertiary)
+    font-size: 12px
+    font-weight: 600
+    letter-spacing: .6px
+
+.settings-row
+  display: flex
+  align-items: center
+  gap: 24px
+  min-height: 60px
+  padding: 12px 0
+  border-bottom: 1px solid var(--shell-border)
+
+.settings-row-label
+  display: flex
+  flex: none
+  flex-direction: column
+  width: 300px
+
+  b
+    font-size: 14px
+    font-weight: 600
+
+  small
+    margin-top: 2px
+    color: var(--shell-text-secondary)
+    font-size: 12.5px
+    line-height: 1.5
+
+.settings-row-control
+  flex: 1
+  min-width: 0
+
+.settings-colors
+  display: flex
+  gap: 10px
+
+.settings-color
+  display: inline-flex
+  align-items: center
+  justify-content: center
+  width: 28px
+  height: 28px
+  padding: 0
+  border: 0
+  border-radius: 50%
+  color: #fff
+  font-size: 13px
+  cursor: pointer
+  transition: transform .12s, box-shadow .12s
+
+  &:hover
+    transform: scale(1.08)
+
+  &.is-active
+    outline: 2px solid var(--shell-text-secondary)
+    outline-offset: 2px
+
+  &:focus-visible
+    outline: 2px solid var(--shell-text)
+    outline-offset: 3px

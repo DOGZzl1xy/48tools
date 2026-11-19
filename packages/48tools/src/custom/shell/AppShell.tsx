@@ -17,7 +17,8 @@ import {
   SearchOutlined as IconSearchOutlined,
   MenuFoldOutlined as IconMenuFoldOutlined,
   MenuUnfoldOutlined as IconMenuUnfoldOutlined,
-  DownOutlined as IconDownOutlined
+  DownOutlined as IconDownOutlined,
+  SettingOutlined as IconSettingOutlined
 } from '@ant-design/icons';
 import './shell.global.sass';
 import { shellNavGroups, findNavItem, type ShellNavGroup, type ShellNavItem } from './navConfig';
@@ -151,6 +152,8 @@ function AppShell(props: Required<PropsWithChildren>): ReactElement {
     return (): void => window.removeEventListener('keydown', handleKeydown);
   }, []);
 
+  // 主进程隐藏了系统标题栏（Windows）时，由这里画标题栏
+  const hasTitleBar: boolean = Boolean((navigator as Navigator & { windowControlsOverlay?: { visible: boolean } }).windowControlsOverlay?.visible);
   const queueLabel: string = running.length > 0 ? `下载队列（进行中 ${ running.length }）` : '下载队列';
   const queueButton: ReactElement = (
     <button className="shell-item" type="button" onClick={ (): void => setQueueOpen(true) }>
@@ -171,69 +174,94 @@ function AppShell(props: Required<PropsWithChildren>): ReactElement {
     </div>
   ) : null;
 
+  const collapseButton: ReactElement = (
+    <Tooltip title={ collapsed ? '展开侧边栏（Ctrl+B）' : '收起侧边栏（Ctrl+B）' }
+      placement={ hasTitleBar ? 'bottom' : 'right' }
+      mouseEnterDelay={ 0.4 }
+    >
+      <button className="shell-icon-button" type="button" aria-label="收起或展开侧边栏" onClick={ toggleSidebar }>
+        { collapsed ? <IconMenuUnfoldOutlined /> : <IconMenuFoldOutlined /> }
+      </button>
+    </Tooltip>
+  );
+
   return (
-    <div className="shell">
-      <aside className={ `shell-sidebar${ collapsed ? ' is-collapsed' : '' }` }>
-        <div className="shell-brand">
-          <span className="shell-brand-name">
-            48tools
-            <small>custom</small>
-          </span>
-          <Tooltip title={ collapsed ? '展开侧边栏（Ctrl+B）' : '收起侧边栏（Ctrl+B）' } placement="right" mouseEnterDelay={ 0.4 }>
-            <button className="shell-icon-button" type="button" aria-label="收起或展开侧边栏" onClick={ toggleSidebar }>
-              { collapsed ? <IconMenuUnfoldOutlined /> : <IconMenuFoldOutlined /> }
+    <div className={ `shell${ hasTitleBar ? ' has-titlebar' : '' }` }>
+      {
+        hasTitleBar ? (
+          <header className="shell-titlebar">
+            { collapseButton }
+            <span className="shell-titlebar-title">{ document.title }</span>
+          </header>
+        ) : null
+      }
+      <div className="shell-body">
+        <aside className={ `shell-sidebar${ collapsed ? ' is-collapsed' : '' }` }>
+          {
+            hasTitleBar ? null : (
+              <div className="shell-brand">
+                <span className="shell-brand-name">
+                  48tools
+                  <small>custom</small>
+                </span>
+                { collapseButton }
+              </div>
+            )
+          }
+          <Tooltip title={ collapsed ? '搜索功能（Ctrl+K）' : undefined } placement="right">
+            <button className="shell-search" type="button" onClick={ (): void => setPaletteOpen(true) }>
+              <IconSearchOutlined />
+              <span>搜索功能</span>
+              <kbd>Ctrl K</kbd>
             </button>
           </Tooltip>
-        </div>
-        <Tooltip title={ collapsed ? '搜索功能（Ctrl+K）' : undefined } placement="right">
-          <button className="shell-search" type="button" onClick={ (): void => setPaletteOpen(true) }>
-            <IconSearchOutlined />
-            <span>搜索功能</span>
-            <kbd>Ctrl K</kbd>
-          </button>
-        </Tooltip>
-        <nav className="shell-nav">
-          <NavLinkItem item={{ key: 'home', label: '主页', title: '主页', to: '/', icon: <IconHomeOutlined /> }}
-            active={ location.pathname === '/' }
-            collapsed={ collapsed }
-          />
-          {
-            shellNavGroups.map((group: ShellNavGroup): ReactElement => {
-              const closed: boolean = closedGroups.includes(group.key) && !collapsed
+          <nav className="shell-nav">
+            <NavLinkItem item={{ key: 'home', label: '主页', title: '主页', to: '/', icon: <IconHomeOutlined /> }}
+              active={ location.pathname === '/' }
+              collapsed={ collapsed }
+            />
+            {
+              shellNavGroups.map((group: ShellNavGroup): ReactElement => {
+                const closed: boolean = closedGroups.includes(group.key) && !collapsed
                 && !group.items.some((item: ShellNavItem): boolean => item === activeItem); // 当前页面所在的组保持展开
 
-              return (
-                <div key={ group.key } className="shell-group">
-                  <button className={ `shell-group-title${ closed ? ' is-closed' : '' }` }
-                    type="button"
-                    aria-expanded={ !closed }
-                    onClick={ (): void => handleToggleGroup(group.key) }
-                  >
-                    { group.title }
-                    <IconDownOutlined />
-                  </button>
-                  {
-                    closed ? null : group.items.map((item: ShellNavItem): ReactElement => (
-                      <NavLinkItem key={ item.key } item={ item } active={ item === activeItem } collapsed={ collapsed } />
-                    ))
-                  }
-                </div>
-              );
-            })
-          }
-        </nav>
-        <div className="shell-footer">
-          { collapsed ? <Tooltip title={ queueLabel } placement="right">{ queueButton }</Tooltip> : queueButton }
-          {
-            proxyRow && collapsed
-              ? <Tooltip title={ proxyState ? proxyStateText[proxyState] : undefined } placement="right">{ proxyRow }</Tooltip>
-              : proxyRow
-          }
-        </div>
-      </aside>
-      <main ref={ mainRef } className="shell-main">
-        <div ref={ pageRef } className="shell-page">{ props.children }</div>
-      </main>
+                return (
+                  <div key={ group.key } className="shell-group">
+                    <button className={ `shell-group-title${ closed ? ' is-closed' : '' }` }
+                      type="button"
+                      aria-expanded={ !closed }
+                      onClick={ (): void => handleToggleGroup(group.key) }
+                    >
+                      { group.title }
+                      <IconDownOutlined />
+                    </button>
+                    {
+                      closed ? null : group.items.map((item: ShellNavItem): ReactElement => (
+                        <NavLinkItem key={ item.key } item={ item } active={ item === activeItem } collapsed={ collapsed } />
+                      ))
+                    }
+                  </div>
+                );
+              })
+            }
+          </nav>
+          <div className="shell-footer">
+            { collapsed ? <Tooltip title={ queueLabel } placement="right">{ queueButton }</Tooltip> : queueButton }
+            <NavLinkItem item={{ key: 'settings', label: '设置', title: '设置', to: '/Settings', icon: <IconSettingOutlined /> }}
+              active={ location.pathname.startsWith('/Settings') }
+              collapsed={ collapsed }
+            />
+            {
+              proxyRow && collapsed
+                ? <Tooltip title={ proxyState ? proxyStateText[proxyState] : undefined } placement="right">{ proxyRow }</Tooltip>
+                : proxyRow
+            }
+          </div>
+        </aside>
+        <main ref={ mainRef } className="shell-main">
+          <div ref={ pageRef } className="shell-page">{ props.children }</div>
+        </main>
+      </div>
       <DownloadQueuePanel />
       <CommandPalette />
     </div>

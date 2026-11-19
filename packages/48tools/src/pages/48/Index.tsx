@@ -7,7 +7,7 @@ import LiveOptions from './Pocket48/LiveOptions/LiveOptions';
 import Pocket48Record from './Pocket48/Pocket48Record/Pocket48Record';
 import InLive from './Live48/InLive/InLive';
 import InVideo from './Live48/InVideo/InVideo';
-import RoomMessageDynamic from './RoomMessage/loader';
+import RoomPage from '../../custom/room/RoomPage'; // 聊天风格的新房间页，原版是 ./RoomMessage/loader
 import Voice from './Voice/Voice';
 import Friends from './Friends/Friends';
 import QingchunshikeDynamic from './Qingchunshike/loader';
@@ -20,7 +20,7 @@ function Index(props: {}): ReactElement | null {
     { path: 'Pocket48Record', element: <Pocket48Record /> },
     { path: 'InLive', element: <InLive /> },
     { path: 'InVideo', element: <InVideo /> },
-    { path: 'RoomMessage', element: <RoomMessageDynamic /> },
+    { path: 'RoomMessage', element: <RoomPage /> },
     { path: 'Voice', element: <Voice /> },
     { path: 'Friends', element: <Friends /> },
     { path: 'Qingchunshike', element: <QingchunshikeDynamic /> }
