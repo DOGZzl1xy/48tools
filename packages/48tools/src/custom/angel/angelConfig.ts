@@ -3,7 +3,8 @@
  * Team NII 的守护天使游戏：每个人从同一个签筒里抽一个人（不放回，可能抽到自己），游戏期间给抽到的人送惊喜。
  * 这里放名单和时间。名单是 2026-11-19 和用户确认过的；房间地址来自成员名单（roomId.json）和口袋48的搜索。
  * 名单里的人如果后来确认不参加，在 local/angel/clues.json 的 excluded 里写上名字就行，不用改代码（见 ./angelFiles）。
- * 接入点：pages/48/Index.tsx 的 Angel 路由、custom/shell/navConfig.tsx 的「守护天使」、custom/shell/AppShell.tsx 的 startAngelWatcher。
+ * 接入点：pages/48/Index.tsx 的 Angel 路由、custom/shell/navConfig.tsx 的「守护天使」、custom/shell/AppShell.tsx 的 startAngelWatcher，
+ * 以及主进程打开网页的窗口（packages/main/src/custom/angelWindow.mts、angelChannel.ts，main.mts 里注册）。
  */
 export interface AngelMember {
   name: string;

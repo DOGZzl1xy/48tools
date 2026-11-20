@@ -1,8 +1,8 @@
 /**
- * 概率变化曲线：生成 SVG 字符串（不依赖 React 和其他文件），48tools 的页面和 angel.48tools.app 的网页共用：
- *   - 页面（./AngelPage）直接用
- *   - 网页（local/angel/site/publish.mjs）用仓库里的 typescript 把这个文件转成 JS 再调用，所以这里不能 import 任何东西
- * 颜色全部用 CSS 变量，两边的样式表各自定义（明暗主题跟着变）：
+ * 概率变化曲线：生成 SVG 字符串（不依赖 React 和其他文件），给 angel.48tools.app 的网页用：
+ *   - 网页（local/angel/site/publish.mjs）用仓库里的 typescript 把这个文件转成 JS，生成网页时和网页里的脚本都调用它，所以这里不能 import 任何东西
+ *   - 测试见 ./angelHistory.spec.ts
+ * 颜色全部用 CSS 变量，由网页的样式表定义（明暗主题跟着变）：
  *   --s1 ~ --s4：四条主线；--chart-ctx：其他组合的浅灰线；--chart-grid、--chart-text、--chart-text-2、--chart-text-3；
  *   --chart-surface（点的描边）、--chart-future（揭晓前还没到的时间）、--chart-tip-bg、--chart-tip-line
  * 鼠标停在某个时间点上会显示竖线和当时的数值（纯 CSS，不用脚本）：.chart-col:hover .chart-hover 显示。
@@ -27,6 +27,10 @@ export interface TrendOptions {
   series: Array<ChartSeries>;
   context: Array<Array<ChartPoint>>;
   timeLabel: (t: number) => string;
+  width?: number;          // 图的大小（viewBox），默认 960 × 340；放在小地方时用小一点的尺寸，字才不会被缩得太小
+  height?: number;
+  labelSpace?: number;     // 右边留给线末尾名字的宽度，默认 170
+  aria?: string;
 }
 
 export interface HistoryLike {
@@ -58,9 +62,12 @@ export function pairPoints(history: Array<HistoryLike>, angel: string, target: s
   return points;
 }
 
-/* 纵轴上限：最大值往上取到 10% 的整数倍，至少 30% */
-export function niceMax(values: Array<number>): number {
-  return Math.max(0.3, Math.ceil((Math.max(0, ...values) + 0.02) * 10) / 10);
+/* 纵轴上限：最大值往上取到 10% 的整数倍，至少 floor（默认 30%）；上限在 20% 以内时按 5% 取 */
+export function niceMax(values: Array<number>, floor: number = 0.3): number {
+  const top: number = Math.max(0, ...values) + 0.02;
+  const unit: number = top <= 0.2 ? 0.05 : 0.1;
+
+  return Math.max(floor, Math.ceil(top / unit) * unit);
 }
 
 function polyline(points: Array<ChartPoint>, x: (t: number) => number, y: (p: number) => number, attrs: string): string {
@@ -94,10 +101,13 @@ function spreadLabels(items: Array<{ y: number }>, min: number, max: number, gap
 
 /* 主图：几条最可能的组合 + 其他组合的浅灰线 + 平均线 + 揭晓前的区域 */
 export function renderTrend(options: TrendOptions): string {
-  const W: number = 960;
-  const H: number = 340;
+  const W: number = options.width ?? 960;
+  const H: number = options.height ?? 340;
   const left: number = 44;
-  const right: number = 170;
+  const labelSpace: number = options.labelSpace ?? 170;
+  // 线末尾的名字标在「现在」右边：离揭晓还早时右边本来就有空，只留不够的那部分
+  const frac: number = Math.min(1, Math.max(0.01, (options.now - options.start) / (options.end - options.start)));
+  const right: number = Math.max(16, W - left - ((W - left - labelSpace) / frac));
   const top: number = 16;
   const bottom: number = 30;
   const w: number = W - left - right;
@@ -113,8 +123,10 @@ export function renderTrend(options: TrendOptions): string {
     parts.push(`<text x="${ fmt(left + w - 6) }" y="${ top + 14 }" text-anchor="end" class="chart-note">揭晓前</text>`);
   }
 
-  // 横线和纵轴刻度
-  for (let p: number = 0; p <= options.yMax + 1e-9; p += 0.1) {
+  // 横线和纵轴刻度（上限小的时候 5% 一格）
+  const step: number = options.yMax <= 0.2 + 1e-9 ? 0.05 : 0.1;
+
+  for (let p: number = 0; p <= options.yMax + 1e-9; p += step) {
     parts.push(`<line x1="${ left }" x2="${ left + w }" y1="${ fmt(y(p)) }" y2="${ fmt(y(p)) }" stroke="var(--chart-grid)" stroke-width="1"/>`);
     parts.push(`<text x="${ left - 8 }" y="${ fmt(y(p) + 4) }" text-anchor="end" class="chart-axis">${ pct(p) }</text>`);
   }
@@ -196,7 +208,7 @@ export function renderTrend(options: TrendOptions): string {
       + `${ tip }</g></g>`);
   });
 
-  return `<svg class="chart-trend" viewBox="0 0 ${ W } ${ H }" role="img" aria-label="最可能的组合的概率变化">${ parts.join('') }</svg>`;
+  return `<svg class="chart-trend" viewBox="0 0 ${ W } ${ H }" role="img" aria-label="${ esc(options.aria ?? '最可能的组合的概率变化') }">${ parts.join('') }</svg>`;
 }
 
 /* 小图：某个小主人最可能的天使（主线）+ 其他人（浅灰线） */
@@ -246,6 +258,53 @@ export function renderSmall(options: {
   return `<svg class="chart-small" viewBox="0 0 ${ W } ${ H }" role="img">${ parts.join('') }</svg>`;
 }
 
+/**
+ * 某一个人的一组概率怎么变化：
+ *   - mode 'target'：谁是 TA 的天使（TA 那一列：每个人是 TA 天使的概率）
+ *   - mode 'angel'：TA 抽到了谁（TA 那一行）
+ * 现在最可能的 4 个人上色并在线末尾标名字，其他人画成浅灰线；纵轴按这个人自己的数值定（每个人单独算）。
+ */
+export function personChart(
+  history: Array<HistoryLike>,
+  current: HistoryLike,
+  person: string,
+  mode: 'target' | 'angel',
+  start: number,
+  end: number,
+  timeLabel: (t: number) => string,
+  size: { width?: number; height?: number; labelSpace?: number } = {}
+): { svg: string; legend: Array<{ label: string; color: string }> } {
+  const timeline: Array<HistoryLike> = [...history.filter((entry: HistoryLike): boolean => entry.at < current.at), current];
+  const names: Array<string> = current.names;
+  const index: number = names.indexOf(person);
+  const valueOf: (entry: HistoryLike, other: number) => number = (entry: HistoryLike, other: number): number => (mode === 'target' ? entry.prob[other][index] : entry.prob[index][other]);
+  const pointsOf: (other: string) => Array<ChartPoint> = (other: string): Array<ChartPoint> => (mode === 'target' ? pairPoints(timeline, other, person) : pairPoints(timeline, person, other));
+  const ranked: Array<number> = names.map((_: string, i: number): number => i).sort((a: number, b: number): number => valueOf(current, b) - valueOf(current, a));
+  const label: (other: string) => string = (other: string): string => (other === person ? `${ other }（自己）` : other);
+  const series: Array<ChartSeries> = ranked.slice(0, 4).map((i: number, k: number): ChartSeries => ({
+    label: label(names[i]),
+    color: `var(--s${ k + 1 })`,
+    points: pointsOf(names[i])
+  }));
+  const context: Array<Array<ChartPoint>> = ranked.slice(4).map((i: number): Array<ChartPoint> => pointsOf(names[i]));
+  const values: Array<number> = [...series, ...context.map((points: Array<ChartPoint>): ChartSeries => ({ label: '', color: '', points }))]
+    .flatMap((item: ChartSeries): Array<number> => item.points.map((point: ChartPoint): number => point.p));
+  const svg: string = renderTrend({
+    start,
+    end,
+    now: current.at,
+    yMax: niceMax(values, 0.15),
+    baseline: 1 / Math.max(1, names.length),
+    series,
+    context,
+    timeLabel,
+    aria: mode === 'target' ? `${ person } 的天使是谁的概率变化` : `${ person } 抽到了谁的概率变化`,
+    ...size
+  });
+
+  return { svg, legend: series.map((item: ChartSeries): { label: string; color: string } => ({ label: item.label, color: item.color })) };
+}
+
 export interface ChartBundle {
   trend: string;
   legend: Array<{ label: string; color: string }>;
@@ -262,7 +321,8 @@ export function buildCharts(
   current: HistoryLike,
   start: number,
   end: number,
-  timeLabel: (t: number) => string
+  timeLabel: (t: number) => string,
+  size: { width?: number; height?: number; labelSpace?: number } = {}
 ): ChartBundle {
   const timeline: Array<HistoryLike> = [...history.filter((entry: HistoryLike): boolean => entry.at < current.at), current];
   const names: Array<string> = current.names;
@@ -285,7 +345,7 @@ export function buildCharts(
   const allValues: Array<number> = timeline.flatMap((entry: HistoryLike): Array<number> => entry.prob.flat());
   const yMax: number = niceMax(allValues);
   const baseline: number = 1 / Math.max(1, names.length);
-  const trend: string = renderTrend({ start, end, now: current.at, yMax, baseline, series, context, timeLabel });
+  const trend: string = renderTrend({ start, end, now: current.at, yMax, baseline, series, context, timeLabel, ...size });
   const small: ChartBundle['small'] = names.map((target: string, t: number): { target: string; angel: string; p: number; svg: string } => {
     const ranked: Array<number> = names.map((_: string, a: number): number => a).sort((a: number, b: number): number => current.prob[b][t] - current.prob[a][t]);
     const angel: string = names[ranked[0]];

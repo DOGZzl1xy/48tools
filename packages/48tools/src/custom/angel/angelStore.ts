@@ -1,4 +1,3 @@
-import { useSyncExternalStore } from 'react';
 import type { CustomMessageV2 } from '@48tools-api/48';
 import { getPocket48Token } from '../../utils/snh48';
 import { readJson, writeJson } from '../common/util';
@@ -17,8 +16,9 @@ import {
 import { syncMember, readMemberMessages } from './angelSync';
 
 /**
- * 守护天使页面的数据：什么时候去取新消息、怎么算、算完导出。
- *   - 程序开着就在后台按时更新：北京时间每天 0 点、12 点各一次（错过了就在程序启动后补一次）。页面上也可以手动更新
+ * 守护天使推理的数据：什么时候去取新消息、怎么算、算完导出。网页 angel.48tools.app 由 local/angel/site/publish.mjs 用导出的结果生成，
+ * 程序里的「守护天使」页面只负责用自带的浏览器窗口打开这个网页（./AngelPage）。
+ *   - 程序开着就在后台按时更新：北京时间每天 0 点、12 点各一次（错过了就在程序启动后补一次）
  *   - 更新 = 把每个人房间的新消息取进本地缓存（./angelSync）→ 自动找线索（./angelEvidence）
  *     → 和 local/angel/clues.json 里人工写的线索合在一起算概率（./angelModel）→ 导出 digest 给人看（./angelFiles）
  *     → 补上还没记的历史概率时间点（./angelHistory，local/angel/history.json）
@@ -50,7 +50,6 @@ export interface AngelState {
 const LAST_SYNC_KEY: string = 'ANGEL_LAST_SYNC';
 const FIRST_DELAY: number = 15_000;
 const CLUE_POLL: number = 60_000;
-const listeners: Set<() => void> = new Set();
 let state: AngelState = {
   syncing: false,
   lastSync: typeof localStorage === 'undefined' ? 0 : Number(readJson<number>(LAST_SYNC_KEY, 0)) || 0,
@@ -60,24 +59,10 @@ let computing: Promise<void> | undefined;
 
 function setState(patch: Partial<AngelState>): void {
   state = { ...state, ...patch };
-
-  for (const listener of listeners) listener();
 }
 
 export function getAngelState(): AngelState {
   return state;
-}
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-
-  return (): void => {
-    listeners.delete(listener);
-  };
-}
-
-export function useAngelState(): AngelState {
-  return useSyncExternalStore(subscribe, getAngelState);
 }
 
 /* ---------- 导出给人读的整理 ---------- */
