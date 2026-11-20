@@ -7,7 +7,7 @@ import {
 } from './angelConfig';
 import { toAngelMessage, type AngelMessage } from './angelText';
 import { buildEvidence, type Evidence, type RoomMessages, type Moment, type VisitStat, type DayActivity } from './angelEvidence';
-import { infer, cluesAt, type AngelInference, type PairClue } from './angelModel';
+import { infer, cluesAt, mergeClues, type AngelInference, type PairClue } from './angelModel';
 import { predictAt, pendingSlots, mergeEntries, type HistoryEntry } from './angelHistory';
 import {
   readClueFile, readGeminiReview, readHistory, writeHistory, cluesWrittenAt, clueFileMtime, writeDigest, getAngelDir,
@@ -159,7 +159,7 @@ async function compute(): Promise<void> {
   const now: number = Date.now();
   const evidence: Evidence = buildEvidence(rooms, participants, now);
   const manual: Array<PairClue> = clueFile.file?.clues ?? [];
-  const clues: Array<PairClue> = [...evidence.clues, ...cluesAt(manual, now)];
+  const clues: Array<PairClue> = mergeClues(evidence.clues, cluesAt(manual, now));
   const inference: AngelInference = infer(participants, clues);
   const counts: Record<string, number> = {};
 

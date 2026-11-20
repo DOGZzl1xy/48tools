@@ -40,6 +40,12 @@ describe('守护天使：自动线索', function(): void {
     expect(momentKind('守护天使的奶茶也到了')).toBe('receipt');
   });
 
+  test('说的是之前收到的东西，不拿来对时间', function(): void {
+    expect(momentKind('忘记说了昨天我的守护天使发力了')).toBe('mention');
+    expect(momentKind('前天天使给我点的果切我错过了')).toBe('mention');
+    expect(momentKind('收获了小天使的泡芙')).toBe('receipt');
+  });
+
   test('串门变多、时间对得上、自称抽到自己', function(): void {
     const t0: number = GAME_START + (10 * 3_600_000);
     const rooms: Array<RoomMessages> = [

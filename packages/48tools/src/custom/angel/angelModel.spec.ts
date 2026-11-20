@@ -1,5 +1,5 @@
 import { describe, test, expect } from '@jest/globals';
-import { infer, permanentGradient, bestAssignment, pairWeights, IMPOSSIBLE, type PairClue, type AngelInference } from './angelModel';
+import { infer, permanentGradient, bestAssignment, pairWeights, mergeClues, IMPOSSIBLE, type PairClue, type AngelInference } from './angelModel';
 
 /* 直接枚举所有排列算概率，用来对照 */
 function bruteForce(matrix: Array<Array<number>>): Array<Array<number>> {
@@ -40,6 +40,16 @@ function clue(angel: string, target: string, weight: number): PairClue {
 const names: Array<string> = ['甲', '乙', '丙', '丁', '戊', '己'];
 
 describe('守护天使推理', function(): void {
+  test('人工已经几乎排除的组合，同一组合的自动线索不再计入', function(): void {
+    const self: PairClue = { ...clue('甲', '甲', 0.3), source: 'rule' };
+    const visit: PairClue = { ...clue('乙', '丙', 0.5), source: 'rule' };
+    const notSelf: PairClue = clue('甲', '甲', -4);
+    const weak: PairClue = clue('乙', '丙', -1.5);
+
+    expect(mergeClues([self, visit], [notSelf, weak])).toEqual([visit, notSelf, weak]);
+    expect(mergeClues([self], [{ ...clue('甲', '甲', -4), angels: ['甲', '乙'] }])).toHaveLength(1);
+  });
+
   test('积和式：3×3 的值和偏导', function(): void {
     const { perm, grad }: { perm: number; grad: Array<Array<number>> } = permanentGradient([[1, 2, 3], [4, 5, 6], [7, 8, 9]]);
 

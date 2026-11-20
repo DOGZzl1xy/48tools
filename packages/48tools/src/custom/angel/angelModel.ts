@@ -51,6 +51,20 @@ export function cluesAt(clues: Array<PairClue>, at: number): Array<PairClue> {
   return result;
 }
 
+/**
+ * 自动线索和人工线索合在一起。人工线索已经几乎确定排除的组合（权重 ≤ OVERRIDE_AT），同一组合的自动线索不再计入：
+ * 比如人工已经核实「李继醇不是自己的天使」，自动找到的「李继醇自称抽到自己」就不能再当支持。
+ */
+export const OVERRIDE_AT: number = -3;
+
+export function mergeClues(rule: Array<PairClue>, manual: Array<PairClue>): Array<PairClue> {
+  const excluded: Array<PairClue> = manual.filter((clue: PairClue): boolean => clue.weight <= OVERRIDE_AT);
+  const covered: (clue: PairClue) => boolean = (clue: PairClue): boolean => excluded.some((m: PairClue): boolean =>
+    clue.angels.every((a: string): boolean => m.angels.includes(a)) && clue.targets.every((t: string): boolean => m.targets.includes(t)));
+
+  return [...rule.filter((clue: PairClue): boolean => !covered(clue)), ...manual];
+}
+
 export interface AngelInference {
   names: Array<string>;
   prob: Array<Array<number>>;  // prob[a][t]：names[a] 是 names[t] 的天使的概率

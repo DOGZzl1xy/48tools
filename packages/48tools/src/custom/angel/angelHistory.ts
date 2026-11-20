@@ -1,6 +1,6 @@
 import { historySlots, nextUpdateAt, bjTime } from './angelConfig';
 import { buildEvidence, type Evidence, type RoomMessages } from './angelEvidence';
-import { infer, cluesAt, type AngelInference, type PairClue } from './angelModel';
+import { infer, cluesAt, mergeClues, type AngelInference, type PairClue } from './angelModel';
 import type { AngelMessage } from './angelText';
 
 /**
@@ -37,7 +37,7 @@ export function predictAt(
     messages: room.messages.filter((message: AngelMessage): boolean => message.time < at)
   }));
   const evidence: Evidence = buildEvidence(truncated, participants, at);
-  const inference: AngelInference = infer(participants, [...evidence.clues, ...cluesAt(manual, at)]);
+  const inference: AngelInference = infer(participants, mergeClues(evidence.clues, cluesAt(manual, at)));
 
   return {
     at,

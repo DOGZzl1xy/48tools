@@ -52,20 +52,22 @@ export const GAME_END: number = Date.parse('2026-11-23T00:00:00+08:00');   // 11
 export const BASELINE_START: number = GAME_START - (7 * 24 * hour);          // 游戏前一周：串门次数的对照
 
 /**
- * 推断的时间点（北京时间）：11/17 0 点起每 12 小时一次，到 11/20 12:00；
- * 之后每 6 小时一次（11/20 19:00 起，每天 1 点、7 点、13 点、19 点），最后一次是 11/22 13:00。
+ * 推断的时间点（北京时间），都是每 6 小时一个：
+ *   - 11/17 0 点到 11/20 12:00：每天 0 点、6 点、12 点、18 点（这一段都是事后回溯算的）
+ *   - 11/20 19:00 起：每天 1 点、7 点、13 点、19 点，最后一次是 11/22 13:00
  * 程序在这些时间点取新消息重算；历史概率也记在这些时间点上（./angelHistory）。
  */
 export const HISTORY_START: number = GAME_START + (24 * hour);                       // 11/17 00:00
-export const SIX_HOURLY_FROM: number = Date.parse('2026-11-20T19:00:00+08:00');
+export const FIRST_GRID_END: number = Date.parse('2026-11-20T12:00:00+08:00');
+export const SECOND_GRID_START: number = Date.parse('2026-11-20T19:00:00+08:00');
 export const LAST_UPDATE: number = Date.parse('2026-11-22T13:00:00+08:00');
 
 export const UPDATE_TIMES: Array<number> = ((): Array<number> => {
   const times: Array<number> = [];
 
-  for (let at: number = HISTORY_START; at < SIX_HOURLY_FROM; at += 12 * hour) times.push(at);
+  for (let at: number = HISTORY_START; at <= FIRST_GRID_END; at += 6 * hour) times.push(at);
 
-  for (let at: number = SIX_HOURLY_FROM; at <= LAST_UPDATE; at += 6 * hour) times.push(at);
+  for (let at: number = SECOND_GRID_START; at <= LAST_UPDATE; at += 6 * hour) times.push(at);
 
   return times;
 })();

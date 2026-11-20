@@ -65,6 +65,7 @@ const RECEIPT: RegExp = new RegExp([
 const ACT_WHO: RegExp = /我守护的|我要守护的|给我守护的|守护的(那个)?人|我的小主人|给小主人/;
 const ACT_DO: RegExp = /点|买|送|准备|吃|外卖|投喂|下单|礼物/;
 const WAITING: RegExp = /(我的|俺的)(守护)?(小)?天使.{0,6}(呢|在吗|在哪|安静|毫无动静|没动静|冬眠|是否存在|不在)|没人守护我|天使.{0,3}发力呀/;
+const PAST: RegExp = /昨天|前天|上次|前几天|忘记说/; // 说的是之前收到的东西，不能拿来对时间
 
 export function momentKind(raw: string): MomentKind | undefined {
   const text: string = raw.replace(FAN_GROUP, '');
@@ -79,7 +80,7 @@ export function momentKind(raw: string): MomentKind | undefined {
 
   if (WAITING.test(text)) return 'waiting';
 
-  if (RECEIPT.test(text) && !BEING_ANGEL.test(text)) return 'receipt';
+  if (RECEIPT.test(text) && !BEING_ANGEL.test(text)) return PAST.test(text) ? 'mention' : 'receipt';
 
   return 'mention';
 }
