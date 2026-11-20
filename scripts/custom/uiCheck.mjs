@@ -106,6 +106,7 @@ try {
   await win.screenshot({ path: path.join(SHOTS, 'settings.png') });
   check('设置：分区导航', (await win.locator('.settings-nav button').count()) >= 8);
   check('设置：明暗主题可以直接选', (await win.locator('#settings-look .ant-segmented-item').count()) >= 3);
+  check('设置：录播切片', (await win.locator('#settings-highlight .settings-row').count()) === 2);
 
   // 自动抓取配置
   await go('#/48/LiveOptions', 'auto-grab');
@@ -114,6 +115,37 @@ try {
   // 录播下载：进入时自己加载
   await go('#/48/Pocket48Record', 'record', 6000);
   check('录播下载：进入后自动加载列表', (await win.locator('.ant-table-tbody tr.ant-table-row').count()) > 0);
+
+  // 自动切片：只打开对话框看一眼就取消，不开始任务。列表里可能全是电台（没有这一项），所以多试几行
+  let highlightDialog = null;
+
+  for (const button of (await win.locator('.ant-table-tbody button[aria-label="更多操作"]').all()).slice(0, 12)) {
+    await button.click();
+    await sleep(350);
+
+    const item = win.locator('.ant-dropdown:not(.ant-dropdown-hidden) .ant-dropdown-menu-item', { hasText: '自动切片' });
+
+    if ((await item.count()) > 0) {
+      await item.first().click();
+      await sleep(700);
+      highlightDialog = win.locator('.ant-modal', { hasText: '做几个切片' });
+      break;
+    }
+
+    await win.keyboard.press('Escape');
+    await sleep(200);
+  }
+
+  if (highlightDialog === null) {
+    check('自动切片（列表前几行没有视频直播）', null);
+  } else {
+    check('自动切片：对话框', (await highlightDialog.count()) === 1);
+    check('自动切片：可以选数量', (await highlightDialog.locator('.ant-segmented-item').count()) === 6);
+    await win.screenshot({ path: path.join(SHOTS, 'highlight-dialog.png') });
+    await highlightDialog.locator('.ant-modal-footer button').first().click(); // 取消
+    await sleep(500);
+    check('自动切片：取消后没有开始任务', (await win.locator('.ant-modal-wrap:visible').count()) === 0);
+  }
 
   // 直播抓取
   await go('#/48/Pocket48Live', 'live', 2500);

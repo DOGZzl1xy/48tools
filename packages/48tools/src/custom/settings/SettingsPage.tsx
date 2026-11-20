@@ -21,6 +21,7 @@ import Pocket48ProxyOption from '../pocket48Proxy/Pocket48ProxyOption';
 import BackgroundOption from './BackgroundOption';
 import Row from './SettingsRow';
 import TranscribeOption from '../transcribe/TranscribeOption';
+import HighlightOption from '../highlight/HighlightOption';
 import { safeOpenExternal } from '../security/safeOpenExternal';
 import { resolveLocalDir } from '../download/defaultSaveDir';
 import {
@@ -33,7 +34,7 @@ import {
 } from './settingsStore';
 
 /**
- * 设置页面：账号、保存位置、直播录制格式、自动抓取、代理、后台运行、语音转文字、外观、工具路径、关于。
+ * 设置页面：账号、保存位置、直播录制格式、自动抓取、代理、后台运行、语音转文字、录播切片、外观、工具路径、关于。
  * 入口在侧边栏底部的「设置」。账号、FFmpeg、代理等沿用原来的组件（只是集中放到这里）。
  * 页面比较长，最上面有一排分区的名字（滚动时一直停在顶部），点一下跳到那一部分。
  * 接入点：router/Routers.tsx 的 Settings 路由。
@@ -75,6 +76,7 @@ const sections: Array<{ id: string; title: string }> = [
   { id: 'network', title: '网络' },
   { id: 'background', title: '后台运行' },
   { id: 'stt', title: '语音转文字' },
+  { id: 'highlight', title: '录播切片' },
   { id: 'look', title: '外观' },
   { id: 'tools', title: '工具路径' },
   { id: 'about', title: '关于' }
@@ -174,6 +176,11 @@ function SettingsPage(props: {}): ReactElement {
       <section id="settings-stt">
         <h2>语音转文字</h2>
         <TranscribeOption />
+      </section>
+
+      <section id="settings-highlight">
+        <h2>录播切片</h2>
+        <HighlightOption />
       </section>
 
       <section id="settings-look">

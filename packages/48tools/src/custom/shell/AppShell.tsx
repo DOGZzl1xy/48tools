@@ -27,6 +27,7 @@ import { shellNavGroups, findNavItem, type ShellNavGroup, type ShellNavItem } fr
 import { useShellState, toggleSidebar, setQueueOpen, setPaletteOpen, type ShellState } from './shellStore';
 import CommandPalette from './CommandPalette';
 import DownloadQueuePanel from '../downloadQueue/DownloadQueuePanel';
+import HighlightDialog from '../highlight/HighlightDialog';
 import { useQueueTasks, type QueueTask } from '../downloadQueue/downloadQueue';
 import { useProxyState, proxyStateText } from '../pocket48Proxy/useProxyState';
 import type { ProxyState } from '../pocket48Api/apiErrorText';
@@ -301,6 +302,7 @@ function AppShell(props: Required<PropsWithChildren>): ReactElement {
         </main>
       </div>
       <DownloadQueuePanel />
+      <HighlightDialog />
       <CommandPalette />
     </div>
   );

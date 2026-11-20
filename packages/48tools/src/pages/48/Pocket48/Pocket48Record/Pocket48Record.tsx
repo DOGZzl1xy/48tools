@@ -62,6 +62,8 @@ import { pickAudioResume } from '../../../../custom/download/audioResume';
 import RowActions from '../../../../custom/table/RowActions';
 import MediaTitleCell from '../../../../custom/table/MediaTitleCell';
 import { recordTaskStart, recordTaskProgress, recordTaskEnd, audioMetaOf } from '../../../../custom/downloadQueue/recordTasks';
+import { canHighlight } from '../../../../custom/highlight/highlightTask';
+import { openHighlightDialog } from '../../../../custom/highlight/highlightDialogStore';
 import { useReqRoomIdQuery, type ReqRoomId } from '../../reducers/pocketFriends.api';
 import LiveType from '../../components/LiveType/LiveType';
 import type { MessageEventData } from '../../../../utils/worker/FFmpegDownload.worker/FFmpegDownload.worker';
@@ -544,6 +546,8 @@ function Pocket48Record(props: {}): ReactElement {
                 label: '备用方案下载',
                 onClick: (event: MouseEvent): Promise<void> => handleDownloadM3u8Click(record, 1, event)
               }]),
+              // 自动切片：只有视频直播有（电台没有画面），见 custom/highlight
+              ...(canHighlight(record) ? [{ key: 'highlight', label: '自动切片', onClick: (): void => openHighlightDialog(record) }] : []),
               { key: 'danmu', label: '下载弹幕', onClick: (event: MouseEvent): Promise<void> => handleDownloadLrcClick(record, event) },
               { key: 'images', label: '下载图片', onClick: (event: MouseEvent): Promise<void> => handleDownloadImagesClick(record, event) },
               { key: 'copy', label: '复制录播地址', onClick: (event: MouseEvent): Promise<void> => handleCopyLiveUrlClick(record, event) }

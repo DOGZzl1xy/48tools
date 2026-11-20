@@ -28,6 +28,9 @@ export interface CustomSettings {
   roomBeijingTime?: boolean;          // 房间消息的时间按北京时间显示（默认按这台电脑的时区）
   autoGrabAutoStart?: boolean;        // 程序启动后自动开始「自动抓取」（默认开，只有关掉时才保存成 false）
   autoGrabMode?: AutoGrabMode;        // 自动抓取用哪种方式录（上次手动开始时选的；默认 flv）
+  highlightModel?: string;            // 录播切片：用哪个 Gemini 模型（key 和接口地址用语音转文字里 Gemini 的那一份）
+  highlightDir?: string;              // 录播切片：保存的文件夹（不设置就用 downloadDir 下面的「录播切片」）
+  highlightCount?: number;            // 录播切片：上次选的数量（没选过或选了「自动」时不保存）
 }
 
 export type AutoGrabMode = 'flv' | 'ts' | 'backup';
