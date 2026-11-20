@@ -19,6 +19,7 @@ export interface TranscriptState {
   error?: string;
   needConfig?: boolean; // 出错原因是还没配置好（显示「去设置」）
 }
+// 重新转一次时 text 保留上一次的文字：正在转、转失败时界面上仍然显示它
 
 export interface VoiceSource {
   id: string;   // 语音的标识（md5 或地址）
@@ -26,6 +27,8 @@ export interface VoiceSource {
   ext?: string; // 消息里写的格式，比如 aac
   time?: number;     // 这条语音消息的时间（毫秒）。有它才能找语音前后的文字当参考
   question?: string; // 翻牌的语音回答：粉丝的提问（也当参考）
+  ownerId?: number;  // 这条语音在哪个成员的房间里（找参考内容时用；转写途中切到别的房间也不会找错）
+  duration?: number; // 语音有多长（毫秒），消息里带了才有
 }
 
 const MAX_AUDIO_BYTES: number = 15 * 1024 * 1024; // 接口一次请求最多 20 MB，留些余量
@@ -112,7 +115,7 @@ async function collectHints(voice: VoiceSource): Promise<Array<string>> {
   if (resolveSetting(getSettingOverrides(), 'sttHints') === false) return [];
 
   const room: RoomState = getRoomState();
-  const ownerId: number | undefined = room.current?.ownerId;
+  const ownerId: number | undefined = voice.ownerId ?? room.current?.ownerId;
   const messages: Array<CustomMessageV2> = [];
 
   if (voice.time !== undefined && ownerId !== undefined) {
@@ -142,12 +145,14 @@ export async function requestTranscript(voice: VoiceSource): Promise<void> {
   const config: SttConfig = resolveSttConfig(getSettingOverrides());
 
   if (!config.apiKey.trim() || !config.model.trim() || !config.baseUrl.trim()) {
-    setState(id, { status: 'error', error: '还没有配置语音转文字的接口', needConfig: true });
+    setState(id, { status: 'error', error: '还没有配置语音转文字的接口', needConfig: true, text: states[id]?.text });
 
     return;
   }
 
-  setState(id, { status: 'loading' });
+  const previous: string | undefined = states[id]?.text; // 上一次转好的文字：这次失败了也不丢
+
+  setState(id, { status: 'loading', text: previous });
 
   try {
     let audio: AudioRecord | undefined = await getAudio(id);
@@ -175,6 +180,7 @@ export async function requestTranscript(voice: VoiceSource): Promise<void> {
 
     setState(id, {
       status: 'error',
+      text: previous,
       error: err instanceof TranscribeError ? err.message : '转文字失败，请稍后再试',
       needConfig: err instanceof TranscribeError && err.code === 'config'
     });
@@ -186,6 +192,11 @@ export async function cachedAudioUrl(id: string): Promise<string | undefined> {
   const audio: AudioRecord | undefined = await getAudio(id);
 
   return audio ? URL.createObjectURL(new Blob([audio.bytes], { type: audio.mimeType })) : undefined;
+}
+
+/* 测试用：某一条语音现在的状态 */
+export function getTranscriptStateForTest(id: string): TranscriptState | undefined {
+  return states[id];
 }
 
 export function resetTranscribeStoreForTest(): void {

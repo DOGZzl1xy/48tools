@@ -2,6 +2,7 @@ import { Fragment, useState, type ReactElement, type ReactNode, type ChangeEvent
 import { Button, Input, Segmented, Switch, Typography } from 'antd';
 import { getPocket48LocalConfig } from '../pocket48Proxy/pocket48Proxy';
 import { useSettingOverrides, setSetting, resolveSetting, type CustomSettings, type SttProvider } from '../settings/settingsStore';
+import Row from '../settings/SettingsRow';
 import { resolveSttConfig } from './transcribeStore';
 import { testSttConfig, sttDefaults, TranscribeError, type SttConfig } from './transcribeApi';
 
@@ -26,18 +27,6 @@ const keysOf: Record<SttProvider, { key: SettingKey; model: SettingKey; baseUrl:
   gemini: { key: 'sttGeminiKey', model: 'sttGeminiModel', baseUrl: 'sttGeminiBaseUrl' },
   openai: { key: 'sttOpenaiKey', model: 'sttOpenaiModel', baseUrl: 'sttOpenaiBaseUrl' }
 };
-
-function Row(props: { label: string; hint?: ReactNode; children: ReactNode }): ReactElement {
-  return (
-    <div className="settings-row">
-      <div className="settings-row-label">
-        <b>{ props.label }</b>
-        { props.hint ? <small>{ props.hint }</small> : null }
-      </div>
-      <div className="settings-row-control">{ props.children }</div>
-    </div>
-  );
-}
 
 function TranscribeOption(props: {}): ReactElement {
   const overrides: CustomSettings = useSettingOverrides();
@@ -82,10 +71,10 @@ function TranscribeOption(props: {}): ReactElement {
 
   return (
     <Fragment>
-      <Row label="接口类型" hint="房间里的语音后面有「转文字」按钮。语音会发给这里配置的服务商来识别，转好的文字存在本机，同一条语音只转一次。">
+      <Row label="接口类型" hint="房间里的语音后面有「转文字」按钮。语音会发给这里配置的服务商来识别，转好的文字存在本机，同一条语音只转一次。转过的语音文件也存一份在本机，保留 6 个月。">
         <Segmented options={ providerOptions } value={ config.provider } onChange={ handleProviderChange } />
       </Row>
-      <Row label="API key" hint="只保存在这台电脑上，只会发给下面的接口地址。">
+      <Row label="API key" hint="只保存在这台电脑上（用 Windows 的加密功能加密后保存），只会发给下面的接口地址。">
         <Input.Password value={ overrides[names.key] ?? '' }
           placeholder={ fromFile ? '已从 local/pocket48.json 读取' : '没有填写' }
           autoComplete="off"
@@ -95,7 +84,7 @@ function TranscribeOption(props: {}): ReactElement {
       </Row>
       <Row label="模型"
         hint={ config.provider === 'gemini'
-          ? `不填就用 ${ sttDefaults.gemini.model }（目前识别语音最便宜的正式版模型）。`
+          ? `不填就用 ${ sttDefaults.gemini.model }。`
           : '填服务商提供的语音转写模型的名称。' }
       >
         <Input value={ overrides[names.model] ?? '' }

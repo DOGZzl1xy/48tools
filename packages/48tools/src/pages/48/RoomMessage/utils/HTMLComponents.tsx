@@ -237,6 +237,7 @@ export function Media(props: ComponentProps<MEDIASendData>): ReactElement {
         item.msgType === 'AUDIO' && (
           <div className="mb-2">
             <audio className="template-media" src={ bodys.url } controls={ true } />
+            { (bodys as { transcript?: string }).transcript ? <p className="mt-2">转文字：{ (bodys as { transcript?: string }).transcript }</p> : null }
           </div>
         )
       }
@@ -296,6 +297,7 @@ export function FlipMedia(props: ComponentProps<FLIPCARD_AUDIOSendData | FLIPCAR
             ? <audio className="template-media" src={ answer.url } controls={ true } />
             : <video className="template-media" src={ answer.url } controls={ true } />
         }
+        { (item.bodys as { transcript?: string }).transcript ? <p className="mt-2">转文字：{ (item.bodys as { transcript?: string }).transcript }</p> : null }
       </div>
     </Basic>
   );

@@ -1,6 +1,6 @@
 import { ipcRenderer } from 'electron';
-import { use, type ReactElement, type ReactNode, type MouseEvent } from 'react';
-import { Button, Input, Segmented, Space, Tooltip, Typography } from 'antd';
+import { use, type ReactElement, type MouseEvent } from 'react';
+import { Button, Input, Segmented, Space, Switch, Tooltip, Typography } from 'antd';
 import {
   FolderOpenOutlined as IconFolderOpenOutlined,
   FileSyncOutlined as IconFileSyncOutlined,
@@ -19,6 +19,7 @@ import { useAppDataDir, type UseAppDataDirReturnType } from '../../functionalCom
 import { showOpenDialog } from '../../utils/remote/dialog';
 import Pocket48ProxyOption from '../pocket48Proxy/Pocket48ProxyOption';
 import BackgroundOption from './BackgroundOption';
+import Row from './SettingsRow';
 import TranscribeOption from '../transcribe/TranscribeOption';
 import { safeOpenExternal } from '../security/safeOpenExternal';
 import { resolveLocalDir } from '../download/defaultSaveDir';
@@ -32,22 +33,11 @@ import {
 } from './settingsStore';
 
 /**
- * 设置页面：账号、保存位置、直播录制格式、代理、后台运行、语音转文字、外观、工具路径、关于。
+ * 设置页面：账号、保存位置、直播录制格式、自动抓取、代理、后台运行、语音转文字、外观、工具路径、关于。
  * 入口在侧边栏底部的「设置」。账号、FFmpeg、代理等沿用原来的组件（只是集中放到这里）。
+ * 页面比较长，最上面有一排分区的名字（滚动时一直停在顶部），点一下跳到那一部分。
  * 接入点：router/Routers.tsx 的 Settings 路由。
  */
-function Row(props: { label: string; hint?: ReactNode; children: ReactNode }): ReactElement {
-  return (
-    <div className="settings-row">
-      <div className="settings-row-label">
-        <b>{ props.label }</b>
-        { props.hint ? <small>{ props.hint }</small> : null }
-      </div>
-      <div className="settings-row-control">{ props.children }</div>
-    </div>
-  );
-}
-
 /* 选择文件夹的输入框 */
 function DirField(props: { settingKey: 'downloadDir' | 'liveRecordDir'; placeholder: string }): ReactElement {
   const { settingKey, placeholder }: { settingKey: 'downloadDir' | 'liveRecordDir'; placeholder: string } = props;
@@ -78,6 +68,30 @@ function DirField(props: { settingKey: 'downloadDir' | 'liveRecordDir'; placehol
   );
 }
 
+const sections: Array<{ id: string; title: string }> = [
+  { id: 'account', title: '账号' },
+  { id: 'save', title: '保存位置' },
+  { id: 'live', title: '直播抓取' },
+  { id: 'network', title: '网络' },
+  { id: 'background', title: '后台运行' },
+  { id: 'stt', title: '语音转文字' },
+  { id: 'look', title: '外观' },
+  { id: 'tools', title: '工具路径' },
+  { id: 'about', title: '关于' }
+];
+
+type ThemeValue = 'light' | 'dark' | 'system';
+
+const themeOptions: Array<{ label: string; value: ThemeValue }> = [
+  { label: '跟随系统', value: 'system' },
+  { label: '浅色', value: 'light' },
+  { label: '深色', value: 'dark' }
+];
+
+function scrollToSection(id: string): void {
+  document.getElementById(`settings-${ id }`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 const formatOptions: Array<{ label: string; value: LiveRecordFormat }> = [
   { label: '保持 flv', value: 'flv' },
   { label: '转成 mp4（无损）', value: 'mp4' },
@@ -91,7 +105,7 @@ const formatHints: Record<LiveRecordFormat, string> = {
 };
 
 function SettingsPage(props: {}): ReactElement {
-  const { ChangeThemeElement }: Theme = use(ThemeContext);
+  const { theme, changeTheme }: Theme = use(ThemeContext);
   const { buttonRender, modalRender }: UseAppDataDirReturnType = useAppDataDir();
   const overrides: CustomSettings = useSettingOverrides();
   const format: LiveRecordFormat = resolveSetting(overrides, 'liveRecordFormat') ?? 'flv';
@@ -100,15 +114,22 @@ function SettingsPage(props: {}): ReactElement {
   return (
     <div className="settings">
       <h1>设置</h1>
+      <nav className="settings-nav" aria-label="设置的各个部分">
+        {
+          sections.map((item: { id: string; title: string }): ReactElement => (
+            <button key={ item.id } type="button" onClick={ (): void => scrollToSection(item.id) }>{ item.title }</button>
+          ))
+        }
+      </nav>
 
-      <section>
+      <section id="settings-account">
         <h2>账号</h2>
         <Row label="口袋48账号" hint="登录后才能用房间消息、房间电台等功能。点开可以切换账号、复制 Token、退出登录。">
           <Pocket48Login />
         </Row>
       </section>
 
-      <section>
+      <section id="settings-save">
         <h2>保存位置</h2>
         <Row label="默认保存文件夹" hint="下载视频、音频时，保存对话框默认打开这里。">
           <DirField settingKey="downloadDir" placeholder="没有设置（由 Windows 决定）" />
@@ -124,27 +145,41 @@ function SettingsPage(props: {}): ReactElement {
         </Row>
       </section>
 
-      <section>
+      <section id="settings-live">
+        <h2>直播抓取</h2>
+        <Row label="启动后自动开始自动抓取"
+          hint="程序启动几秒后自动开始监听并录制（要先在自动抓取配置里选好成员）。录制方式用上次手动开始时选的，没选过就用 flv。关掉后要到「直播抓取」页面手动点开始。"
+        >
+          <Space wrap={ true }>
+            <Switch checked={ resolveSetting(overrides, 'autoGrabAutoStart') !== false }
+              onChange={ (checked: boolean): void => setSetting('autoGrabAutoStart', checked ? undefined : false) }
+            />
+            <ButtonLink linkProps={{ to: '/48/LiveOptions' }} buttonProps={{}}>自动抓取配置</ButtonLink>
+          </Space>
+        </Row>
+      </section>
+
+      <section id="settings-network">
         <h2>网络</h2>
         <Row label="口袋48代理" hint="只有口袋48接口走这个代理，其他请求直连。圆点表示代理是否在运行。">
           <Pocket48ProxyOption />
         </Row>
       </section>
 
-      <section>
+      <section id="settings-background">
         <h2>后台运行</h2>
         <BackgroundOption />
       </section>
 
-      <section>
+      <section id="settings-stt">
         <h2>语音转文字</h2>
         <TranscribeOption />
       </section>
 
-      <section>
+      <section id="settings-look">
         <h2>外观</h2>
-        <Row label="明暗主题" hint="浅色、深色，或者跟随系统。">
-          { ChangeThemeElement }
+        <Row label="明暗主题" hint="浅色、深色，或者跟随 Windows 的设置。">
+          <Segmented options={ themeOptions } value={ theme ?? 'system' } onChange={ (value: ThemeValue): void => changeTheme?.(value) } />
         </Row>
         <Row label="主题色" hint="按钮、选中状态、链接的颜色。">
           <div className="settings-colors">
@@ -167,10 +202,10 @@ function SettingsPage(props: {}): ReactElement {
         </Row>
       </section>
 
-      <section>
+      <section id="settings-tools">
         <h2>工具路径</h2>
         <Row label="FFmpeg" hint="下载、录制、转码都要用到。">
-          <FFmpegOption />
+          <div className="settings-ffmpeg"><FFmpegOption /></div>
         </Row>
         <Row label="口袋48 App Data 目录" hint="房间消息等功能使用的数据目录。">
           { buttonRender() }
@@ -180,7 +215,7 @@ function SettingsPage(props: {}): ReactElement {
         </Row>
       </section>
 
-      <section>
+      <section id="settings-about">
         <h2>关于</h2>
         <Row label={ document.title } hint="在原版 48tools（段昊辰开发的免费软件）基础上修改的自定义版本。">
           <Space wrap={ true }>

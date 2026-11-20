@@ -356,7 +356,8 @@ function Pocket48Record(props: {}): ReactElement {
           dispatch(setDeleteRecordChildList(record));
         }
       }, false);
-      recordTaskStart(record, result.filePath, audioOnly, (): void => worker.postMessage({ type: 'stop' }));
+      recordTaskStart(record, result.filePath, audioOnly, (): void => worker.postMessage({ type: 'stop' }),
+        (): unknown => handleDownloadM3u8Click(record, downloadType, undefined as unknown as MouseEvent, audioOnly)); // 下载队列里的「重试」
 
       worker.postMessage({
         type: 'start',
@@ -506,6 +507,7 @@ function Pocket48Record(props: {}): ReactElement {
       title: '操作',
       key: 'action',
       width: 232,
+      fixed: 'right', // 窗口窄、表格横向滚动时，操作按钮一直停在右边
       render: (value: undefined, record: LiveInfo, index: number): ReactElement => {
         const idx: number = recordChildList.findIndex(
           (o: RecordVideoDownloadWebWorkerItem): boolean => o.id === record.liveId);
@@ -552,8 +554,15 @@ function Pocket48Record(props: {}): ReactElement {
     }
   ];
 
+  // 没有任务在下载时不显示「下载进度」这一列（以前每一行都写着「未下载」）
+  const shownColumns: ColumnsType<LiveInfo> = columns.filter(
+    (column: ColumnsType<LiveInfo>[number]): boolean => column.title !== '下载进度' || recordChildList.length > 0 || Object.keys(progress).length > 0);
+
   useEffect(function(): void {
     proxyServerInit();
+
+    // 进入页面时列表是空的就自动加载一次（以前要先点「加载列表」）
+    recordList.length === 0 && handleRefreshLiveListClick(undefined as unknown as MouseEvent);
   }, []);
 
   return (
@@ -589,7 +598,7 @@ function Pocket48Record(props: {}): ReactElement {
       <Table className="shell-table-nowrap"
         size="middle"
         scroll={{ x: 'max-content' }}
-        columns={ columns }
+        columns={ shownColumns }
         dataSource={ recordList }
         bordered={ true }
         loading={ refreshLiveListLoading }

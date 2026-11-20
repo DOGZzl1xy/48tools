@@ -7,9 +7,13 @@ import {
   CustomerServiceOutlined as IconCustomerServiceOutlined,
   MessageOutlined as IconMessageOutlined,
   BilibiliOutlined as IconBilibiliOutlined,
+  BilibiliFilled as IconBilibiliFilled,
   YoutubeOutlined as IconYoutubeOutlined,
+  YoutubeFilled as IconYoutubeFilled,
   TikTokOutlined as IconTikTokOutlined,
+  TikTokFilled as IconTikTokFilled,
   ThunderboltOutlined as IconThunderboltOutlined,
+  ThunderboltFilled as IconThunderboltFilled,
   FireOutlined as IconFireOutlined,
   WeiboOutlined as IconWeiboOutlined,
   CheckSquareOutlined as IconCheckSquareOutlined,
@@ -23,7 +27,7 @@ import {
 /**
  * 侧边栏和首页用的导航配置（功能列表）。
  * 地址和原版首页（pages/Index/Index.tsx 的 navLinkConfig）一致；原版新增功能时在这里补一项。
- * 图标统一用线条图标，侧边栏里看起来更整齐。
+ * 图标用线条图标；同一个平台的「视频」和「直播」用线条 / 实心两种，侧边栏收起后只剩图标时也分得出来。
  */
 export interface ShellNavItem {
   key: string;
@@ -81,13 +85,13 @@ export const shellNavGroups: Array<ShellNavGroup> = [
     title: '视频平台',
     items: [
       { key: 'bilibili-download', label: 'B站视频', title: 'B站视频下载', to: '/Bilibili/Download', icon: <IconBilibiliOutlined /> },
-      { key: 'bilibili-live', label: 'B站直播', title: 'B站直播抓取', to: '/Bilibili/Live', icon: <IconBilibiliOutlined /> },
+      { key: 'bilibili-live', label: 'B站直播', title: 'B站直播抓取', to: '/Bilibili/Live', icon: <IconBilibiliFilled /> },
       { key: 'acfun-download', label: 'A站视频', title: 'A站视频下载', to: '/AcFun/Download', icon: <IconYoutubeOutlined /> },
-      { key: 'acfun-live', label: 'A站直播', title: 'A站直播抓取', to: '/AcFun/Live', icon: <IconYoutubeOutlined /> },
+      { key: 'acfun-live', label: 'A站直播', title: 'A站直播抓取', to: '/AcFun/Live', icon: <IconYoutubeFilled /> },
       { key: 'douyin-download', label: '抖音视频', title: '抖音视频下载', to: '/Toutiao/Douyin', icon: <IconTikTokOutlined /> },
-      { key: 'douyin-live', label: '抖音直播', title: '抖音直播抓取', to: '/Toutiao/DouyinLive', icon: <IconTikTokOutlined /> },
+      { key: 'douyin-live', label: '抖音直播', title: '抖音直播抓取', to: '/Toutiao/DouyinLive', icon: <IconTikTokFilled /> },
       { key: 'kuaishou-download', label: '快手视频', title: '快手视频下载', to: '/Kuaishou/VideoDownload', icon: <IconThunderboltOutlined /> },
-      { key: 'kuaishou-live', label: '快手直播', title: '快手直播抓取', to: '/Kuaishou/Live', icon: <IconThunderboltOutlined /> }
+      { key: 'kuaishou-live', label: '快手直播', title: '快手直播抓取', to: '/Kuaishou/Live', icon: <IconThunderboltFilled /> }
     ]
   },
   {

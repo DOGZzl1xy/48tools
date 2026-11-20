@@ -1,9 +1,13 @@
 import { useSyncExternalStore } from 'react';
+import { readJson, writeJson } from '../common/util';
 
 /**
  * 下载队列：记录所有正在进行和已经结束的任务（录播视频 / 音频下载、直播录制、录像转 mp4），
  * 让用户在任何页面都能看到进度。界面是 ./DownloadQueuePanel（右下角的悬浮按钮）。
- * 只是一个内存里的列表，不负责真正的下载；各个下载的地方在开始、有进度、结束时调用这里的函数。
+ * 只是一个列表，不负责真正的下载；各个下载的地方在开始、有进度、结束时调用这里的函数。
+ * 列表会存到本机（localStorage 的 DOWNLOAD_QUEUE_HISTORY），重启后还能看到之前的记录；
+ * 程序关闭时还没完成的任务，重启后显示成「已停止」。
+ * 失败 / 停止的任务可以「重试」（retry：开始任务的地方给的一个函数，重新走一遍下载；重启后的旧记录没有它）。
  * 接入点：Pocket48Record.tsx（录播下载）、custom/live/liveRecording（直播录制和转换）。
  */
 export type QueueTaskStatus = 'running' | 'done' | 'error' | 'stopped';
@@ -20,14 +24,35 @@ export interface QueueTask {
   startTime: number;
   endTime?: number;
   stop?: () => void;     // 停止任务
+  retry?: () => void;    // 重新来一次（失败 / 停止后显示「重试」按钮）
 }
 
-export type QueueTaskInit = Pick<QueueTask, 'id' | 'title' | 'kind'> & Partial<Pick<QueueTask, 'filePath' | 'percent' | 'detail' | 'stop'>>;
+export type QueueTaskInit = Pick<QueueTask, 'id' | 'title' | 'kind'> & Partial<Pick<QueueTask, 'filePath' | 'percent' | 'detail' | 'stop' | 'retry'>>;
 
 const MAX_FINISHED: number = 30; // 最多保留多少条已结束的记录
 const NOTIFY_INTERVAL: number = 400;
+const STORAGE_KEY: string = 'DOWNLOAD_QUEUE_HISTORY';
 
-let tasks: Array<QueueTask> = [];
+/* 上次留下的记录：还在「进行中」的说明程序是在它完成之前关掉的 */
+function restore(): Array<QueueTask> {
+  const saved: unknown = readJson<unknown>(STORAGE_KEY, []);
+
+  if (!Array.isArray(saved)) return [];
+
+  return saved
+    .filter((task: QueueTask): boolean => Boolean(task) && typeof task.id === 'string' && typeof task.title === 'string')
+    .slice(0, MAX_FINISHED)
+    .map((task: QueueTask): QueueTask => (task.status === 'running'
+      ? { ...task, status: 'stopped', detail: '程序关闭时还没完成', endTime: task.endTime ?? Date.now() }
+      : task));
+}
+
+let tasks: Array<QueueTask> = typeof localStorage === 'undefined' ? [] : restore();
+
+/* 存到本机（函数存不了，会自动丢掉）。只在任务开始、结束、移除时存，进度变化不存 */
+function save(): void {
+  writeJson(STORAGE_KEY, tasks);
+}
 const listeners: Set<() => void> = new Set();
 let notifyTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -70,6 +95,7 @@ export function queueTaskStart(init: QueueTaskInit): void {
   }
 
   emit();
+  save();
 }
 
 /* 更新进度 */
@@ -100,16 +126,19 @@ export function queueTaskEnd(id: string, status: Exclude<QueueTaskStatus, 'runni
     percent: status === 'done' && task.percent !== undefined ? 100 : task.percent
   });
   emit();
+  save();
 }
 
 export function queueTaskRemove(id: string): void {
   tasks = tasks.filter((task: QueueTask): boolean => task.id !== id || task.status === 'running');
   emit();
+  save();
 }
 
 export function queueClearFinished(): void {
   tasks = tasks.filter((task: QueueTask): boolean => task.status === 'running');
   emit();
+  save();
 }
 
 export function getQueueTasks(): Array<QueueTask> {

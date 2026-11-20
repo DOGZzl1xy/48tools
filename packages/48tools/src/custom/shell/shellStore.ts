@@ -54,18 +54,29 @@ export function setPaletteOpen(paletteOpen: boolean): void {
   setState({ paletteOpen });
 }
 
-/* 没有手动收起 / 展开过的时候，侧边栏跟着窗口宽度自动收起或展开 */
+/**
+ * 侧边栏跟着窗口宽度变：窗口拖窄到 AUTO_COLLAPSE_WIDTH 以下时自动收起（不管以前有没有手动选过），
+ * 拖宽回来时恢复成手动选的样子（没选过就是展开）。窄的时候仍然可以手动展开，只是下次再跨过这个宽度时又会跟着变。
+ */
 if (typeof window !== 'undefined') {
+  let narrow: boolean = window.innerWidth < AUTO_COLLAPSE_WIDTH;
+
   window.addEventListener('resize', function(): void {
-    let hasPreference: boolean = false;
+    const next: boolean = window.innerWidth < AUTO_COLLAPSE_WIDTH;
+
+    if (next === narrow) return;
+
+    narrow = next;
+
+    let saved: string | null = null;
 
     try {
-      hasPreference = localStorage.getItem(COLLAPSED_KEY) !== null;
+      saved = localStorage.getItem(COLLAPSED_KEY);
     } catch { /* noop */ }
 
-    const collapsed: boolean = window.innerWidth < AUTO_COLLAPSE_WIDTH;
+    const collapsed: boolean = narrow || saved === '1';
 
-    if (!hasPreference && collapsed !== state.collapsed) setState({ collapsed });
+    if (collapsed !== state.collapsed) setState({ collapsed });
   });
 }
 

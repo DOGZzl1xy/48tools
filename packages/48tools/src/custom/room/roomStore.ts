@@ -11,8 +11,9 @@ import {
 } from '@48tools-api/48';
 import { FormatData } from '../../pages/48/RoomMessage/utils/formatData';
 import { source, getPocket48Token } from '../../utils/snh48';
-import { readRoomCache, writeRoomCache, clearRoomCache, type RoomCacheData, type RoomStream } from './roomCache';
+import { readRoomCache, readRoomCacheBetween, writeRoomCache, clearRoomCache, type RoomCacheData, type RoomStream } from './roomCache';
 import { requestAllMessage } from './roomApi';
+import { sleep, readJson, writeJson } from '../common/util';
 import { noteMessages, getChannel, setChannel } from './unreadStore';
 import type { FormatCustomMessage } from '../../pages/48/types';
 
@@ -91,16 +92,6 @@ const MAX_CATCH_UP_PAGES: Record<RoomStream, number> = { owner: 60, all: 100 };
 const roomsKey: Record<RoomStream, 'rooms' | 'allRooms'> = { owner: 'rooms', all: 'allRooms' };
 const listeners: Set<() => void> = new Set();
 
-function readJson<T>(key: string, fallback: T): T {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(key) ?? 'null');
-
-    return (value ?? fallback) as T;
-  } catch {
-    return fallback;
-  }
-}
-
 function isMember(value: unknown): value is RoomMember {
   return Boolean(value) && typeof (value as RoomMember).ownerId === 'number' && typeof (value as RoomMember).name === 'string';
 }
@@ -137,10 +128,6 @@ function maxAllCached(): number {
   const saved: number = Number(readJson<unknown>(MAX_ALL_CACHED_KEY, undefined));
 
   return Number.isInteger(saved) && saved >= 100 ? saved : MAX_ALL_CACHED;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve: () => void): unknown => setTimeout(resolve, ms));
 }
 
 export function getRoomState(): RoomState {
@@ -197,7 +184,7 @@ export async function searchMembers(keyword: string): Promise<Array<RoomMember>>
 }
 
 /* ---------- 消息 ---------- */
-function keyOf(raw: CustomMessageV2): string {
+export function keyOf(raw: CustomMessageV2): string {
   return raw.msgIdClient || String(raw.msgIdServer) || `${ raw.msgTime }`;
 }
 
@@ -262,9 +249,33 @@ async function ensureChannel(member: RoomMember): Promise<Channel> {
   return { serverId: res.content.serverId, channelId: res.content.channelId };
 }
 
+/* 从成员名单里搜出来的成员没有头像：她的消息加载出来后，用消息里的头像补上（正在看的房间和关注列表） */
+function adoptAvatar(ownerId: number): void {
+  const missing: boolean = (state.current?.ownerId === ownerId && !state.current.avatar)
+    || state.follows.some((member: RoomMember): boolean => member.ownerId === ownerId && !member.avatar);
+
+  if (!missing) return;
+
+  const avatar: string | undefined = state.rooms[ownerId]?.items
+    .find((item: RoomMessageItem): boolean => Number(item.message.user?.userId) === ownerId && Boolean(item.message.user?.avatar))
+    ?.message.user?.avatar;
+
+  if (!avatar) return;
+
+  const follows: Array<RoomMember> = state.follows
+    .map((member: RoomMember): RoomMember => (member.ownerId === ownerId && !member.avatar ? { ...member, avatar } : member));
+
+  writeJson(FOLLOWS_KEY, follows);
+  setState({
+    follows,
+    current: state.current?.ownerId === ownerId && !state.current.avatar ? { ...state.current, avatar } : state.current
+  });
+}
+
 /* 房间的消息有变化：交给未读统计（只按成员这一路算） */
 function reportMessages(ownerId: number): void {
   noteMessages(ownerId, (state.rooms[ownerId]?.items ?? []).map((item: RoomMessageItem): number => item.raw.msgTime));
+  adoptAvatar(ownerId);
 }
 
 function errorText(err: unknown): string {
@@ -364,6 +375,35 @@ export async function loadOlder(member: RoomMember, stream: RoomStream = 'owner'
     console.error(err);
     setRoom(stream, member.ownerId, { loading: false, error: errorText(err) });
   }
+}
+
+/**
+ * 把本地缓存里从 time 到「已经加载的最早一条」之间的消息都读进来（跳到搜索结果、跳到某一天时用：
+ * 页面上的消息必须从那里一直连到最新，中间不能有空档）。time 比已加载的还新时什么都不做。
+ * @return { boolean } 读完后 time 那里的消息是不是已经在列表里了
+ */
+export async function loadBackTo(member: RoomMember, stream: RoomStream, time: number): Promise<boolean> {
+  const current: RoomData | undefined = getRoom(stream, member.ownerId);
+
+  if (!current?.opened || current.loading) return false;
+
+  const oldest: number = current.items[0]?.raw.msgTime ?? Infinity;
+
+  if (time >= oldest) return true;
+
+  setRoom(stream, member.ownerId, { loading: true, error: undefined });
+
+  const messages: Array<CustomMessageV2> = await readRoomCacheBetween(stream, member.ownerId, time - 300_000, oldest, Infinity);
+  const older: RoomCacheData = await readRoomCache(stream, member.ownerId, { before: (messages[0]?.msgTime ?? time) - 1, limit: 1 });
+  const latest: RoomData = getRoom(stream, member.ownerId)!;
+
+  setRoom(stream, member.ownerId, {
+    items: mergeItems(toItems([...messages].reverse(), stream), latest.items),
+    cacheMore: older.messages.length > 0,
+    loading: false
+  });
+
+  return messages.length > 0;
 }
 
 /**

@@ -18,8 +18,62 @@
   border-right: 1px solid var(--shell-border)
   background: var(--shell-bg)
 
-.room-search
+.room-side-top
+  display: flex
   flex: none
+  align-items: center
+  gap: 6px
+
+.room-search
+  flex: 1
+  min-width: 0
+
+.room-side-toggle
+  display: inline-flex
+  flex: none
+  align-items: center
+  justify-content: center
+  width: 32px
+  height: 32px
+  border: 0
+  border-radius: 8px
+  background: transparent
+  color: var(--shell-text-secondary)
+  font-size: 15px
+  cursor: pointer
+  transition: background-color .12s, color .12s
+
+  &:hover
+    background: var(--shell-hover)
+    color: var(--shell-text)
+
+  &:focus-visible
+    outline: 2px solid var(--shell-primary)
+
+// 收起：只剩一列头像
+.room-side.is-collapsed
+  width: 60px
+  padding: 12px 6px 8px
+
+  .room-side-top
+    justify-content: center
+    margin-bottom: 8px
+
+  .room-member
+    justify-content: center
+    padding: 0
+
+// 队伍（NII、SII……）：名字后面的小标签
+.room-team
+  flex: none
+  padding: 0 6px
+  border-radius: 8px
+  background: var(--shell-active-bg)
+  color: var(--shell-primary)
+  font-size: 11px
+  font-weight: 600
+  line-height: 17px
+  white-space: nowrap
 
 .room-side-title
   display: flex
@@ -78,12 +132,17 @@
     box-shadow: 0 0 0 2px var(--shell-bg)
 
 .room-member-name
+  display: flex
   flex: 1
+  align-items: center
+  gap: 6px
   min-width: 0
-  overflow: hidden
   font-size: 14px
-  text-overflow: ellipsis
-  white-space: nowrap
+
+  > span:first-child
+    overflow: hidden
+    text-overflow: ellipsis
+    white-space: nowrap
 
 .room-star
   display: inline-flex
@@ -147,15 +206,33 @@
   margin-left: 4px
 
   b
-    overflow: hidden
+    display: flex
+    align-items: center
+    gap: 6px
+    min-width: 0
     font-size: 15px
     font-weight: 600
+
+    > span:first-child
+      overflow: hidden
+      text-overflow: ellipsis
+      white-space: nowrap
+
+  small
+    overflow: hidden
+    color: var(--shell-text-tertiary)
+    font-size: 12px
     text-overflow: ellipsis
     white-space: nowrap
 
-  small
-    color: var(--shell-text-tertiary)
-    font-size: 12px
+// 标题栏的关注按钮：已关注时星标是黄色
+.room-follow.is-on
+  color: #f5a623
+
+// 「更多」菜单里没打勾的项：占住打勾的位置，文字对齐
+.room-menu-blank
+  display: inline-block
+  width: 14px
 
 .room-scroll-wrap
   position: relative
@@ -191,6 +268,19 @@
     outline: 2px solid var(--shell-text)
     outline-offset: 2px
 
+  // 「回到底部」：在右下角，平时是浅色的，离开底部期间来了新消息时变成主题色
+  &.is-bottom
+    top: auto
+    bottom: 16px
+    border: 1px solid var(--shell-border)
+    background: var(--shell-surface)
+    color: var(--shell-text-secondary)
+
+    &.is-new
+      border-color: transparent
+      background: var(--shell-primary)
+      color: #fff
+
 .room-scroll
   flex: 1
   min-width: 0
@@ -199,6 +289,7 @@
   overflow-anchor: none
 
 .room-content
+  position: relative // 消息的位置（offsetTop）相对它来算，见 ./useChatScroll
   display: flex
   flex-direction: column
   min-height: 100%
@@ -271,6 +362,19 @@
     background: var(--shell-active-bg)
     box-shadow: inset 0 0 0 1px var(--shell-primary)
 
+// 刚从查找结果 / 日期 / 「N 条新消息」跳过来的那一条：闪一下
+@keyframes room-flash
+  0%, 60%
+    box-shadow: 0 0 0 3px var(--shell-primary)
+
+  100%
+    box-shadow: 0 0 0 3px transparent
+
+.room-message.is-flash
+  .room-bubble, .room-plain
+    border-radius: 14px
+    animation: room-flash 1.8s ease-out
+
 .room-avatar
   flex: none
   width: 32px
@@ -284,6 +388,9 @@
   gap: 8px
 
 .room-sender
+  display: flex
+  align-items: center
+  gap: 6px
   margin: 0 0 3px 2px
   color: var(--shell-primary)
   font-size: 12px
@@ -334,12 +441,7 @@
   border-radius: 12px
   background: #000
 
-.room-audio
-  display: block
-  width: 280px
-  height: 36px
-
-/* 语音：播放条 + 「转文字」按钮，转好的文字在下面（见 custom/transcribe/VoiceMessage） */
+/* 语音：播放条（custom/transcribe/VoicePlayer）+ 「转文字」按钮，转好的文字在下面（custom/transcribe/VoiceMessage） */
 .room-voice
   max-width: 372px
 
@@ -347,6 +449,69 @@
   display: flex
   align-items: center
   gap: 8px
+
+.room-player
+  display: flex
+  align-items: center
+  gap: 10px
+  width: 280px
+  height: 36px
+
+  audio
+    display: none
+
+.room-player-button
+  display: inline-flex
+  flex: none
+  align-items: center
+  justify-content: center
+  width: 30px
+  height: 30px
+  border: 0
+  border-radius: 50%
+  background: var(--shell-primary)
+  color: #fff
+  font-size: 14px
+  cursor: pointer
+  transition: filter .12s, transform .12s
+
+  &:hover
+    filter: brightness(1.1)
+
+  &:active
+    transform: scale(.94)
+
+  &:focus-visible
+    outline: 2px solid var(--shell-text)
+    outline-offset: 2px
+
+// 进度条：上下各留 8px 方便点
+.room-player-bar
+  flex: 1
+  min-width: 0
+  height: 20px
+  padding: 8px 0
+  border-radius: 10px
+  background: var(--shell-text-tertiary)
+  background-clip: content-box
+  cursor: pointer
+
+  i
+    display: block
+    height: 100%
+    border-radius: 2px
+    background: var(--shell-primary)
+
+  &:focus-visible
+    outline: 2px solid var(--shell-primary)
+    outline-offset: 2px
+
+.room-player-time
+  flex: none
+  color: var(--shell-text-secondary)
+  font-size: 12px
+  font-variant-numeric: tabular-nums
+  white-space: nowrap
 
 .room-voice-button
   display: inline-flex
@@ -372,10 +537,12 @@
     outline: 2px solid var(--shell-primary)
     outline-offset: 1px
 
-.room-voice-text
+.room-voice-result
   margin-top: 6px
   padding-top: 6px
   border-top: 1px solid var(--shell-border)
+
+.room-voice-text
   font-size: 13.5px
   line-height: 1.6
   white-space: pre-wrap
@@ -385,8 +552,7 @@
     color: var(--shell-text-tertiary)
 
   button
-    margin-left: 6px
-    padding: 0 2px
+    padding: 0 3px
     border: 0
     background: none
     color: var(--shell-text-tertiary)
@@ -403,6 +569,10 @@
   a
     margin-left: 8px
 
+  // 正在重新转：上一次的文字先变淡
+  &.is-stale
+    opacity: .55
+
   &.is-loading
     display: flex
     align-items: center
@@ -411,11 +581,16 @@
     font-size: 12.5px
 
   &.is-error
-    color: #ff4d4f
+    color: var(--shell-danger, #ff4d4f)
     font-size: 12.5px
 
     button
+      margin-left: 6px
       color: var(--shell-primary)
+
+.room-voice-tools
+  margin-left: 6px
+  white-space: nowrap
 
 .room-sticker
   display: block
@@ -489,3 +664,61 @@
   font-size: 11px
   white-space: pre-wrap
   word-break: break-all
+
+// ---------- 查找面板（./RoomSearch） ----------
+.room-find
+  display: flex
+  flex-direction: column
+  height: 100%
+
+.room-find-label
+  margin: 14px 0 6px
+  color: var(--shell-text-tertiary)
+  font-size: 12px
+  font-weight: 600
+
+  &:first-child
+    margin-top: 0
+
+.room-find-hint
+  margin: 6px 0 0
+  color: var(--shell-text-tertiary)
+  font-size: 12px
+
+.room-find-list
+  flex: 1
+  min-height: 0
+  margin: 8px -8px 0
+  overflow-y: auto
+
+.room-find-item
+  display: flex
+  flex-direction: column
+  gap: 2px
+  width: 100%
+  padding: 8px
+  border: 0
+  border-radius: 8px
+  background: transparent
+  color: var(--shell-text)
+  font: inherit
+  font-size: 13.5px
+  text-align: left
+  word-break: break-word
+  cursor: pointer
+
+  &:hover
+    background: var(--shell-hover)
+
+  &:focus-visible
+    outline: 2px solid var(--shell-primary)
+    outline-offset: -2px
+
+  small
+    color: var(--shell-text-tertiary)
+    font-size: 12px
+
+    b
+      margin-right: 8px
+      color: var(--shell-text-secondary)
+      font-weight: 600

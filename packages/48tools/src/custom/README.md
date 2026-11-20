@@ -51,6 +51,21 @@
 | 只用浏览器打开 http(s) 链接 | `security/safeOpenExternal.ts` | `MessageDisplay.tsx`、`Credits/Software/Software.tsx` |
 | 主窗口、播放器窗口禁止跳到外部网页 / 打开新窗口 | `packages/main/src/custom/windowGuards.mts` | `ProcessWindow.mts`、`ipcListener/openPlayerHtml.mts` |
 | 开发模式 F5 / Ctrl+R 刷新、F12 开发者工具 | `packages/main/src/custom/devShortcuts.mts` | 同上 |
+| 房间页面拆成几块（原来一个 673 行的文件）：成员栏、聊天区、滚动、导出、查找各管各的 | `room/RoomPage.tsx`（外壳）、`room/MemberPanel.tsx`、`room/ChatView.tsx`、`room/useChatScroll.ts`、`room/roomExport.ts`、`room/RoomSearch.tsx` | 同上（`pages/48/Index.tsx` 的 `RoomMessage` 路由） |
+| 房间消息只画一段：已加载的消息再多，页面上最多同时画 600 条（往上翻多画一批、把最下面的收掉，往下同理），翻得再远也不会越来越卡；跳转、加载更早的消息时眼前的内容不动。右下角有「回到底部」，离开底部期间来了新消息会变成「有新消息」 | `room/useChatScroll.ts` | `room/ChatView.tsx` |
+| 成员的队伍和拼音：房间的成员栏、标题、别的成员串门发的消息、首页都显示队伍（沈馨 → NII）；搜索成员可以输入名字、拼音（全拼，或姓和名的首字母）、成员 ID、队伍。数据是原版就在用的公开成员名单（`services/48/jsdelivrCDN` 的 `roomId.json`），存在本机，一天更新一次，请求里不带账号信息 | `room/memberDirectory.ts`、`room/memberSearch.ts` | `room/MemberPanel.tsx`、`room/ChatView.tsx`、`home/HomeDashboard.tsx`、`live/AutoGrabOptionsPage.tsx` |
+| 在房间里查找：搜索本机存下来的消息（文字、回复、翻牌、发送者名字、语音转好的文字），或者跳到某一天；点结果会把那里到现在的消息读出来并滚过去 | `room/RoomSearch.tsx`、`room/roomSearchText.ts`、`room/roomCache.ts`（`searchRoomCache`、`firstCachedSince`）、`room/roomStore.ts`（`loadBackTo`） | `room/ChatView.tsx`（标题栏的放大镜） |
+| 房间消息的时间可以按北京时间显示（「更多」菜单里，设置项 `roomBeijingTime`）；鼠标放到时间上显示完整日期和时间；`[太阳]` 这类文字表情显示成 emoji；清除房间缓存前先确认；成员栏可以收起成一列头像（窗口窄时默认收起） | `room/roomTime.ts`、`room/emojiText.ts`、`room/ChatView.tsx`、`room/MemberPanel.tsx` | `room/MessageBubble.tsx` |
+| 语音播放条换成自己画的（跟着主题变色，没播放也显示时长，同一时间只播一条）；转好的文字可以复制；重新转失败时原来的文字不丢；参考内容按语音所在的房间找；导出房间消息时带上转好的文字；转过的语音文件只保留 6 个月（启动后自动清理，文字一直保留，缓存数据库升到版本 2） | `transcribe/VoicePlayer.tsx`、`transcribe/VoiceMessage.tsx`、`transcribe/transcribeStore.ts`、`transcribe/transcriptCache.ts`（`purgeOldAudio`、`getAllTranscripts`）、`room/roomExport.ts` | `room/MessageBubble.tsx`、`shell/AppShell.tsx`（启动后清理）、`pages/48/RoomMessage/utils/HTMLComponents.tsx`（导出的 HTML 里显示 `transcript`） |
+| API key 加密保存：存进 localStorage 之前用系统的加密功能（Windows 的 DPAPI，绑定当前 Windows 用户）加密，以前明文保存的会在下次启动时自动换成加密的；换电脑或换用户后解不开，需要重新填 | `settings/secretBox.ts`、`settings/settingsStore.ts`、`packages/main/src/custom/secretStore.mts`、`packages/main/src/custom/secretChannel.ts` | `packages/main/src/main.mts`（`registerSecretStore`） |
+| 自动抓取随程序启动：启动几秒后自动开始监听（设置里可以关：`autoGrabAutoStart`），录制方式用上次手动开始时选的（`autoGrabMode`）；运行时侧边栏「直播抓取」上有绿点，首页也显示状态 | `live/autoGrabRunner.ts` | `shell/AppShell.tsx`（启动）、`Pocket48Live.tsx`（手动开始时记住录制方式） |
+| 新的自动抓取配置页：成员从名单里选（按名字、拼音、队伍搜，可以一键加入关注的成员），名单里没有的另外输入；设置页指定了录制文件夹时这里不用再填目录。保存的格式和原版一样（原版页面 `pages/48/Pocket48/LiveOptions` 保留不动） | `live/AutoGrabOptionsPage.tsx` | `pages/48/Index.tsx` 的 `LiveOptions` 路由 |
+| 下载队列的记录保留到重启后（localStorage 的 `DOWNLOAD_QUEUE_HISTORY`；关闭时没完成的显示成「已停止」）；失败或停止的录播下载可以「重试」（这次运行里开始的任务才有） | `downloadQueue/downloadQueue.ts`、`downloadQueue/DownloadQueuePanel.tsx`、`downloadQueue/recordTasks.ts` | `Pocket48Record.tsx`（`recordTaskStart` 传入重试函数） |
+| 首页改成看得到东西的：常用功能、关注的成员（未读数、最新一条消息）、正在直播（和自动抓取的状态）、最近的下载。原来的「全部功能」和侧边栏重复，去掉了 | `home/HomeDashboard.tsx`、`home/home.global.sass` | 无（仍是首页路由） |
+| 设置页：顶部有分区导航；明暗主题直接三选一（不用再点开弹窗）；加了「直播抓取」一节；FFmpeg 那一行不再显示原版的红色提示 | `settings/SettingsPage.tsx`、`settings/SettingsRow.tsx`、`settings/settings.global.sass` | `components/basic/Theme/ThemeProvider.tsx`、`ThemeContext.ts`（多给出 `theme`、`changeTheme`） |
+| Ctrl+K 还能搜到设置、下载队列、自动抓取配置；方向键选到看不见的项时列表跟着滚。侧边栏：窗口拖窄时自动收起、拖宽时恢复；同一平台的「视频」和「直播」图标用线条 / 实心区分 | `shell/CommandPalette.tsx`、`shell/shellStore.ts`、`shell/navConfig.tsx` | 无 |
+| 录播下载页：进入时自动加载列表；没有任务在下载时不显示「下载进度」一列；操作列固定在右边（直播抓取页也是） | 无 | `Pocket48Record.tsx`、`Pocket48Live.tsx` |
+| 几个模块共用的小工具：IndexedDB 的打开和 Promise 包装、等一会儿、读写 localStorage 里的 JSON | `common/idb.ts`、`common/util.ts` | 无 |
 
 ## 原版文件里的其他小改动
 
@@ -75,4 +90,8 @@
 
 ## 测试
 
-`custom/` 下有少量单元测试（`*.spec.ts`），在 `packages/48tools` 目录运行 `node --run test`。
+- 单元测试：`custom/` 下的 `*.spec.ts`（12 个文件，65 个测试），在 `packages/48tools` 目录运行 `node --run test`。
+  除了纯函数，房间消息的加载和同步（`room/roomStore.spec.ts`）、语音转文字的状态（`transcribe/transcribeStore.spec.ts`）
+  也有测试，接口和缓存用假的代替。
+- 界面检查：`node scripts/custom/uiCheck.mjs`（仓库根目录）。启动一个测试窗口把自定义的几个页面走一遍，
+  确认关键的东西都在、没有报错，并截图。要先构建（脚本开头有说明）。只看不改，不会调用语音转文字接口。

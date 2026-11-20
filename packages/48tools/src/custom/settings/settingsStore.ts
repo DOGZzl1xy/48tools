@@ -1,10 +1,13 @@
 import { useSyncExternalStore } from 'react';
 import { getPocket48LocalConfig } from '../pocket48Proxy/pocket48Proxy';
+import { readJson, writeJson } from '../common/util';
+import { sealSecret, openSecret } from './secretBox';
 
 /**
  * 「设置」页面里可以改的选项。
  * 值保存在 localStorage（CUSTOM_SETTINGS）；没有在界面上改过的选项，用 local/pocket48.json 里的值，再没有就用默认值。
  * 也就是：界面上的设置 > local/pocket48.json > 默认值。
+ * API key（SECRET_KEYS）存进 localStorage 之前会用系统的加密功能加密（./secretBox），内存里用的是明文。
  */
 export type LiveRecordFormat = 'flv' | 'mp4' | 'mp4-compress';
 export type SttProvider = 'gemini' | 'openai'; // 语音转文字用哪种接口（见 custom/transcribe）
@@ -22,19 +25,56 @@ export interface CustomSettings {
   sttOpenaiModel?: string;
   sttOpenaiBaseUrl?: string;
   sttHints?: boolean;                 // 语音转文字：把语音前后的文字一起发给接口当参考（默认开，只有关掉时才保存成 false）
+  roomBeijingTime?: boolean;          // 房间消息的时间按北京时间显示（默认按这台电脑的时区）
+  autoGrabAutoStart?: boolean;        // 程序启动后自动开始「自动抓取」（默认开，只有关掉时才保存成 false）
+  autoGrabMode?: AutoGrabMode;        // 自动抓取用哪种方式录（上次手动开始时选的；默认 flv）
 }
+
+export type AutoGrabMode = 'flv' | 'ts' | 'backup';
+
+/* 需要加密保存的选项 */
+const SECRET_KEYS: Array<keyof CustomSettings> = ['sttGeminiKey', 'sttOpenaiKey'];
 
 const STORAGE_KEY: string = 'CUSTOM_SETTINGS';
 const listeners: Set<() => void> = new Set();
 
-function read(): CustomSettings {
-  try {
-    const saved: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
+/* 存进 localStorage 的样子：API key 换成加密后的内容 */
+function seal(settings: CustomSettings): CustomSettings {
+  const sealed: Record<string, unknown> = { ...settings };
 
-    return saved && typeof saved === 'object' ? saved as CustomSettings : {};
-  } catch {
-    return {};
+  for (const key of SECRET_KEYS) {
+    if (typeof sealed[key] === 'string') sealed[key] = sealSecret(sealed[key] as string);
   }
+
+  return sealed as CustomSettings;
+}
+
+function read(): CustomSettings {
+  const saved: unknown = readJson<unknown>(STORAGE_KEY, {});
+
+  if (!saved || typeof saved !== 'object') return {};
+
+  const settings: Record<string, unknown> = { ...saved as CustomSettings };
+  let migrate: boolean = false;
+
+  for (const key of SECRET_KEYS) {
+    const value: unknown = settings[key];
+
+    if (typeof value !== 'string') continue;
+
+    const opened: { text?: string; sealed: boolean } = openSecret(value);
+
+    if (opened.text === undefined) {
+      delete settings[key]; // 解不开（换了电脑或 Windows 用户）：当成没填，需要重新填一次
+    } else {
+      settings[key] = opened.text;
+      migrate ||= !opened.sealed; // 以前明文保存的：这次加密后存回去
+    }
+  }
+
+  migrate && writeJson(STORAGE_KEY, seal(settings as CustomSettings));
+
+  return settings as CustomSettings;
 }
 
 let overrides: CustomSettings = typeof localStorage === 'undefined' ? {} : read();
@@ -75,9 +115,7 @@ export function setSetting<K extends keyof CustomSettings>(key: K, value: Custom
 
   overrides = next;
 
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-  } catch { /* noop */ }
+  writeJson(STORAGE_KEY, seal(next));
 
   for (const listener of listeners) listener();
 }

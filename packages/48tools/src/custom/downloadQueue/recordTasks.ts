@@ -20,7 +20,7 @@ function taskId(liveId: string): string {
   return `record:${ liveId }`;
 }
 
-export function recordTaskStart(record: RecordLike, filePath: string, audioOnly: boolean, stop: () => void): void {
+export function recordTaskStart(record: RecordLike, filePath: string, audioOnly: boolean, stop: () => void, retry?: () => void): void {
   queueTaskStart({
     id: taskId(record.liveId),
     title: `${ record.userInfo.nickname } ${ record.title }`,
@@ -28,7 +28,8 @@ export function recordTaskStart(record: RecordLike, filePath: string, audioOnly:
     filePath,
     percent: 0,
     detail: '准备中…',
-    stop
+    stop,
+    retry
   });
 }
 

@@ -13,7 +13,7 @@ import {
 
 /**
  * 下载队列的界面：从右边滑出的任务列表。入口是侧边栏底部的「下载队列」（显示正在进行的任务数和总进度）。
- * 数据来自 ./downloadQueue，开关状态在 shell/shellStore。
+ * 数据来自 ./downloadQueue，开关状态在 shell/shellStore。失败或停止的任务有「重试」（这次运行里开始的任务才有）。
  * 由 custom/shell/AppShell 渲染，所有页面都能打开。
  */
 const statusText: Record<QueueTaskStatus, string> = {
@@ -71,6 +71,11 @@ function TaskItem(props: { task: QueueTask }): ReactElement {
         {
           task.filePath
             ? <Button size="small" onClick={ (): void => showInFolder(task.filePath!) }>打开所在文件夹</Button>
+            : null
+        }
+        {
+          !isRunning && task.status !== 'done' && task.retry
+            ? <Button size="small" type="primary" ghost={ true } onClick={ (): void => task.retry?.() }>重试</Button>
             : null
         }
         { isRunning ? null : <Button size="small" type="text" onClick={ (): void => queueTaskRemove(task.id) }>移除</Button> }

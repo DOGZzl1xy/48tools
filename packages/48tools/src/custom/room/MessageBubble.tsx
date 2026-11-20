@@ -5,6 +5,7 @@ import { PlayCircleOutlined as IconPlayCircleOutlined, LoadingOutlined as IconLo
 import { source, mp4Source } from '../../utils/snh48';
 import { openLivePush, type OpenLiveResult } from './liveCard';
 import VoiceMessage from '../transcribe/VoiceMessage';
+import { emojiText } from './emojiText';
 import type { RoomMessageItem } from './roomStore';
 
 /**
@@ -15,6 +16,8 @@ import type { RoomMessageItem } from './roomStore';
  * 看「全部消息」时成员的消息（highlight）用主题色标出来，免得淹没在粉丝的消息里。
  * 语音（语音消息、翻牌的语音回答）后面有「转文字」，见 ../transcribe/VoiceMessage。
  * 直播通知可以点：直播中打开直播，结束后打开回放，查不到回放时提示已失效（见 ./liveCard）。
+ * 文字里的「[太阳]」这类表情代码换成 emoji（./emojiText）。成员的名字后面带队伍（team，由 ChatView 从成员名单里查）。
+ * 鼠标放到时间上能看到完整的日期和时间。
  */
 const typeNames: Record<string, string> = {
   EXPRESS: '表情',
@@ -88,10 +91,10 @@ function pick<T>(...values: Array<T | undefined | null>): T | undefined {
   return values.find((value: T | undefined | null): boolean => value !== undefined && value !== null) ?? undefined;
 }
 
-function renderBody(item: RoomMessageItem): { body: ReactNode; plain?: boolean } {
+function renderBody(item: RoomMessageItem, ownerId: number): { body: ReactNode; plain?: boolean } {
   const message: any = item.message;
 
-  if (message.type === 'text') return { body: <p className="room-text">{ message.body }</p> };
+  if (message.type === 'text') return { body: <p className="room-text">{ emojiText(message.body) }</p> };
 
   if (message.type === 'image') {
     return { body: <Image className="room-image" src={ message.attach.url } loading="lazy" />, plain: true };
@@ -105,6 +108,8 @@ function renderBody(item: RoomMessageItem): { body: ReactNode; plain?: boolean }
           url={ message.attach.url }
           ext={ message.attach.ext }
           time={ item.raw.msgTime }
+          ownerId={ ownerId }
+          duration={ Number(message.attach.dur) || undefined }
         />
       )
     };
@@ -124,8 +129,8 @@ function renderBody(item: RoomMessageItem): { body: ReactNode; plain?: boolean }
       return {
         body: (
           <div>
-            <Quote name={ info.replyName }>{ info.replyText }</Quote>
-            <p className="room-text">{ info.text }</p>
+            <Quote name={ info.replyName }>{ emojiText(info.replyText ?? '') }</Quote>
+            <p className="room-text">{ emojiText(info.text ?? '') }</p>
           </div>
         )
       };
@@ -161,7 +166,7 @@ function renderBody(item: RoomMessageItem): { body: ReactNode; plain?: boolean }
             <Quote name="翻牌提问">{ info!.question }</Quote>
             {
               type === 'FLIPCARD_AUDIO'
-                ? <VoiceMessage id={ url } url={ url } time={ item.raw.msgTime } question={ info!.question } />
+                ? <VoiceMessage id={ url } url={ url } time={ item.raw.msgTime } question={ info!.question } ownerId={ ownerId } />
                 : <video className="room-video" src={ url } controls={ true } preload="metadata" />
             }
           </div>
@@ -206,26 +211,32 @@ function renderBody(item: RoomMessageItem): { body: ReactNode; plain?: boolean }
 interface MessageBubbleProps {
   item: RoomMessageItem;
   time: string;        // HH:mm
+  fullTime: string;    // 完整的日期和时间（鼠标放到时间上时显示）
+  ownerId: number;     // 这是哪个成员的房间
+  team?: string;       // 发送者是成员时：她的队伍（NII、SII……）
+  flash?: boolean;     // 刚从搜索结果 / 日期跳过来：闪一下
   showAvatar: boolean; // 同一个人连续发的消息，只在第一条显示头像
   sender: 'owner' | 'guest' | 'fan'; // 房主本人 / 来串门的别的成员 / 粉丝
   highlight: boolean;  // 用主题色标出来（看「全部消息」时成员发的）
 }
 
 function MessageBubble(props: MessageBubbleProps): ReactElement {
-  const { item, time, showAvatar, sender, highlight }: MessageBubbleProps = props;
+  const { item, time, fullTime, ownerId, team, flash, showAvatar, sender, highlight }: MessageBubbleProps = props;
   const showName: boolean = showAvatar && (sender !== 'owner' || highlight);
   const user: { nickName?: string; avatar?: string } = item.message.user ?? {};
   let content: { body: ReactNode; plain?: boolean };
 
   try {
-    content = renderBody(item);
+    content = renderBody(item, ownerId);
   } catch (err) {
     console.error(err, item);
     content = { body: <span className="room-note">[无法显示的消息：{ item.raw.msgType }]</span>, plain: true };
   }
 
   return (
-    <div className={ `room-message is-${ sender }${ highlight ? ' is-highlight' : '' }${ showAvatar ? ' is-first' : '' }` }>
+    <div className={ `room-message is-${ sender }${ highlight ? ' is-highlight' : '' }${ showAvatar ? ' is-first' : '' }${ flash ? ' is-flash' : '' }` }
+      data-key={ item.key }
+    >
       <div className="room-avatar">
         {
           showAvatar ? (
@@ -236,10 +247,17 @@ function MessageBubble(props: MessageBubbleProps): ReactElement {
         }
       </div>
       <div className="room-message-main">
-        { showName ? <div className="room-sender">{ user.nickName }</div> : null }
+        {
+          showName ? (
+            <div className="room-sender">
+              { user.nickName }
+              { team ? <span className="room-team">{ team }</span> : null }
+            </div>
+          ) : null
+        }
         <div className="room-message-row">
           <div className={ content.plain ? 'room-plain' : 'room-bubble' }>{ content.body }</div>
-          <time>{ time }</time>
+          <time title={ fullTime }>{ time }</time>
         </div>
       </div>
     </div>

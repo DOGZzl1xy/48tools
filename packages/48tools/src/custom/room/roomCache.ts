@@ -1,4 +1,5 @@
 import type { CustomMessageV2 } from '@48tools-api/48';
+import { createDbOpener, requestResult as result, transactionDone as done } from '../common/idb';
 
 /**
  * 房间消息的本地缓存（浏览器自带的 IndexedDB，数据在程序的配置目录里，不会上传）。
@@ -46,52 +47,20 @@ const stores: Record<RoomStream, { meta: string; messages: string }> = {
   all: { meta: 'allMeta', messages: 'allMessages' }
 };
 
-let dbPromise: Promise<IDBDatabase> | undefined;
+const openDb: () => Promise<IDBDatabase> = createDbOpener(DB_NAME, DB_VERSION, function(db: IDBDatabase, transaction: IDBTransaction): void {
+  for (const names of Object.values(stores)) {
+    if (!db.objectStoreNames.contains(names.meta)) db.createObjectStore(names.meta, { keyPath: 'ownerId' });
 
-function openDb(): Promise<IDBDatabase> {
-  dbPromise ??= new Promise((resolve: (db: IDBDatabase) => void, reject: (reason: unknown) => void): void => {
-    const request: IDBOpenDBRequest = indexedDB.open(DB_NAME, DB_VERSION);
+    // 旧版本建的消息表没有按时间的索引，这里补上（已有的消息会自动进索引）
+    const messages: IDBObjectStore = db.objectStoreNames.contains(names.messages)
+      ? transaction.objectStore(names.messages)
+      : db.createObjectStore(names.messages, { keyPath: ['ownerId', 'key'] });
 
-    request.onupgradeneeded = (): void => {
-      const db: IDBDatabase = request.result;
+    if (!messages.indexNames.contains('ownerId')) messages.createIndex('ownerId', 'ownerId');
 
-      for (const names of Object.values(stores)) {
-        if (!db.objectStoreNames.contains(names.meta)) db.createObjectStore(names.meta, { keyPath: 'ownerId' });
-
-        // 旧版本建的消息表没有按时间的索引，这里补上（已有的消息会自动进索引）
-        const messages: IDBObjectStore = db.objectStoreNames.contains(names.messages)
-          ? request.transaction!.objectStore(names.messages)
-          : db.createObjectStore(names.messages, { keyPath: ['ownerId', 'key'] });
-
-        if (!messages.indexNames.contains('ownerId')) messages.createIndex('ownerId', 'ownerId');
-
-        if (!messages.indexNames.contains(TIME_INDEX)) messages.createIndex(TIME_INDEX, ['ownerId', 'msgTime']);
-      }
-    };
-    request.onsuccess = (): void => resolve(request.result);
-    request.onerror = (): void => {
-      dbPromise = undefined;
-      reject(request.error);
-    };
-  });
-
-  return dbPromise;
-}
-
-function done(transaction: IDBTransaction): Promise<void> {
-  return new Promise((resolve: () => void, reject: (reason: unknown) => void): void => {
-    transaction.oncomplete = (): void => resolve();
-    transaction.onerror = (): void => reject(transaction.error);
-    transaction.onabort = (): void => reject(transaction.error);
-  });
-}
-
-function result<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve: (value: T) => void, reject: (reason: unknown) => void): void => {
-    request.onsuccess = (): void => resolve(request.result);
-    request.onerror = (): void => reject(request.error);
-  });
-}
+    if (!messages.indexNames.contains(TIME_INDEX)) messages.createIndex(TIME_INDEX, ['ownerId', 'msgTime']);
+  }
+});
 
 /* 一个房间的消息在时间索引里的范围：从最早到 before（包含） */
 function timeRange(ownerId: number, before: number = Infinity): IDBKeyRange {
@@ -182,6 +151,61 @@ export async function readRoomCacheBetween(
     console.error('读取房间缓存失败', err);
 
     return [];
+  }
+}
+
+/**
+ * 在本地缓存里找消息：从新到旧一条条看，match 返回 true 的留下，最多 limit 条（结果从新到旧）。
+ * 搜索消息内容时用（见 ./RoomSearch）。出错时返回空
+ */
+export async function searchRoomCache(
+  stream: RoomStream,
+  ownerId: number,
+  match: (raw: CustomMessageV2) => boolean,
+  limit: number = 200
+): Promise<Array<CustomMessageV2>> {
+  try {
+    const db: IDBDatabase = await openDb();
+    const source: IDBIndex = db.transaction([stores[stream].messages], 'readonly').objectStore(stores[stream].messages).index(TIME_INDEX);
+
+    return await new Promise((resolve: (found: Array<CustomMessageV2>) => void, reject: (reason: unknown) => void): void => {
+      const found: Array<CustomMessageV2> = [];
+      const request: IDBRequest<IDBCursorWithValue | null> = source.openCursor(timeRange(ownerId), 'prev');
+
+      request.onerror = (): void => reject(request.error);
+      request.onsuccess = (): void => {
+        const cursor: IDBCursorWithValue | null = request.result;
+
+        if (!cursor || found.length >= limit) return resolve(found);
+
+        const raw: CustomMessageV2 = (cursor.value as MessageRecord).raw;
+
+        match(raw) && found.push(raw);
+        cursor.continue();
+      };
+    });
+  } catch (err) {
+    console.error('搜索房间缓存失败', err);
+
+    return [];
+  }
+}
+
+/* 本地缓存里某个时间（含）之后的第一条消息；没有时返回 undefined。跳到某一天时用 */
+export async function firstCachedSince(stream: RoomStream, ownerId: number, time: number): Promise<CustomMessageV2 | undefined> {
+  try {
+    const db: IDBDatabase = await openDb();
+    const [record]: Array<MessageRecord> = await walk(
+      db.transaction([stores[stream].messages], 'readonly').objectStore(stores[stream].messages).index(TIME_INDEX),
+      IDBKeyRange.bound([ownerId, time], [ownerId, Infinity]),
+      'next',
+      1);
+
+    return record?.raw;
+  } catch (err) {
+    console.error('读取房间缓存失败', err);
+
+    return undefined;
   }
 }
 

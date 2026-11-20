@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -10,31 +11,55 @@ import {
 } from 'react';
 import { useNavigate, type NavigateFunction } from 'react-router';
 import { Modal, Input, type InputRef } from 'antd';
-import { SearchOutlined as IconSearchOutlined, HomeOutlined as IconHomeOutlined } from '@ant-design/icons';
+import {
+  SearchOutlined as IconSearchOutlined,
+  HomeOutlined as IconHomeOutlined,
+  SettingOutlined as IconSettingOutlined,
+  DownloadOutlined as IconDownloadOutlined,
+  ControlOutlined as IconControlOutlined
+} from '@ant-design/icons';
 import { shellNavGroups, type ShellNavGroup, type ShellNavItem } from './navConfig';
-import { useShellState, setPaletteOpen, type ShellState } from './shellStore';
+import { useShellState, setPaletteOpen, setQueueOpen, type ShellState } from './shellStore';
 
 /**
  * 快速跳转（Ctrl+K）：输入功能名字的一部分，回车直接进入；上下键选择，Esc 关闭。
+ * 除了侧边栏里的功能，还能搜到：设置、下载队列、自动抓取配置。
  * 由 AppShell 渲染，开关状态在 shellStore。
  */
 interface PaletteEntry {
   item: ShellNavItem;
   group: string;
   search: string;
+  run?: () => void; // 不是跳转页面，而是做一件事（比如打开下载队列）
 }
 
 const entries: Array<PaletteEntry> = [
   {
     item: { key: 'home', label: '主页', title: '主页', to: '/', icon: <IconHomeOutlined /> },
     group: '',
-    search: '主页 home 设置'
+    search: '主页 首页 home'
   },
   ...shellNavGroups.flatMap((group: ShellNavGroup): Array<PaletteEntry> => group.items.map((item: ShellNavItem): PaletteEntry => ({
     item,
     group: group.title,
     search: `${ item.title } ${ item.label } ${ group.title } ${ item.to }`.toLowerCase()
-  })))
+  }))),
+  {
+    item: { key: 'live-options', label: '自动抓取配置', title: '自动抓取配置', to: '/48/LiveOptions', icon: <IconControlOutlined /> },
+    group: '口袋48',
+    search: '自动抓取配置 自动录制 直播 liveoptions'
+  },
+  {
+    item: { key: 'queue', label: '下载队列', title: '下载队列', to: '', icon: <IconDownloadOutlined /> },
+    group: '',
+    search: '下载队列 任务 进度 queue download',
+    run: (): void => setQueueOpen(true)
+  },
+  {
+    item: { key: 'settings', label: '设置', title: '设置', to: '/Settings', icon: <IconSettingOutlined /> },
+    group: '',
+    search: '设置 配置 账号 主题 代理 语音转文字 ffmpeg settings'
+  }
 ];
 
 function CommandPalette(props: {}): ReactElement {
@@ -58,7 +83,12 @@ function CommandPalette(props: {}): ReactElement {
   function handleGo(entry: PaletteEntry | undefined): void {
     if (!entry) return;
 
-    navigate(entry.item.to);
+    if (entry.run) {
+      entry.run();
+    } else {
+      navigate(entry.item.to);
+    }
+
     handleClose();
   }
 
@@ -74,6 +104,11 @@ function CommandPalette(props: {}): ReactElement {
       handleGo(results[Math.min(index, results.length - 1)]);
     }
   }
+
+  // 用方向键选到看不见的那一项时，列表跟着滚
+  useEffect(function(): void {
+    document.querySelector('.shell-palette-item.is-active')?.scrollIntoView({ block: 'nearest' });
+  }, [index, keyword]);
 
   return (
     <Modal open={ paletteOpen }
@@ -101,13 +136,13 @@ function CommandPalette(props: {}): ReactElement {
         } }
         onKeyDown={ handleKeyDown }
       />
-      <div className="shell-palette-list">
+      <div className="shell-palette-list" role="listbox" aria-label="功能">
         {
           results.map((entry: PaletteEntry, i: number): ReactElement => (
             <div key={ entry.item.key }
               className={ `shell-palette-item${ i === Math.min(index, results.length - 1) ? ' is-active' : '' }` }
               role="option"
-              aria-selected={ i === index }
+              aria-selected={ i === Math.min(index, results.length - 1) }
               onMouseEnter={ (): void => setIndex(i) }
               onClick={ (): void => handleGo(entry) }
             >

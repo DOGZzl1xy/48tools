@@ -61,11 +61,13 @@ function ThemeProvider(props: ThemeProviderProps): ReactElement {
   }
 
   // 修改主题
-  function handleThemeChange(event: RadioChangeEvent): void {
-    const value: ThemeValue = event.target.value;
-
+  function changeTheme(value: ThemeValue): void {
     ipcRenderer.send(WinIpcChannel.NativeThemeChange, value, true);
     setTheme(value);
+  }
+
+  function handleThemeChange(event: RadioChangeEvent): void {
+    changeTheme(event.target.value);
   }
 
   const ChangeThemeElement: ReactElement = (
@@ -119,7 +121,7 @@ function ThemeProvider(props: ThemeProviderProps): ReactElement {
   }, [media]);
 
   return (
-    <ThemeContext value={{ ChangeThemeElement, isDark }}>
+    <ThemeContext value={{ ChangeThemeElement, isDark, theme, changeTheme }}>
       { children }
     </ThemeContext>
   );

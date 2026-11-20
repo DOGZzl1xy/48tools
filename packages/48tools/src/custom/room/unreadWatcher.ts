@@ -6,6 +6,7 @@ import {
   type CustomMessageV2
 } from '@48tools-api/48';
 import { getPocket48Token } from '../../utils/snh48';
+import { sleep } from '../common/util';
 import { getRoomState, syncNewest, toItems, type RoomMember, type RoomData, type RoomMessageItem } from './roomStore';
 import { noteMessages, getViewing, getSeen, getChannel, setChannel, handleWindowFocus } from './unreadStore';
 
@@ -26,10 +27,6 @@ const UNREAD_AT_LEAST: number = 100; // 看完这几批还没接上「看到哪�
 
 let started: boolean = false;
 let checking: boolean = false;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve: () => void): unknown => setTimeout(resolve, ms));
-}
 
 /* 没打开过的房间：取最新的一两批，数一数有多少条比「看到哪了」新 */
 async function probe(member: RoomMember): Promise<void> {

@@ -3,7 +3,7 @@ import { useRoutes } from 'react-router';
 import style from './RoomMessage/roomMessage.sass';
 import Content from '../../components/Content/Content';
 import Pocket48Live from './Pocket48/Pocket48Live/Pocket48Live';
-import LiveOptions from './Pocket48/LiveOptions/LiveOptions';
+import AutoGrabOptionsPage from '../../custom/live/AutoGrabOptionsPage'; // 新的自动抓取配置页，原版是 ./Pocket48/LiveOptions/LiveOptions
 import Pocket48Record from './Pocket48/Pocket48Record/Pocket48Record';
 import InLive from './Live48/InLive/InLive';
 import InVideo from './Live48/InVideo/InVideo';
@@ -16,7 +16,7 @@ import QingchunshikeDynamic from './Qingchunshike/loader';
 function Index(props: {}): ReactElement | null {
   const routes: ReactElement | null = useRoutes([
     { path: 'Pocket48Live', element: <Pocket48Live /> },
-    { path: 'LiveOptions', element: <LiveOptions /> },
+    { path: 'LiveOptions', element: <AutoGrabOptionsPage /> },
     { path: 'Pocket48Record', element: <Pocket48Record /> },
     { path: 'InLive', element: <InLive /> },
     { path: 'InVideo', element: <InVideo /> },

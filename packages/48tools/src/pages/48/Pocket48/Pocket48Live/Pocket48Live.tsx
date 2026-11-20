@@ -44,6 +44,7 @@ import {
 import { getFFmpeg, getFileTime, getFilePath } from '../../../../utils/utils';
 import { getPocket48Proxy } from '../../../../custom/pocket48Proxy/pocket48Proxy';
 import { liveRecordingStart, liveRecordingEnd } from '../../../../custom/live/liveRecording';
+import { rememberAutoGrabMode } from '../../../../custom/live/autoGrabRunner';
 import RowActions from '../../../../custom/table/RowActions';
 import MediaTitleCell from '../../../../custom/table/MediaTitleCell';
 import {
@@ -180,6 +181,7 @@ function Pocket48Live(props: {}): ReactElement {
       const { result: r, transcoding = false, backup = false }: OnionContext = ctx;
       const args: [MessageInstance, string, string[], boolean, boolean] = [messageApi, r.value.dir, usersArr, transcoding, backup];
 
+      rememberAutoGrabMode(transcoding ? 'ts' : (backup ? 'backup' : 'flv')); // 下次程序启动自动开始时用同样的方式
       messageApi.info('开始自动抓取。');
       autoGrab(...args);
       dispatch(setAutoGrab(
@@ -389,6 +391,7 @@ function Pocket48Live(props: {}): ReactElement {
       title: '操作',
       key: 'action',
       width: 200,
+      fixed: 'right', // 窗口窄、表格横向滚动时，操作按钮一直停在右边
       render: (value: undefined, record: LiveInfo, index: number): ReactElement => {
         const idx: number = liveChildList.findIndex((o: WebWorkerChildItem): boolean => o.id === record.liveId);
         const inRecording: boolean = idx >= 0;

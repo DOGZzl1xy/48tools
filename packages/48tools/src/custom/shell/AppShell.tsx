@@ -10,7 +10,9 @@ import {
   type SetStateAction as S
 } from 'react';
 import { Link, useLocation, type Location } from 'react-router';
-import { Tooltip, theme, type GlobalToken } from 'antd';
+import { useSelector } from 'react-redux';
+import { App, Tooltip, theme, type GlobalToken } from 'antd';
+import type { useAppProps } from 'antd/es/app/context';
 import {
   HomeOutlined as IconHomeOutlined,
   DownloadOutlined as IconDownloadOutlined,
@@ -30,16 +32,24 @@ import { useProxyState, proxyStateText } from '../pocket48Proxy/useProxyState';
 import type { ProxyState } from '../pocket48Api/apiErrorText';
 import RoomUnreadBadge from '../room/RoomUnreadBadge';
 import { startUnreadWatcher } from '../room/unreadWatcher';
+import { autoStartAutoGrab } from '../live/autoGrabRunner';
+import { purgeOldAudio } from '../transcribe/transcriptCache';
 
 /**
  * 应用外壳：左边是常驻的侧边栏（所有功能、下载队列、代理状态），右边是页面内容。
  * 原来要先回首页再进别的功能，现在可以直接在侧边栏切换；Ctrl+K 可以搜索功能，Ctrl+B 收起 / 展开侧边栏。
  * 页面本身不用改，仍然由原来的路由渲染。
  * 关注成员的房间新消息也在这里启动后台检查（custom/room/unreadWatcher），「房间消息」上显示未读总数。
+ * 程序启动后还会在这里：自动开始「自动抓取」（custom/live/autoGrabRunner，运行时「直播抓取」上有一个绿点）、
+ * 清理 6 个月以前存下来的语音文件（custom/transcribe/transcriptCache）。
  * 接入点：src/index.tsx 用 <AppShell> 包住 <Routers />。
  */
 const CLOSED_GROUPS_KEY: string = 'SHELL_CLOSED_GROUPS';
 const ROOM_NAV_KEY: string = '48-room-message';
+const LIVE_NAV_KEY: string = 'pocket48-live';
+const AUTO_GRAB_DELAY: number = 6_000;   // 启动后等几秒再开始自动抓取（等登录状态、代理、数据库准备好）
+const AUDIO_PURGE_DELAY: number = 30_000;
+let startupDone: boolean = false;         // 启动时要做的事只做一次（开发模式下组件会挂载两次）
 
 function readClosedGroups(): Array<string> {
   try {
@@ -63,12 +73,13 @@ function shellVars(token: GlobalToken): Record<string, string> {
     '--shell-hover': token.colorFillTertiary,
     '--shell-active-bg': token.colorPrimaryBg,
     '--shell-primary': token.colorPrimary,
+    '--shell-danger': token.colorError,
     '--shell-scrollbar': token.colorFill
   };
 }
 
-function NavLinkItem(props: { item: ShellNavItem; active: boolean; collapsed: boolean }): ReactElement {
-  const { item, active, collapsed }: { item: ShellNavItem; active: boolean; collapsed: boolean } = props;
+function NavLinkItem(props: { item: ShellNavItem; active: boolean; collapsed: boolean; grabbing?: boolean }): ReactElement {
+  const { item, active, collapsed, grabbing }: { item: ShellNavItem; active: boolean; collapsed: boolean; grabbing?: boolean } = props;
   const link: ReactElement = (
     <Link className={ `shell-item${ active ? ' is-active' : '' }` }
       to={ item.to }
@@ -78,14 +89,20 @@ function NavLinkItem(props: { item: ShellNavItem; active: boolean; collapsed: bo
       { item.icon }
       <span className="shell-item-label">{ item.label }</span>
       { item.key === ROOM_NAV_KEY ? <RoomUnreadBadge /> : null }
+      { item.key === LIVE_NAV_KEY && grabbing ? <span className="shell-item-live" title="自动抓取运行中" /> : null }
     </Link>
   );
 
-  return collapsed ? <Tooltip title={ item.title } placement="right" mouseEnterDelay={ 0.3 }>{ link }</Tooltip> : link;
+  return collapsed
+    ? <Tooltip title={ grabbing ? `${ item.title }（自动抓取运行中）` : item.title } placement="right" mouseEnterDelay={ 0.3 }>{ link }</Tooltip>
+    : link;
 }
 
 function AppShell(props: Required<PropsWithChildren>): ReactElement {
   const { token }: { token: GlobalToken } = theme.useToken();
+  const { message: messageApi }: useAppProps = App.useApp();
+  const grabbing: boolean = useSelector(
+    (s: { pocket48?: { autoGrabTimer?: number | null } }): boolean => typeof s.pocket48?.autoGrabTimer === 'number');
   const location: Location = useLocation();
   const { collapsed }: ShellState = useShellState();
   const tasks: Array<QueueTask> = useQueueTasks();
@@ -138,6 +155,15 @@ function AppShell(props: Required<PropsWithChildren>): ReactElement {
 
   // 后台检查关注成员的房间有没有新消息（只启动一次，程序开着就一直检查）
   useEffect(startUnreadWatcher, []);
+
+  // 启动后：自动开始自动抓取（设置里可以关），清理很久以前存的语音文件
+  useEffect(function(): void {
+    if (startupDone) return;
+
+    startupDone = true;
+    window.setTimeout((): unknown => autoStartAutoGrab(messageApi), AUTO_GRAB_DELAY);
+    window.setTimeout(purgeOldAudio, AUDIO_PURGE_DELAY);
+  }, []);
 
   // 快捷键：Ctrl+K 快速跳转，Ctrl+B 收起 / 展开侧边栏
   useEffect(function(): () => void {
@@ -245,7 +271,7 @@ function AppShell(props: Required<PropsWithChildren>): ReactElement {
                     </button>
                     {
                       closed ? null : group.items.map((item: ShellNavItem): ReactElement => (
-                        <NavLinkItem key={ item.key } item={ item } active={ item === activeItem } collapsed={ collapsed } />
+                        <NavLinkItem key={ item.key } item={ item } active={ item === activeItem } collapsed={ collapsed } grabbing={ grabbing } />
                       ))
                     }
                   </div>
