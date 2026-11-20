@@ -32,6 +32,7 @@ import { useProxyState, proxyStateText } from '../pocket48Proxy/useProxyState';
 import type { ProxyState } from '../pocket48Api/apiErrorText';
 import RoomUnreadBadge from '../room/RoomUnreadBadge';
 import { startUnreadWatcher } from '../room/unreadWatcher';
+import { startAngelWatcher } from '../angel/angelStore'; // 临时功能：守护天使推理
 import { autoStartAutoGrab } from '../live/autoGrabRunner';
 import { purgeOldAudio } from '../transcribe/transcriptCache';
 
@@ -155,6 +156,9 @@ function AppShell(props: Required<PropsWithChildren>): ReactElement {
 
   // 后台检查关注成员的房间有没有新消息（只启动一次，程序开着就一直检查）
   useEffect(startUnreadWatcher, []);
+
+  // 临时功能：守护天使推理每 12 小时在后台更新一次（custom/angel）
+  useEffect(startAngelWatcher, []);
 
   // 启动后：自动开始自动抓取（设置里可以关），清理很久以前存的语音文件
   useEffect(function(): void {
