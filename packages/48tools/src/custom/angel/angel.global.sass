@@ -634,6 +634,113 @@
     color: var(--shell-text-tertiary)
     font-size: 12px
 
+// ---------- 概率变化（SVG 来自 ./angelChart，颜色变量在 AngelPage 的 palette() 里） ----------
+.angel-chart
+  width: 100%
+
+  svg
+    display: block
+    width: 100%
+    height: auto
+    overflow: visible
+
+  &.is-wide
+    overflow-x: auto
+
+    svg
+      min-width: 720px
+
+  .chart-axis, .chart-note
+    fill: var(--chart-text-3)
+    font-size: 11px
+
+  .chart-label
+    fill: var(--chart-text)
+    font-size: 12px
+
+  .chart-value
+    font-weight: 700
+
+  .chart-tip
+    fill: var(--chart-text)
+    font-size: 12px
+
+  .chart-tip-head
+    fill: var(--chart-text-2)
+    font-weight: 600
+
+  .chart-hover
+    opacity: 0
+    pointer-events: none
+    transition: opacity .12s
+
+  .chart-col:hover .chart-hover
+    opacity: 1
+
+.angel-legend
+  display: flex
+  flex-wrap: wrap
+  gap: 6px 16px
+  margin: 0
+  padding: 0
+  list-style: none
+  color: var(--shell-text-secondary)
+  font-size: 12px
+
+  li
+    display: inline-flex
+    align-items: center
+    gap: 6px
+
+  i
+    width: 14px
+    height: 3px
+    border-radius: 2px
+
+  .is-ctx i
+    background: var(--chart-ctx)
+
+.angel-small-hint
+  margin: 0
+
+.angel-smalls
+  display: grid
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr))
+  gap: 12px
+
+.angel-small
+  padding: 14px 16px 10px
+  border: 1px solid var(--shell-border)
+  border-radius: 18px
+  background: var(--shell-surface)
+  box-shadow: var(--a-shadow)
+
+  header
+    display: flex
+    align-items: baseline
+    justify-content: space-between
+    gap: 8px
+    margin-bottom: 6px
+
+  h3
+    margin: 0
+    font-size: 15px
+
+    span
+      margin-left: 6px
+      color: var(--shell-text-tertiary)
+      font-size: 12px
+      font-weight: 400
+
+.angel-small-top
+  color: var(--shell-text-secondary)
+  font-size: 12px
+
+  b
+    margin-left: 6px
+    color: var(--a-ink)
+    font-size: 15px
+
 @media (max-width: 1000px)
   .angel-hero, .angel-columns
     grid-template-columns: 1fr

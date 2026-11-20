@@ -71,3 +71,26 @@ export function bjTime(time: number): string {
 export function bjDay(time: number): string {
   return bjTime(time).split(' ')[0];
 }
+
+/* 把「11/19 16:40」（北京时间，年份和游戏同一年）变回时间戳；格式不对时是 undefined */
+export function parseBjTime(text: string): number | undefined {
+  const match: RegExpMatchArray | null = /^\s*(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})/.exec(text);
+
+  if (!match) return undefined;
+
+  const [, month, day, h, m]: Array<string> = match;
+  const year: number = new Date(GAME_START + (8 * hour)).getUTCFullYear();
+
+  return Date.UTC(year, Number(month) - 1, Number(day), Number(h) - 8, Number(m));
+}
+
+/* 历史概率的时间点：北京时间 11/17 0 点起，每 12 小时一个，到 until（含）为止，最晚到游戏结束 */
+export const HISTORY_START: number = GAME_START + (24 * hour);
+
+export function historySlots(until: number): Array<number> {
+  const slots: Array<number> = [];
+
+  for (let at: number = HISTORY_START; at <= Math.min(until, GAME_END); at += UPDATE_EVERY) slots.push(at);
+
+  return slots;
+}

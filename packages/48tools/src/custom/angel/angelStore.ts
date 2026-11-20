@@ -8,8 +8,12 @@ import {
 } from './angelConfig';
 import { toAngelMessage, type AngelMessage } from './angelText';
 import { buildEvidence, type Evidence, type RoomMessages, type Moment, type VisitStat, type DayActivity } from './angelEvidence';
-import { infer, type AngelInference, type PairClue } from './angelModel';
-import { readClueFile, readGeminiReview, clueFileMtime, writeDigest, getAngelDir, type ClueFileState, type GeminiReview } from './angelFiles';
+import { infer, cluesAt, type AngelInference, type PairClue } from './angelModel';
+import { predictAt, pendingSlots, mergeEntries, type HistoryEntry } from './angelHistory';
+import {
+  readClueFile, readGeminiReview, readHistory, writeHistory, cluesWrittenAt, clueFileMtime, writeDigest, getAngelDir,
+  type ClueFileState, type GeminiReview
+} from './angelFiles';
 import { syncMember, readMemberMessages } from './angelSync';
 
 /**
@@ -17,6 +21,7 @@ import { syncMember, readMemberMessages } from './angelSync';
  *   - 程序开着就在后台按时更新：北京时间每天 0 点、12 点各一次（错过了就在程序启动后补一次）。页面上也可以手动更新
  *   - 更新 = 把每个人房间的新消息取进本地缓存（./angelSync）→ 自动找线索（./angelEvidence）
  *     → 和 local/angel/clues.json 里人工写的线索合在一起算概率（./angelModel）→ 导出 digest 给人看（./angelFiles）
+ *     → 补上还没记的历史概率时间点（./angelHistory，local/angel/history.json）
  *   - clues.json 改了以后不用重新取消息，一分钟内自动重算
  * 接入点：custom/shell/AppShell.tsx 启动时调用 startAngelWatcher。
  */
@@ -29,6 +34,7 @@ export interface AngelSnapshot {
   inference: AngelInference;
   clueFile: ClueFileState;
   gemini?: GeminiReview;          // Gemini 的独立判断（local/angel/gemini-review.json）
+  history: Array<HistoryEntry>;   // 每 12 小时一个点的历史概率（local/angel/history.json，见 ./angelHistory）
   counts: Record<string, number>; // 每个房间游戏期间成员消息的条数
 }
 
@@ -166,7 +172,8 @@ async function compute(): Promise<void> {
     .filter((name: string): boolean => !excludedNames.has(name));
   const now: number = Date.now();
   const evidence: Evidence = buildEvidence(rooms, participants, now);
-  const clues: Array<PairClue> = [...evidence.clues, ...(clueFile.file?.clues ?? [])];
+  const manual: Array<PairClue> = clueFile.file?.clues ?? [];
+  const clues: Array<PairClue> = [...evidence.clues, ...cluesAt(manual, now)];
   const inference: AngelInference = infer(participants, clues);
   const counts: Record<string, number> = {};
 
@@ -174,8 +181,17 @@ async function compute(): Promise<void> {
     counts[room.name] = room.messages.filter((m: AngelMessage): boolean => m.time >= GAME_START && m.senderId === room.ownerId).length;
   }
 
+  // 历史概率：补上还没记的时间点（每个点只用那之前的信息），记下以后不再改
+  let history: Array<HistoryEntry> = readHistory();
+  const pending: Array<number> = pendingSlots(history, now, cluesWrittenAt());
+
+  if (pending.length) {
+    history = mergeEntries(history, pending.map((at: number): HistoryEntry => predictAt(rooms, participants, manual, at, now)));
+    await writeHistory(history).catch((err: unknown): void => console.error('守护天使：历史概率保存失败', err));
+  }
+
   const snapshot: AngelSnapshot = {
-    builtAt: now, participants, excluded, evidence, clues, inference, clueFile, gemini: readGeminiReview(), counts
+    builtAt: now, participants, excluded, evidence, clues, inference, clueFile, gemini: readGeminiReview(), history, counts
   };
 
   setState({ snapshot });

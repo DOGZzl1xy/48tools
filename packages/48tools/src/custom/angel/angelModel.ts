@@ -29,6 +29,26 @@ export interface PairClue {
   title?: string;
   reason: string;
   cites: Array<Cite>;
+  since?: number;                                  // 从这个时间起才知道这条线索（回溯历史概率时用）；没有表示一直都算
+  steps?: Array<{ from: number; weight: number }>; // 后来有了新证据，权重跟着变：from 之后用这个 weight（按时间排好）
+}
+
+/**
+ * 某个时间点能用的线索：还没出现的去掉，权重换成当时的值。
+ * 回溯历史概率时用：每个时间点只用那之前已经有的证据（见 ./angelHistory）。
+ */
+export function cluesAt(clues: Array<PairClue>, at: number): Array<PairClue> {
+  const result: Array<PairClue> = [];
+
+  for (const clue of clues) {
+    if (clue.since !== undefined && clue.since > at) continue;
+
+    const step: { from: number; weight: number } | undefined = clue.steps?.filter((item: { from: number }): boolean => item.from <= at).pop();
+
+    result.push(step ? { ...clue, weight: step.weight } : clue);
+  }
+
+  return result;
 }
 
 export interface AngelInference {

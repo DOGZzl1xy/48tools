@@ -1,9 +1,10 @@
-import { useEffect, useState, type ReactElement, type CSSProperties, type Dispatch as D, type SetStateAction as S } from 'react';
+import { useEffect, useMemo, useState, type ReactElement, type CSSProperties, type Dispatch as D, type SetStateAction as S } from 'react';
 import { Alert, Empty, Tooltip, theme, type GlobalToken } from 'antd';
 import { ReloadOutlined as IconReloadOutlined, LoadingOutlined as IconLoadingOutlined } from '@ant-design/icons';
 import './angel.global.sass';
 import { readJson, writeJson } from '../common/util';
-import { bjTime, GAME_END } from './angelConfig';
+import { bjTime, GAME_END, HISTORY_START } from './angelConfig';
+import { buildCharts, type ChartBundle } from './angelChart';
 import { useAngelState, getAngelState, refresh, recompute, type AngelState, type AngelSnapshot } from './angelStore';
 import { SOURCE_LABEL, type PairClue, type Cite, type AngelInference } from './angelModel';
 import type { VisitStat, DayActivity, Moment } from './angelEvidence';
@@ -13,13 +14,14 @@ import type { GeminiReview, GeminiPick } from './angelFiles';
 /**
  * 守护天使推理页面（临时功能，见 ./angelConfig）。样式和 angel.48tools.app 的网页一致（local/angel/site/publish.mjs）：
  *   - 顶栏：标题、几个视图、数据更新时间、「立即更新」
- *   - 「概率表」（默认）：最可能的组合（第一名一张大卡片，后面五个排行）、完整的概率热力图、Gemini 的独立判断
+ *   - 「概率表」（默认）：最可能的组合（第一名一张大卡片，后面五个排行）、概率变化曲线、完整的概率热力图、Gemini 的独立判断
+ *   - 「概率变化」：每个人一张小图，现在最可能是 TA 天使的人的概率怎么变过来的（历史概率见 ./angelHistory，图见 ./angelChart）
  *   - 「谁是 TA 的天使」「TA 抽到了谁」：每个人一张卡片，前三名和相关的线索
  *   - 「线索」：总体判断，支持和反对两栏，每条写明来源（Claude、Gemini、两边都认可、自动）
  *   - 「串门和上下线」：游戏期间谁去了谁的房间、每个人每天第一条和最后一条消息、关键发言
  * 主题色是紫色 #af83bb；深色模式下热力图从暗到亮。
  */
-type View = 'matrix' | 'target' | 'angel' | 'clues' | 'activity';
+type View = 'matrix' | 'trend' | 'target' | 'angel' | 'clues' | 'activity';
 
 interface Pair {
   angel: string;
@@ -30,6 +32,7 @@ interface Pair {
 const VIEW_KEY: string = 'ANGEL_VIEW_V2';
 const VIEWS: Array<{ key: View; label: string }> = [
   { key: 'matrix', label: '概率表' },
+  { key: 'trend', label: '概率变化' },
   { key: 'target', label: '谁是 TA 的天使' },
   { key: 'angel', label: 'TA 抽到了谁' },
   { key: 'clues', label: '线索' },
@@ -79,7 +82,21 @@ function palette(dark: boolean): CSSProperties {
     '--a-cell': dark ? '#211c26' : '#f0eaf2',
     '--a-cool': dark ? '#9aa8c4' : '#5f6c86',
     '--a-cool-soft': dark ? '#1e2330' : '#ebeef4',
-    '--a-shadow': dark ? 'none' : '0 1px 2px rgb(40 20 50 / .04), 0 12px 32px -12px rgb(60 30 80 / .14)'
+    '--a-shadow': dark ? 'none' : '0 1px 2px rgb(40 20 50 / .04), 0 12px 32px -12px rgb(60 30 80 / .14)',
+    // 曲线的四条主线（按色盲检查选过的顺序）和其他颜色，见 ./angelChart
+    '--s1': dark ? '#b07cc8' : '#8a5a9a',
+    '--s2': dark ? '#d95926' : '#eb6834',
+    '--s3': dark ? '#199e70' : '#1baf7a',
+    '--s4': dark ? '#3987e5' : '#2a78d6',
+    '--chart-ctx': dark ? '#3b3442' : '#ddd5e0',
+    '--chart-grid': 'var(--shell-border)',
+    '--chart-text': 'var(--shell-text)',
+    '--chart-text-2': 'var(--shell-text-secondary)',
+    '--chart-text-3': 'var(--shell-text-tertiary)',
+    '--chart-surface': 'var(--shell-surface)',
+    '--chart-future': dark ? 'rgb(175 131 187 / .07)' : 'rgb(175 131 187 / .08)',
+    '--chart-tip-bg': 'var(--shell-surface)',
+    '--chart-tip-line': 'var(--shell-border)'
   } as CSSProperties;
 }
 
@@ -254,6 +271,50 @@ function GeminiPanel(props: { review?: GeminiReview }): ReactElement | null {
   );
 }
 
+/* ---------- 概率变化 ---------- */
+function TrendPanel(props: { charts: ChartBundle }): ReactElement {
+  const { charts }: { charts: ChartBundle } = props;
+
+  return (
+    <section className="angel-panel">
+      <div className="angel-panel-head">
+        <div>
+          <h2>概率变化</h2>
+          <p className="angel-hint">北京时间每 12 小时一个点，每个点只用当时已有的消息和线索重新算，最后一个点是现在。鼠标停在点上看当时的数值。</p>
+        </div>
+        <ul className="angel-legend">
+          { charts.legend.map((item: { label: string; color: string }): ReactElement => (
+            <li key={ item.label }><i style={{ background: item.color }} />{ item.label }</li>
+          )) }
+          <li className="is-ctx"><i />其他到过 8% 的组合</li>
+        </ul>
+      </div>
+      <div className="angel-chart is-wide" dangerouslySetInnerHTML={{ __html: charts.trend }} />
+    </section>
+  );
+}
+
+function SmallMultiples(props: { charts: ChartBundle }): ReactElement {
+  return (
+    <>
+      <p className="angel-hint angel-small-hint">
+        每张图是一个人：紫线是现在最可能是 TA 天使的人，浅灰线是其他人，虚线是平均。所有小图用同一个纵轴，可以直接比较。
+      </p>
+      <div className="angel-smalls">
+        { props.charts.small.map((item: { target: string; angel: string; p: number; svg: string }): ReactElement => (
+          <article key={ item.target } className="angel-small">
+            <header>
+              <h3>{ item.target }<span>的天使</span></h3>
+              <span className="angel-small-top">{ item.angel }<b>{ pct(item.p) }</b></span>
+            </header>
+            <div className="angel-chart" dangerouslySetInnerHTML={{ __html: item.svg }} />
+          </article>
+        )) }
+      </div>
+    </>
+  );
+}
+
 /* ---------- 人物卡片 ---------- */
 function PersonCard(props: { snapshot: AngelSnapshot; person: string; mode: 'target' | 'angel' }): ReactElement {
   const { snapshot, person, mode }: { snapshot: AngelSnapshot; person: string; mode: 'target' | 'angel' } = props;
@@ -398,6 +459,13 @@ function AngelPage(props: {}): ReactElement {
   const state: AngelState = useAngelState();
   const snapshot: AngelSnapshot | undefined = state.snapshot;
   const { token }: { token: GlobalToken } = theme.useToken();
+  const charts: ChartBundle | undefined = useMemo((): ChartBundle | undefined => (snapshot ? buildCharts(
+    snapshot.history,
+    { at: snapshot.builtAt, names: snapshot.inference.names, prob: snapshot.inference.prob },
+    HISTORY_START,
+    GAME_END,
+    bjTime
+  ) : undefined), [snapshot]);
   const [view, setView]: [View, D<S<View>>] = useState<View>((): View => {
     const saved: View = readJson<View>(VIEW_KEY, 'matrix');
 
@@ -449,10 +517,12 @@ function AngelPage(props: {}): ReactElement {
           { view === 'matrix' ? (
             <>
               <Hero pairs={ allPairs(snapshot.inference) } />
+              <TrendPanel charts={ charts! } />
               <Matrix inference={ snapshot.inference } />
               <GeminiPanel review={ snapshot.gemini } />
             </>
           ) : null }
+          { view === 'trend' ? <SmallMultiples charts={ charts! } /> : null }
           { view === 'target' || view === 'angel' ? (
             <div className="angel-people">
               { snapshot.participants.map((name: string): ReactElement => (

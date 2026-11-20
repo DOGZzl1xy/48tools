@@ -1,7 +1,9 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as process from 'node:process';
+import { parseBjTime } from './angelConfig';
 import type { Cite, PairClue, ClueSource } from './angelModel';
+import type { HistoryEntry } from './angelHistory';
 
 /**
  * 本机文件（都在仓库的 local/angel/ 里，local/ 已经被 git 忽略，不会上传）：
@@ -13,7 +15,9 @@ import type { Cite, PairClue, ClueSource } from './angelModel';
  *     "summary": "总体判断",
  *     "excluded": [{ "name": "某某", "reason": "为什么不参加" }],
  *     "clues": [{ "angel": "甲" 或 ["甲", "乙"], "target": "丙", "weight": 2, "title": "短标题", "reason": "理由", "source": "claude / gemini / both",
- *                 "cites": [{ "room": "丙", "time": "11/18 17:10", "text": "原话" }] }],
+ *                 "cites": [{ "room": "丙", "time": "11/18 17:10", "text": "原话" }],
+ *                 "since": "11/18 17:10"（可以不写：默认是 cites 里最晚的时间），
+ *                 "steps": [{ "from": "11/19 16:40", "weight": 1 }]（可以不写：后来有新证据、权重变了时写） }],
  *     "notes": { "丙": "关于丙的说明" }
  *   }
  * weight 是对数倍数：1 ≈ 这一对的可能性乘 2.7，2 ≈ 乘 7.4，-8 以下表示不可能。
@@ -34,6 +38,8 @@ interface RawClue {
   reason?: unknown;
   cites?: unknown;
   source?: unknown;
+  since?: unknown;
+  steps?: unknown;
 }
 
 /* 往上找 local/（和 custom/pocket48Proxy 找 local/pocket48.json 的方式一样） */
@@ -86,6 +92,33 @@ function cites(value: unknown): Array<Cite> {
     .map((item: Cite): Cite => ({ room: String(item.room ?? ''), time: String(item.time ?? ''), text: item.text }));
 }
 
+/* 线索从什么时候起能用：写了 since 就用它，没写就用引用的原话里最晚的时间；都没有表示一直都算 */
+function sinceOf(value: unknown, list: Array<Cite>): number | undefined {
+  const given: number | undefined = typeof value === 'string' ? parseBjTime(value) : undefined;
+
+  if (given !== undefined) return given;
+
+  const times: Array<number> = list.map((cite: Cite): number | undefined => parseBjTime(cite.time))
+    .filter((time: number | undefined): time is number => time !== undefined);
+
+  return times.length ? Math.max(...times) : undefined;
+}
+
+/* 权重随时间变化：[{ "from": "11/19 16:40", "weight": 1 }, ...]，按时间排好 */
+function stepsOf(value: unknown): Array<{ from: number; weight: number }> | undefined {
+  if (!Array.isArray(value)) return undefined;
+
+  const steps: Array<{ from: number; weight: number }> = (value as Array<{ from?: unknown; weight?: unknown }>)
+    .map((item: { from?: unknown; weight?: unknown }): { from: number; weight: number } => ({
+      from: parseBjTime(String(item?.from ?? '')) ?? NaN,
+      weight: Number(item?.weight)
+    }))
+    .filter((item: { from: number; weight: number }): boolean => Number.isFinite(item.from) && Number.isFinite(item.weight))
+    .sort((a: { from: number }, b: { from: number }): number => a.from - b.from);
+
+  return steps.length ? steps : undefined;
+}
+
 /* 解析 clues.json 的内容；格式不对的线索跳过 */
 export function parseClueFile(text: string): ClueFile {
   const raw: Record<string, unknown> = JSON.parse(text);
@@ -97,6 +130,8 @@ export function parseClueFile(text: string): ClueFile {
 
       if (!Number.isFinite(weight) || angels.length === 0 || targets.length === 0) return undefined;
 
+      const list: Array<Cite> = cites(item.cites);
+
       return {
         id: `claude:${ i }`,
         source: (['gemini', 'both'].includes(String(item.source)) ? item.source : 'claude') as ClueSource,
@@ -105,7 +140,9 @@ export function parseClueFile(text: string): ClueFile {
         weight,
         title: typeof item.title === 'string' ? item.title : undefined,
         reason: typeof item.reason === 'string' ? item.reason : '',
-        cites: cites(item.cites)
+        cites: list,
+        since: sinceOf(item.since, list),
+        steps: stepsOf(item.steps)
       };
     })
     .filter((clue: PairClue | undefined): clue is PairClue => clue !== undefined);
@@ -227,4 +264,41 @@ export async function writeDigest(text: string, json: unknown): Promise<void> {
   await fs.promises.mkdir(dir, { recursive: true });
   await fs.promises.writeFile(path.join(dir, 'digest.txt'), text, 'utf8');
   await fs.promises.writeFile(path.join(dir, 'digest.json'), JSON.stringify(json), 'utf8');
+}
+
+/* ---------- 历史概率（local/angel/history.json，见 ./angelHistory） ---------- */
+export function readHistory(): Array<HistoryEntry> {
+  const dir: string | undefined = getAngelDir();
+
+  if (!dir) return [];
+
+  try {
+    const raw: { entries?: unknown } = JSON.parse(fs.readFileSync(path.join(dir, 'history.json'), 'utf8'));
+
+    return Array.isArray(raw.entries)
+      ? (raw.entries as Array<HistoryEntry>).filter((entry: HistoryEntry): boolean => Number.isFinite(entry?.at) && Array.isArray(entry.prob))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function writeHistory(entries: Array<HistoryEntry>): Promise<void> {
+  const dir: string | undefined = getAngelDir();
+
+  if (!dir) return;
+
+  await fs.promises.mkdir(dir, { recursive: true });
+  await fs.promises.writeFile(path.join(dir, 'history.json'), JSON.stringify({ entries }), 'utf8');
+}
+
+/* clues.json 的修改时间（历史概率要等这一轮分析写完才记最新的点） */
+export function cluesWrittenAt(): number {
+  const dir: string | undefined = getAngelDir();
+
+  try {
+    return dir ? fs.statSync(path.join(dir, 'clues.json')).mtimeMs : 0;
+  } catch {
+    return 0;
+  }
 }
