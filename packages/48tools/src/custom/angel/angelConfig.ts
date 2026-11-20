@@ -51,13 +51,33 @@ export const GAME_START: number = Date.parse('2026-11-16T00:00:00+08:00');
 export const GAME_END: number = Date.parse('2026-11-23T00:00:00+08:00');   // 11/22 当天结束
 export const BASELINE_START: number = GAME_START - (7 * 24 * hour);          // 游戏前一周：串门次数的对照
 
-/* 每天北京时间 0 点和 12 点各更新一次 */
-export const UPDATE_EVERY: number = 12 * hour;
+/**
+ * 推断的时间点（北京时间）：11/17 0 点起每 12 小时一次，到 11/20 12:00；
+ * 之后每 6 小时一次（11/20 19:00 起，每天 1 点、7 点、13 点、19 点），最后一次是 11/22 13:00。
+ * 程序在这些时间点取新消息重算；历史概率也记在这些时间点上（./angelHistory）。
+ */
+export const HISTORY_START: number = GAME_START + (24 * hour);                       // 11/17 00:00
+export const SIX_HOURLY_FROM: number = Date.parse('2026-11-20T19:00:00+08:00');
+export const LAST_UPDATE: number = Date.parse('2026-11-22T13:00:00+08:00');
 
-export function nextUpdateAt(now: number): number {
-  const offset: number = 8 * hour; // 北京时间
+export const UPDATE_TIMES: Array<number> = ((): Array<number> => {
+  const times: Array<number> = [];
 
-  return (Math.floor((now + offset) / UPDATE_EVERY) * UPDATE_EVERY) + UPDATE_EVERY - offset;
+  for (let at: number = HISTORY_START; at < SIX_HOURLY_FROM; at += 12 * hour) times.push(at);
+
+  for (let at: number = SIX_HOURLY_FROM; at <= LAST_UPDATE; at += 6 * hour) times.push(at);
+
+  return times;
+})();
+
+/* 下一次推断的时间；最后一次过了以后是 undefined */
+export function nextUpdateAt(now: number): number | undefined {
+  return UPDATE_TIMES.find((at: number): boolean => at > now);
+}
+
+/* 最近一次已经到了的推断时间；第一次还没到时是 undefined */
+export function lastUpdateAt(now: number): number | undefined {
+  return UPDATE_TIMES.findLast((at: number): boolean => at <= now);
 }
 
 /* 北京时间的「11/16 15:51」 */
@@ -85,13 +105,7 @@ export function parseBjTime(text: string): number | undefined {
   return Date.UTC(year, Number(month) - 1, Number(day), Number(h) - 8, Number(m));
 }
 
-/* 历史概率的时间点：北京时间 11/17 0 点起，每 12 小时一个，到 until（含）为止，最晚到游戏结束 */
-export const HISTORY_START: number = GAME_START + (24 * hour);
-
+/* 历史概率的时间点：到 until（含）为止已经到了的推断时间 */
 export function historySlots(until: number): Array<number> {
-  const slots: Array<number> = [];
-
-  for (let at: number = HISTORY_START; at <= Math.min(until, GAME_END); at += UPDATE_EVERY) slots.push(at);
-
-  return slots;
+  return UPDATE_TIMES.filter((at: number): boolean => at <= until);
 }

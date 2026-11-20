@@ -3,7 +3,7 @@ import { getPocket48Token } from '../../utils/snh48';
 import { readJson, writeJson } from '../common/util';
 import { getAllTranscripts } from '../transcribe/transcriptCache';
 import {
-  ANGEL_MEMBERS, DEFAULT_EXCLUDED, GAME_START, GAME_END, BASELINE_START, nextUpdateAt, bjTime, type AngelMember
+  ANGEL_MEMBERS, DEFAULT_EXCLUDED, GAME_START, BASELINE_START, LAST_UPDATE, nextUpdateAt, lastUpdateAt, bjTime, type AngelMember
 } from './angelConfig';
 import { toAngelMessage, type AngelMessage } from './angelText';
 import { buildEvidence, type Evidence, type RoomMessages, type Moment, type VisitStat, type DayActivity } from './angelEvidence';
@@ -18,7 +18,7 @@ import { syncMember, readMemberMessages } from './angelSync';
 /**
  * 守护天使推理的数据：什么时候去取新消息、怎么算、算完导出。网页 angel.48tools.app 由 local/angel/site/publish.mjs 用导出的结果生成，
  * 程序里的「守护天使」页面只负责用自带的浏览器窗口打开这个网页（./AngelPage）。
- *   - 程序开着就在后台按时更新：北京时间每天 0 点、12 点各一次（错过了就在程序启动后补一次）
+ *   - 程序开着就在后台按时更新：每个推断时间一次（见 ./angelConfig 的 UPDATE_TIMES，最后一次 11/22 13:00；错过了就在程序启动后补一次）
  *   - 更新 = 把每个人房间的新消息取进本地缓存（./angelSync）→ 自动找线索（./angelEvidence）
  *     → 和 local/angel/clues.json 里人工写的线索合在一起算概率（./angelModel）→ 导出 digest 给人看（./angelFiles）
  *     → 补上还没记的历史概率时间点（./angelHistory，local/angel/history.json）
@@ -34,7 +34,7 @@ export interface AngelSnapshot {
   inference: AngelInference;
   clueFile: ClueFileState;
   gemini?: GeminiReview;          // Gemini 的独立判断（local/angel/gemini-review.json）
-  history: Array<HistoryEntry>;   // 每 12 小时一个点的历史概率（local/angel/history.json，见 ./angelHistory）
+  history: Array<HistoryEntry>;   // 每个推断时间一个点的历史概率（local/angel/history.json，见 ./angelHistory）
   counts: Record<string, number>; // 每个房间游戏期间成员消息的条数
 }
 
@@ -44,12 +44,13 @@ export interface AngelState {
   lastSync: number;   // 上次从网络取消息的时间
   syncError?: string;
   snapshot?: AngelSnapshot;
-  nextAt: number;
+  nextAt?: number;   // 下一次推断的时间；最后一次过了以后没有
 }
 
 const LAST_SYNC_KEY: string = 'ANGEL_LAST_SYNC';
 const FIRST_DELAY: number = 15_000;
 const CLUE_POLL: number = 60_000;
+const MISSED_GRACE: number = 6 * 3_600_000; // 最后一次推断时程序没开：6 小时内打开还会补取一次
 let state: AngelState = {
   syncing: false,
   lastSync: typeof localStorage === 'undefined' ? 0 : Number(readJson<number>(LAST_SYNC_KEY, 0)) || 0,
@@ -258,15 +259,20 @@ let started: boolean = false;
 let lastClueMtime: number = 0;
 
 function due(now: number): boolean {
-  // 上次取消息早于最近一个整点（北京时间 0 点 / 12 点），而且游戏还没结束太久
-  return now < GAME_END + (12 * 3_600_000) && state.lastSync < nextUpdateAt(now) - (12 * 3_600_000);
+  // 上次取消息早于最近一个推断时间，而且离最后一次推断不太久
+  const last: number | undefined = lastUpdateAt(now);
+
+  return last !== undefined && now < LAST_UPDATE + MISSED_GRACE && state.lastSync < last;
 }
 
 function schedule(): void {
   const now: number = Date.now();
-  const at: number = nextUpdateAt(now);
+  const at: number | undefined = nextUpdateAt(now);
 
   setState({ nextAt: at });
+
+  if (at === undefined) return; // 最后一次推断已经过了
+
   window.setTimeout(async (): Promise<void> => {
     if (due(Date.now())) await refresh();
 

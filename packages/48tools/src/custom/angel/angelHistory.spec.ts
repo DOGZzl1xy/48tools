@@ -2,12 +2,13 @@ import { describe, test, expect } from '@jest/globals';
 import { predictAt, pendingSlots, mergeEntries, type HistoryEntry } from './angelHistory';
 import { cluesAt, type PairClue } from './angelModel';
 import { buildCharts, niceMax } from './angelChart';
-import { GAME_START, HISTORY_START, UPDATE_EVERY, historySlots, parseBjTime, bjTime } from './angelConfig';
+import { GAME_START, HISTORY_START, UPDATE_TIMES, historySlots, nextUpdateAt, lastUpdateAt, parseBjTime, bjTime } from './angelConfig';
 import type { RoomMessages } from './angelEvidence';
 import type { AngelMessage } from './angelText';
 
 /* 名字都是编的 */
 const hour: number = 3_600_000;
+const twelve: number = 12 * hour;
 const names: Array<string> = ['成员甲', '成员乙', '成员丙'];
 
 function clue(angel: string, target: string, weight: number, extra: Partial<PairClue> = {}): PairClue {
@@ -27,9 +28,18 @@ describe('守护天使：历史概率', function(): void {
     expect(parseBjTime('不是时间')).toBeUndefined();
   });
 
-  test('时间点从 11/17 0 点起每 12 小时一个', function(): void {
+  test('推断时间：11/20 12:00 以前每 12 小时，之后每 6 小时，最后一次 11/22 13:00', function(): void {
+    const labels: Array<string> = UPDATE_TIMES.map(bjTime);
+
     expect(HISTORY_START - GAME_START).toBe(24 * hour);
-    expect(historySlots(HISTORY_START + (25 * hour))).toEqual([HISTORY_START, HISTORY_START + UPDATE_EVERY, HISTORY_START + (2 * UPDATE_EVERY)]);
+    expect(historySlots(HISTORY_START + (25 * hour))).toEqual([HISTORY_START, HISTORY_START + twelve, HISTORY_START + (2 * twelve)]);
+    expect(labels.slice(6, 10)).toEqual(['11/20 00:00', '11/20 12:00', '11/20 19:00', '11/21 01:00']);
+    expect(labels.slice(-3)).toEqual(['11/22 01:00', '11/22 07:00', '11/22 13:00']);
+    expect(labels).toHaveLength(16);
+    expect(nextUpdateAt(parseBjTime('11/20 14:48')!)).toBe(parseBjTime('11/20 19:00'));
+    expect(nextUpdateAt(parseBjTime('11/22 13:00')!)).toBeUndefined();
+    expect(lastUpdateAt(parseBjTime('11/21 06:59')!)).toBe(parseBjTime('11/21 01:00'));
+    expect(historySlots(parseBjTime('11/23 12:00')!)).toEqual(UPDATE_TIMES);
   });
 
   test('还没出现的线索不算，权重用当时的值', function(): void {
@@ -42,7 +52,7 @@ describe('守护天使：历史概率', function(): void {
   });
 
   test('每个时间点只用那之前的消息', function(): void {
-    const t0: number = HISTORY_START + UPDATE_EVERY;
+    const t0: number = HISTORY_START + twelve;
     // 成员甲在游戏期间三次去成员乙的房间：都在 t0 之后，所以 t0 时不该有「串门变多」
     const rooms: Array<RoomMessages> = [
       { name: '成员甲', ownerId: 1, messages: [] },
@@ -59,7 +69,7 @@ describe('守护天使：历史概率', function(): void {
   });
 
   test('最新的时间点要等这一轮分析写完，或者过了 3 小时', function(): void {
-    const latest: number = HISTORY_START + UPDATE_EVERY;
+    const latest: number = HISTORY_START + twelve;
     const now: number = latest + hour;
 
     expect(pendingSlots([], now, latest - hour)).toEqual([HISTORY_START]);
@@ -76,7 +86,7 @@ describe('守护天使：历史概率', function(): void {
   });
 
   test('曲线：最可能的 4 组上色，图里没有 NaN', function(): void {
-    const at: Array<number> = [HISTORY_START, HISTORY_START + UPDATE_EVERY];
+    const at: Array<number> = [HISTORY_START, HISTORY_START + twelve];
     const prob: Array<Array<number>> = [[0.1, 0.6, 0.3], [0.3, 0.1, 0.6], [0.6, 0.3, 0.1]];
     const history: Array<{ at: number; names: Array<string>; prob: Array<Array<number>> }> = at.map((t: number): { at: number; names: Array<string>; prob: Array<Array<number>> } => ({ at: t, names, prob }));
     const charts: ReturnType<typeof buildCharts> = buildCharts(history, { at: at[1] + hour, names, prob }, HISTORY_START, HISTORY_START + (6 * 24 * hour), bjTime);
