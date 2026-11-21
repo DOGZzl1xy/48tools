@@ -76,6 +76,7 @@ function shellVars(token: GlobalToken): Record<string, string> {
     '--shell-active-bg': token.colorPrimaryBg,
     '--shell-primary': token.colorPrimary,
     '--shell-danger': token.colorError,
+    '--shell-success': token.colorSuccess,
     '--shell-scrollbar': token.colorFill
   };
 }

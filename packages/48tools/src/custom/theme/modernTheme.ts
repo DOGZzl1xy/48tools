@@ -1,5 +1,6 @@
 import type { ThemeConfig } from 'antd';
 import darkDerivative from 'antd/es/theme/themes/dark/index';
+import { accentTokens, SURFACE_DARK, type AccentTokens } from './accent';
 
 /**
  * 现代化的 antd 主题：系统界面字体、分层的背景（窗口底色 + 内容面板）、更轻的表格和边框、更快的动效。
@@ -24,18 +25,20 @@ const fontFamily: string = [
 /* 窗口底色（侧边栏所在的那一层）；内容面板比它亮一级 */
 export const layoutBgLight: string = '#f3f4f6';
 export const layoutBgDark: string = '#0b0d10';
-const containerBgDark: string = '#15181d';
+const containerBgDark: string = SURFACE_DARK;
 
 /**
  * @param { boolean | undefined } isDark
- * @param { string } [primary] - 主题色（设置页里选的，见 custom/settings/settingsStore）
+ * @param { AccentTokens } [accent] - 主题色的三种用法（设置页里选的，见 ./accent）
  */
-export function createModernTheme(isDark: boolean | undefined, primary: string = isDark ? '#13c2c2' : '#08979c'): ThemeConfig {
+export function createModernTheme(isDark: boolean | undefined, accent: AccentTokens = accentTokens(undefined, isDark)): ThemeConfig {
   return {
     algorithm: isDark ? darkDerivative : undefined,
     token: {
-      colorPrimary: primary,
-      colorLink: primary,
+      colorPrimary: accent.primary,
+      // 用主题色写字的地方用看得清的那个（浅的颜色会加深）；「进行中」的标签、进度条、提示也跟着主题色
+      colorLink: accent.text,
+      colorInfo: accent.text,
       fontFamily,
       borderRadius: 8,
       borderRadiusSM: 6,
@@ -54,7 +57,22 @@ export function createModernTheme(isDark: boolean | undefined, primary: string =
         fontWeight: 500,
         defaultShadow: 'none',
         primaryShadow: 'none',
-        dangerShadow: 'none'
+        dangerShadow: 'none',
+        primaryColor: accent.onPrimary // 主题色太浅时按钮上用深色字
+      },
+      Radio: {
+        buttonSolidCheckedColor: accent.onPrimary
+      },
+      Tabs: {
+        itemSelectedColor: accent.text,
+        itemHoverColor: accent.text,
+        itemActiveColor: accent.text
+      },
+      Menu: {
+        itemSelectedColor: accent.text
+      },
+      Pagination: {
+        itemActiveColor: accent.text
       },
       Table: {
         headerBg: 'transparent',

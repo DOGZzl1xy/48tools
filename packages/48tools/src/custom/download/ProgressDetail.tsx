@@ -18,7 +18,7 @@ function ProgressDetail(props: { readonly progressSet: ProgressSet }): ReactElem
   return (
     <Fragment>
       <span id={ progressSet.progressId }
-        style={{ color: token.colorPrimary }}
+        style={{ color: token.colorLink }}
         aria-label="progress"
         aria-valuemin={ 0 }
         aria-valuemax={ 100 }

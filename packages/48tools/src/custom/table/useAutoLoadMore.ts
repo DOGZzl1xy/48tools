@@ -28,7 +28,7 @@ export function autoLoadText(loaded: number, loading: boolean, noMore: boolean):
 
   if (noMore) return `共 ${ loaded } 条，已经全部加载`;
 
-  return `已加载 ${ loaded } 条，翻到最后一页会自动加载更多`;
+  return `已加载 ${ loaded } 条`;
 }
 
 export function useAutoLoadMore(options: AutoLoadMoreOptions): TablePaginationConfig {

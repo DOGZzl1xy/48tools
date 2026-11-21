@@ -49,8 +49,8 @@ function InLive(props: {}): ReactElement {
       dataIndex: 'status',
       width: 100,
       render: (value: number | undefined, record: InLiveWebWorkerItemNoplayStreamPath, index: number): ReactElement => value === 0
-        ? <Tag color="red">已停止</Tag>
-        : (record.worker ? <Tag color="cyan">录制中</Tag> : <Tag color="lime">等待录制</Tag>)
+        ? <Tag color="default">已停止</Tag>
+        : (record.worker ? <Tag color="processing">录制中</Tag> : <Tag color="warning">等待录制</Tag>)
     },
     {
       title: '操作',

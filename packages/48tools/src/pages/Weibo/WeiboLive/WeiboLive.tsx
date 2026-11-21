@@ -103,7 +103,7 @@ function WeiboLive(props: {}): ReactElement {
       dataIndex: 'status',
       width: 100,
       render: (status: 0 | 1, record: LiveItem, index: number): ReactElement => {
-        return status ? <Tag color="cyan">录制中</Tag> : <Tag color="red">已停止</Tag>;
+        return status ? <Tag color="processing">录制中</Tag> : <Tag color="default">已停止</Tag>;
       }
     },
     {

@@ -14,7 +14,7 @@ describe('useAutoLoadMore', (): void => {
   });
 
   test('分页旁边的说明', (): void => {
-    expect(autoLoadText(20, false, false)).toBe('已加载 20 条，翻到最后一页会自动加载更多');
+    expect(autoLoadText(20, false, false)).toBe('已加载 20 条');
     expect(autoLoadText(20, true, false)).toBe('已加载 20 条，正在加载更多…');
     expect(autoLoadText(37, false, true)).toBe('共 37 条，已经全部加载');
   });

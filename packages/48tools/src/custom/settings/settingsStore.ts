@@ -16,7 +16,7 @@ export interface CustomSettings {
   downloadDir?: string;               // 保存文件时默认打开的文件夹
   liveRecordDir?: string;             // 直播自动录制保存的文件夹（不设置就用 downloadDir）
   liveRecordFormat?: LiveRecordFormat; // 直播录完后的格式
-  accentColor?: string;               // 主题色
+  accentColor?: string;               // 主题色（颜色的名字，可选的颜色见 custom/theme/accent）
   sttProvider?: SttProvider;          // 语音转文字：接口类型
   sttGeminiKey?: string;              // 语音转文字：Google Gemini 的 API key（两种接口各存各的，切换类型时不会把 key 发给别的服务商）
   sttGeminiModel?: string;
@@ -137,22 +137,4 @@ function subscribe(listener: () => void): () => void {
 /* React 里读取设置（设置变化时重新渲染） */
 export function useSettingOverrides(): CustomSettings {
   return useSyncExternalStore(subscribe, getSettingOverrides);
-}
-
-/* 可选的主题色；第一个是默认值 */
-export const accentColors: Array<{ name: string; light: string; dark: string }> = [
-  { name: '青色', light: '#08979c', dark: '#13c2c2' },
-  { name: '蓝色', light: '#2563eb', dark: '#4b8bff' },
-  { name: '靛蓝', light: '#4f46e5', dark: '#7c83ff' },
-  { name: '紫色', light: '#7c3aed', dark: '#a78bfa' },
-  { name: '粉色', light: '#db2777', dark: '#f472b6' },
-  { name: '橙色', light: '#ea580c', dark: '#fb923c' },
-  { name: '绿色', light: '#16a34a', dark: '#4ade80' }
-];
-
-/* 当前主题色在明 / 暗模式下的颜色 */
-export function accentColorOf(name: string | undefined, isDark: boolean | undefined): string {
-  const accent: { light: string; dark: string } = accentColors.find((item: { name: string }): boolean => item.name === name) ?? accentColors[0];
-
-  return isDark ? accent.dark : accent.light;
 }

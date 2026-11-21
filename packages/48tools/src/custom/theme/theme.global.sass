@@ -1,0 +1,8 @@
+// 用团队色区分类别的标签（直播类型等）：浅色的底、团队色的边、看得清的字。
+// 颜色变量由 components/basic/AntdConfig 按明暗模式放到根元素上（见 ./accent 的 colorVariables）。
+// 用法：<TeamTag team="sii">录屏</TeamTag>（./TeamTag.tsx）
+@each $team in sii, nii, hii, x
+  .ant-tag.team-tag-#{$team}
+    border-color: color-mix(in srgb, var(--team-#{$team}) 55%, transparent)
+    background: color-mix(in srgb, var(--team-#{$team}) 14%, transparent)
+    color: var(--team-#{$team}-text)

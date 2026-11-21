@@ -200,7 +200,7 @@
 
   &.is-active
     background: var(--shell-active-bg)
-    color: var(--shell-primary)
+    color: var(--accent-text, var(--shell-primary))
     font-weight: 600
 
   .anticon
@@ -221,7 +221,7 @@
   padding: 0 5px
   border-radius: 9px
   background: var(--shell-primary)
-  color: #fff
+  color: var(--accent-on, #fff)
   font-size: 11px
   font-weight: 600
   line-height: 18px
@@ -229,7 +229,8 @@
 
   // 未读消息数（房间消息）
   &.is-unread
-    background: #ff4d4f
+    background: var(--shell-danger)
+    color: #fff
 
 // 自动抓取运行中：「直播抓取」后面的绿点（侧边栏收起时在图标右上角）
 .shell-item-live
@@ -238,8 +239,8 @@
   height: 8px
   margin-right: 2px
   border-radius: 50%
-  background: #22c55e
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, .18)
+  background: var(--shell-success)
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--shell-success) 18%, transparent)
 
 .shell-sidebar.is-collapsed .shell-item-live
   position: absolute
@@ -273,12 +274,12 @@
   background: var(--shell-text-tertiary)
 
   &.is-ok
-    background: #22c55e
-    box-shadow: 0 0 0 3px rgba(34, 197, 94, .18)
+    background: var(--shell-success)
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--shell-success) 18%, transparent)
 
   &.is-down
-    background: #ef4444
-    box-shadow: 0 0 0 3px rgba(239, 68, 68, .18)
+    background: var(--shell-danger)
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--shell-danger) 18%, transparent)
 
 .shell-footer
   margin-top: 6px
@@ -383,7 +384,7 @@
 
   &.is-active
     background: var(--shell-active-bg)
-    color: var(--shell-primary)
+    color: var(--accent-text, var(--shell-primary))
 
 // ---------- 让原有页面在外壳里更协调 ----------
 .shell

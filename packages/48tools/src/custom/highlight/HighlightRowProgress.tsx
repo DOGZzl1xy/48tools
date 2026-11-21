@@ -32,7 +32,7 @@ function HighlightRowProgress(props: { readonly liveId: string; readonly downloa
   return (
     <Fragment>
       { downloading ? <div className="mb-[6px]">{ children }</div> : null }
-      <span style={{ color: token.colorPrimary }} aria-label="切片进度" aria-valuenow={ percent }>自动切片 · 总进度 { percent }%</span>
+      <span style={{ color: token.colorLink }} aria-label="切片进度" aria-valuenow={ percent }>自动切片 · 总进度 { percent }%</span>
       <div className="mt-[4px] h-[4px] w-[120px] overflow-hidden rounded-full" style={{ background: token.colorFillSecondary }}>
         <div className="h-full rounded-full transition-[width] duration-300" style={{ width: `${ percent }%`, background: token.colorPrimary }} />
       </div>

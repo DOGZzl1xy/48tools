@@ -56,7 +56,7 @@
     transform: translateY(-1px)
 
     .home-card-arrow
-      color: var(--shell-primary)
+      color: var(--accent-text, var(--shell-primary))
       transform: translateX(3px)
 
   &:focus-visible
@@ -72,7 +72,7 @@
   height: 44px
   border-radius: 10px
   background: var(--shell-active-bg)
-  color: var(--shell-primary)
+  color: var(--accent-text, var(--shell-primary))
   font-size: 22px
 
 .home-card-text
@@ -140,10 +140,10 @@
 
   &:hover
     background: var(--shell-active-bg)
-    color: var(--shell-primary)
+    color: var(--accent-text, var(--shell-primary))
 
     .anticon
-      color: var(--shell-primary)
+      color: var(--accent-text, var(--shell-primary))
 
   &:focus-visible
     outline: 2px solid var(--shell-primary)
@@ -274,7 +274,7 @@
   opacity: .85
 
 .home-empty a, .home-live-status a
-  color: var(--shell-primary)
+  color: var(--accent-text, var(--shell-primary))
   text-decoration: none
 
   &:hover

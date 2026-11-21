@@ -24,17 +24,18 @@ $ld-golden-purple: light-dark($golden-purple, $golden-purple-dark)
 .tips
   color: $ld-dust-red
 
-// 链接
+// 链接（跟着主题色，变量见 custom/theme/accent）
 .link
-  color: $ld-daybreak-blue
+  color: var(--accent-text, #{$ld-daybreak-blue})
   transition: color .3s
   cursor: pointer
 
   &:hover
-    color: $ld-daybreak-blue-hover
+    color: var(--accent, #{$ld-daybreak-blue-hover})
 
+// 主题色的文字（成员弹幕等）
 .primaryText
-  color: $ld-cyan
+  color: var(--accent-text, #{$ld-cyan})
 
 @media (prefers-color-scheme: dark)
   .text

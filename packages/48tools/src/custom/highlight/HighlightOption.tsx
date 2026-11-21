@@ -46,7 +46,8 @@ function HighlightOption(props: {}): ReactElement {
         <Space direction="vertical" size={ 6 } className="w-full">
           <Segmented options={ [{ label: '接口（按量付费）', value: 'api' }, { label: '本机的 agy（订阅额度）', value: 'agy' }] }
             value={ resolveSetting(overrides, 'highlightVia') === 'agy' ? 'agy' : 'api' }
-            onChange={ (value: string): void => setSetting('highlightVia', value === 'agy' ? 'agy' : undefined) }
+            // 两种都明确存下来：存成「不设置」的话会退回 local/pocket48.json 里的值，那里写了 agy 时就切不回接口
+            onChange={ (value: string): void => setSetting('highlightVia', value === 'agy' ? 'agy' : 'api') }
           />
           {
             resolveSetting(overrides, 'highlightVia') === 'agy' ? (
@@ -59,7 +60,8 @@ function HighlightOption(props: {}): ReactElement {
           }
         </Space>
       </Row>
-      <Row label="「自动」的门槛">
+      { /* 数字是之前切过的几场（共约 3 小时）里各个分数以上的爆点数，按每小时算 */ }
+      <Row label="「自动」的门槛" hint="越高切片越少。按之前切过的几场，每小时直播大约：8 分 5～6 个，8.5 分 3 个，9 分 1～2 个，9.5 分不到 1 个">
         <Segmented options={ AUTO_SCORE_OPTIONS.map((score: number): { label: string; value: number } => ({ label: `${ score } 分`, value: score })) }
           value={ resolveSetting(overrides, 'highlightAutoScore') ?? AUTO_SCORE }
           onChange={ (value: number): void => setSetting('highlightAutoScore', value === AUTO_SCORE ? undefined : value) }

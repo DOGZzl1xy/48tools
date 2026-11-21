@@ -46,6 +46,7 @@
 | 保存对话框默认打开 `local/pocket48.json` 里 `downloadDir` 指定的文件夹 | `download/defaultSaveDir.ts` | `utils/remote/dialog.ts` 的 `showSaveDialog` |
 | 只下载音频（边下载边提取 AAC，保存为 m4a） | `download/audioExtract.ts` | `Pocket48M3u8Download.worker.ts`（`audioOnly`）、`FFmpegDownload.worker.ts`（`audioOnly`）、`Pocket48Record.tsx`（按钮） |
 | 现代化主题（分层背景、更轻的表格、更快的动效） | `theme/modernTheme.ts` | `components/basic/AntdConfig/AntdConfig.tsx`；窗口底色同步改在 `components/basic/Theme/stylesheet.pug` 和 `packages/main/src/custom/windowTuning.mts` |
+| 颜色统一：主题色可选四个团队色（SII 蓝 `#8fc8eb`、NII 紫 `#af83bb`、HII 橙 `#f49604`、X 绿 `#a9ca27`）和原来的几种。由主题色算出三种用法：本色（按钮、开关、进度条、选中的底色）、写字用的颜色（太浅时自动加深，深色模式下调亮）、主题色底上的字（太浅时用深色字）；放进 antd 主题（链接、「进行中」的标签和进度条、标签页、分页、双色图标也跟着主题色）和根元素的 CSS 变量（`--accent`、`--accent-text`、`--accent-on`、`--team-*`）。类别用团队色的浅底标签区分（直播类型：视频 NII 紫、电台 HII 橙、录屏 SII 蓝、连麦 X 绿），状态用 antd 的语义色（进行中跟着主题色，成功、失败、警告用绿、红、橙）。界面里要颜色时用这些，不另外写死 | `theme/accent.ts`、`theme/TeamTag.tsx`、`theme/theme.global.sass` | `AntdConfig.tsx`（主题和变量）、`settings/SettingsPage.tsx`（色块）、`common.sass`（`.link`、`.primaryText`）、`LiveType.tsx`、`PlayerWindow/LiveInfo.tsx`、`WeiboLogin/LoginTable.tsx`（团队色标签）、`InLive.tsx`、`WeiboLive.tsx`、`WeiboSuper/Index.tsx`、`ProcessItemRender.tsx`（状态标签）；自定义样式（`shell`、`room`、`home`、`settings`、`player`）里的颜色换成上面的变量 |
 | 统一的「返回」按钮 | `theme/backButton.tsx` | `components/Header/Header.tsx`、`LiveOptions.tsx`、`Agreement.tsx` |
 | 原版首页按平台分组（原版首页现在不再作为首页显示，改动保留） | `home/navGroups.tsx` | `pages/Index/Index.tsx` 的 `nativeRender` |
 | 只用浏览器打开 http(s) 链接 | `security/safeOpenExternal.ts` | `MessageDisplay.tsx`、`Credits/Software/Software.tsx` |
@@ -91,7 +92,7 @@
 
 ## 测试
 
-- 单元测试：`custom/` 下的 `*.spec.ts`（30 个文件，243 个测试），在 `packages/48tools` 目录运行 `node --run test`。
+- 单元测试：`custom/` 下的 `*.spec.ts`（31 个文件，249 个测试），在 `packages/48tools` 目录运行 `node --run test`。
   其中 `highlight/highlightPipeline.spec.ts` 最后一组测试是真的把录播切片跑一遍（下载、问 Gemini、合成；也可以只下载），平时跳过，
   要跑时按那个文件开头的说明设置环境变量。
   除了纯函数，房间消息的加载和同步（`room/roomStore.spec.ts`）、语音转文字的状态（`transcribe/transcribeStore.spec.ts`）

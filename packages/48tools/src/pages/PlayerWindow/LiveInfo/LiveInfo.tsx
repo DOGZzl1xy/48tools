@@ -1,12 +1,13 @@
 import { ipcRenderer } from 'electron';
 import type { ReactElement, ReactNode, MouseEvent } from 'react';
-import { Avatar, Button, Tag, Tooltip } from 'antd';
+import { Avatar, Button, Tooltip } from 'antd';
 import { ToolTwoTone as IconToolTwoTone } from '@ant-design/icons';
 import { WinIpcChannel } from '@48tools/main/src/channelEnum';
 import { Pocket48LiveMode } from '@48tools-api/48/enum';
 import type { LiveRoomInfo } from '@48tools-api/48';
 import { source } from '../../../utils/snh48';
 import { liveTypeRender } from '../../48/components/LiveType/LiveType';
+import TeamTag from '../../../custom/theme/TeamTag';
 import type { PlayerInfo } from '../../../components/basic/initialState/initialState';
 
 interface LiveInfoProps {
@@ -40,7 +41,7 @@ function LiveInfo(props: LiveInfoProps): ReactElement {
   return (
     <header className="shrink-0 mb-[8px]">
       <h1 className="inline-block mb-[8px] mr-[6px] text-[16px]">{ playerInfo.title }</h1>
-      { playerInfo.liveMode === Pocket48LiveMode.Record ? <Tag color="blue">录屏</Tag> : liveTypeRender(playerInfo.liveType) }
+      { playerInfo.liveMode === Pocket48LiveMode.Record ? <TeamTag team="sii">录屏</TeamTag> : liveTypeRender(playerInfo.liveType) }
       <div className="flex">
         <div className="grow">{ infoRender() }</div>
         <div className="shrink-0">

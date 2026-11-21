@@ -20,7 +20,6 @@ import {
   DownOutlined as IconDownOutlined,
   UpOutlined as IconUpOutlined
 } from '@ant-design/icons';
-import { red, orange, green } from '@ant-design/colors';
 import VirtualList from 'rc-virtual-list';
 import classNames from 'classnames';
 import style from './processItemRender.sass';
@@ -31,13 +30,13 @@ import type { ProcessItem, ProcessItemConsole } from '../../types';
 function statusRender(item: ProcessItem): ReactElement | undefined {
   switch (item.status) {
     case 'error':
-      return <Tag color={ red.primary }>错误</Tag>;
+      return <Tag color="error">错误</Tag>;
 
     case 'stop':
-      return <Tag color={ orange.primary }>停止</Tag>;
+      return <Tag color="default">停止</Tag>;
 
     case 'running':
-      return <Tag color={ green.primary }>运行中</Tag>;
+      return <Tag color="processing">运行中</Tag>;
   }
 }
 

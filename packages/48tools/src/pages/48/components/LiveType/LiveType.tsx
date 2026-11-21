@@ -2,6 +2,7 @@ import { Fragment, type ReactElement } from 'react';
 import { Tag } from 'antd';
 import { Pocket48LiveType, Pocket48LiveMode } from '@48tools-api/48/enum';
 import type { LiveInfo } from '@48tools-api/48';
+import TeamTag from '../../../../custom/theme/TeamTag'; // 类型用团队色区分（custom/theme/accent）
 
 export function liveTypeRender(liveType: Pocket48LiveType): ReactElement {
   switch (liveType) {
@@ -12,10 +13,10 @@ export function liveTypeRender(liveType: Pocket48LiveType): ReactElement {
       return <Tag color="magenta">AI</Tag>;
 
     case Pocket48LiveType.Radio:
-      return <Tag color="volcano">电台</Tag>;
+      return <TeamTag team="hii">电台</TeamTag>;
 
     default:
-      return <Tag color="purple">视频</Tag>;
+      return <TeamTag team="nii">视频</TeamTag>;
   }
 }
 
@@ -29,13 +30,13 @@ function LiveType(props: LiveTypeProps): ReactElement {
   const { liveType, liveMode, inMicrophoneConnection }: LiveInfo = liveInfo;
 
   if (liveMode === Pocket48LiveMode.Record) {
-    return <Tag color="blue">录屏</Tag>;
+    return <TeamTag team="sii">录屏</TeamTag>;
   }
 
   return (
     <Fragment>
       { liveTypeRender(liveType) }
-      { inMicrophoneConnection ? <Tag className="m-0" color="cyan">连麦</Tag> : null }
+      { inMicrophoneConnection ? <TeamTag className="m-0" team="x">连麦</TeamTag> : null }
     </Fragment>
   );
 }

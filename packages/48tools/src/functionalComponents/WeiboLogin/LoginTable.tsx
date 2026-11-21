@@ -18,6 +18,7 @@ import dbConfig from '../../utils/IDB/IDBConfig';
 import Follow from './Follow/Follow';
 import { handleOpenWeiboClick } from './function/weiboHelper';
 import type { WeiboAccount } from '../../commonTypes';
+import TeamTag from '../../custom/theme/TeamTag';
 
 dayjs.extend(customParseFormat);
 
@@ -107,13 +108,13 @@ function LoginTable(props: {}): ReactElement {
   function visitedListRenderItem(item: VisitedSchemaItemWithUserInfo, index: number): ReactElement {
     const tags: Array<ReactElement> = [];
 
-    if (item.text) tags.push(<Tag key="text" className="mt-[4px]" color="purple">{ item.text }</Tag>);
+    if (item.text) tags.push(<TeamTag key="text" className="mt-[4px]" team="nii">{ item.text }</TeamTag>);
 
-    if (item.new_status) tags.push(<Tag key="new_status" className="mt-[4px]" color="magenta">{ item.new_status }</Tag>);
+    if (item.new_status) tags.push(<TeamTag key="new_status" className="mt-[4px]" team="sii">{ item.new_status }</TeamTag>);
 
-    if (item.region) tags.push(<Tag key="region" className="mt-[4px]" color="red">{ item.region }</Tag>);
+    if (item.region) tags.push(<TeamTag key="region" className="mt-[4px]" team="x">{ item.region }</TeamTag>);
 
-    if (item.sunshine) tags.push(<Tag key="sunshine" className="mt-[4px]" color="volcano">{ item.sunshine }</Tag>);
+    if (item.sunshine) tags.push(<TeamTag key="sunshine" className="mt-[4px]" team="hii">{ item.sunshine }</TeamTag>);
 
     if (item.recommend?.length) {
       item.recommend.forEach((o: { name: string; value: string }, i: number): void => {

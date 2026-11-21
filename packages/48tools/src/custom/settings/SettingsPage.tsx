@@ -28,10 +28,10 @@ import {
   useSettingOverrides,
   resolveSetting,
   setSetting,
-  accentColors,
   type CustomSettings,
   type LiveRecordFormat
 } from './settingsStore';
+import { accentColors, textOnColor, type AccentColor } from '../theme/accent';
 
 /**
  * 设置页面：账号、保存位置、直播录制格式、自动抓取、代理、后台运行、语音转文字、录播切片、外观、工具路径、关于。
@@ -107,7 +107,7 @@ const formatHints: Record<LiveRecordFormat, string> = {
 };
 
 function SettingsPage(props: {}): ReactElement {
-  const { theme, changeTheme }: Theme = use(ThemeContext);
+  const { theme, changeTheme, isDark }: Theme = use(ThemeContext);
   const { buttonRender, modalRender }: UseAppDataDirReturnType = useAppDataDir();
   const overrides: CustomSettings = useSettingOverrides();
   const format: LiveRecordFormat = resolveSetting(overrides, 'liveRecordFormat') ?? 'flv';
@@ -188,16 +188,16 @@ function SettingsPage(props: {}): ReactElement {
         <Row label="明暗主题" hint="浅色、深色，或者跟随 Windows 的设置。">
           <Segmented options={ themeOptions } value={ theme ?? 'system' } onChange={ (value: ThemeValue): void => changeTheme?.(value) } />
         </Row>
-        <Row label="主题色" hint="按钮、选中状态、链接的颜色。">
+        <Row label="主题色" hint="按钮、选中状态、链接、进行中的颜色。SII 蓝、NII 紫、HII 橙、X 绿是团队色。">
           <div className="settings-colors">
             {
-              accentColors.map((accent: { name: string; light: string }): ReactElement => (
+              accentColors.map((accent: AccentColor): ReactElement => (
                 <Tooltip key={ accent.name } title={ accent.name }>
                   <button className={ `settings-color${ accent.name === accentName ? ' is-active' : '' }` }
                     type="button"
                     aria-label={ `主题色：${ accent.name }` }
                     aria-pressed={ accent.name === accentName }
-                    style={{ background: accent.light }}
+                    style={{ background: isDark ? accent.dark : accent.light, color: textOnColor(isDark ? accent.dark : accent.light) }}
                     onClick={ (): void => setSetting('accentColor', accent.name === accentColors[0].name ? undefined : accent.name) }
                   >
                     { accent.name === accentName ? <IconCheckOutlined /> : null }

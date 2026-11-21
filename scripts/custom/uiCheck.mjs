@@ -107,6 +107,10 @@ try {
   check('设置：分区导航', (await win.locator('.settings-nav button').count()) >= 8);
   check('设置：明暗主题可以直接选', (await win.locator('#settings-look .ant-segmented-item').count()) >= 3);
   check('设置：录播切片', (await win.locator('#settings-highlight .settings-row').count()) === 6);
+  check('设置：主题色里有四个团队色', (await win.locator('#settings-look .settings-color').count()) === 11
+    && (await Promise.all(['SII 蓝', 'NII 紫', 'HII 橙', 'X 绿'].map((name) => win.locator(`.settings-color[aria-label="主题色：${ name }"]`).count())))
+      .every((count) => count === 1));
+  check('设置：主题色放进了 CSS 变量', /^#[0-9a-f]{6}$/i.test(await win.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent-text').trim())));
 
   // 自动抓取配置
   await go('#/48/LiveOptions', 'auto-grab');

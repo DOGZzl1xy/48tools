@@ -69,7 +69,7 @@
   padding: 0 6px
   border-radius: 8px
   background: var(--shell-active-bg)
-  color: var(--shell-primary)
+  color: var(--accent-text, var(--shell-primary))
   font-size: 11px
   font-weight: 600
   line-height: 17px
@@ -118,7 +118,7 @@
     background: var(--shell-active-bg)
 
     .room-member-name
-      color: var(--shell-primary)
+      color: var(--accent-text, var(--shell-primary))
       font-weight: 600
 
   .ant-avatar
@@ -162,10 +162,10 @@
 
   &:hover
     background: var(--shell-hover)
-    color: #f5a623
+    color: var(--team-hii, #f49604)
 
   &.is-on
-    color: #f5a623
+    color: var(--team-hii, #f49604)
     opacity: 1
 
   &:focus-visible
@@ -227,7 +227,7 @@
 
 // 标题栏的关注按钮：已关注时星标是黄色
 .room-follow.is-on
-  color: #f5a623
+  color: var(--team-hii, #f49604)
 
 // 「更多」菜单里没打勾的项：占住打勾的位置，文字对齐
 .room-menu-blank
@@ -255,7 +255,7 @@
   border-radius: 16px
   background: var(--shell-primary)
   box-shadow: 0 4px 14px rgba(0, 0, 0, .22)
-  color: #fff
+  color: var(--accent-on, #fff)
   font-size: 13px
   cursor: pointer
   transition: transform .12s, filter .12s
@@ -279,7 +279,7 @@
     &.is-new
       border-color: transparent
       background: var(--shell-primary)
-      color: #fff
+      color: var(--accent-on, #fff)
 
 .room-scroll
   flex: 1
@@ -322,7 +322,7 @@
   align-items: center
   gap: 12px
   margin: 16px 0 8px
-  color: var(--shell-primary)
+  color: var(--accent-text, var(--shell-primary))
   font-size: 12px
 
   &::before, &::after
@@ -392,7 +392,7 @@
   align-items: center
   gap: 6px
   margin: 0 0 3px 2px
-  color: var(--shell-primary)
+  color: var(--accent-text, var(--shell-primary))
   font-size: 12px
   font-weight: 600
 
@@ -470,7 +470,7 @@
   border: 0
   border-radius: 50%
   background: var(--shell-primary)
-  color: #fff
+  color: var(--accent-on, #fff)
   font-size: 14px
   cursor: pointer
   transition: filter .12s, transform .12s
@@ -531,7 +531,7 @@
 
   &:hover
     background: var(--shell-active-bg)
-    color: var(--shell-primary)
+    color: var(--accent-text, var(--shell-primary))
 
   &:focus-visible
     outline: 2px solid var(--shell-primary)
@@ -560,7 +560,7 @@
     cursor: pointer
 
     &:hover
-      color: var(--shell-primary)
+      color: var(--accent-text, var(--shell-primary))
 
     &:focus-visible
       outline: 2px solid var(--shell-primary)
@@ -586,7 +586,7 @@
 
     button
       margin-left: 6px
-      color: var(--shell-primary)
+      color: var(--accent-text, var(--shell-primary))
 
 .room-voice-tools
   margin-left: 6px
@@ -633,7 +633,7 @@
     min-width: 0
 
   small
-    color: var(--shell-primary)
+    color: var(--accent-text, var(--shell-primary))
     font-size: 12px
 
   b
