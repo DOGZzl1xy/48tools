@@ -8,7 +8,7 @@ import { useSyncExternalStore } from 'react';
 // @ts-expect-error
 import got from 'got';
 import {
-  alignerDir, isAlignerInstalled, runTool,
+  alignerDir, isAlignerInstalled, missingAlignerFiles, runTool,
   ALIGNER_RUNTIME, ALIGNER_MODEL, ALIGNER_MARKER, ALIGNER_EXE, ALIGNER_MODEL_FILE, ALIGNER_TOKENS_FILE
 } from './alignerRun';
 
@@ -86,14 +86,43 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
+/* 看一眼硬盘上装没装；没装好时在控制台记下缺了哪些文件（以后再遇到「明明装了却显示未安装」时有线索） */
+function checkInstalled(): boolean {
+  try {
+    const missing: Array<string> = missingAlignerFiles();
+
+    if (missing.length > 0) console.warn('本地打轴模型：插件文件夹里缺少文件', alignerDir(), missing);
+
+    return missing.length === 0;
+  } catch (err) {
+    console.warn('本地打轴模型：检查是否安装时出错', err);
+
+    return false;
+  }
+}
+
 function getState(): AlignerState {
   // 第一次用到时看一眼硬盘上装没装
   if (!checked) {
     checked = true;
-    state = { ...state, installed: isAlignerInstalled() };
+    state = { ...state, installed: checkInstalled() };
   }
 
   return state;
+}
+
+/**
+ * 重新看一眼装没装：设置页每次打开时调用。
+ * 原来只在第一次打开设置页时看一次，那一次没看到（不管什么原因）就一直显示「未安装」，要重启程序才会再看。
+ */
+export function refreshAlignerInstalled(): void {
+  if (state.busy) return;
+
+  checked = true;
+
+  const installed: boolean = checkInstalled();
+
+  if (installed !== state.installed) setState({ installed });
 }
 
 export function useAlignerState(): AlignerState {

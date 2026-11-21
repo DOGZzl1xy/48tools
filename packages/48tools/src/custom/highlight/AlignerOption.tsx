@@ -1,8 +1,8 @@
-import type { ReactElement } from 'react';
+import { useEffect, type ReactElement } from 'react';
 import { Button, Popconfirm, Progress, Space, Tag, Typography } from 'antd';
 import Row from '../settings/SettingsRow';
 import {
-  useAlignerState, installAligner, cancelAlignerInstall, uninstallAligner, ALIGNER_DOWNLOAD_MB, type AlignerState
+  useAlignerState, installAligner, cancelAlignerInstall, uninstallAligner, refreshAlignerInstalled, ALIGNER_DOWNLOAD_MB, type AlignerState
 } from './alignerPlugin';
 
 /**
@@ -11,6 +11,11 @@ import {
  */
 function AlignerOption(props: {}): ReactElement {
   const state: AlignerState = useAlignerState();
+
+  // 每次打开设置页都重新看一眼装没装
+  useEffect(function(): void {
+    refreshAlignerInstalled();
+  }, []);
 
   return (
     <Row label="本地打轴模型（可选）">

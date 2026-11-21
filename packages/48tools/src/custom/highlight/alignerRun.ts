@@ -29,13 +29,19 @@ export const ALIGNER_TOKENS_FILE: string = path.join('model', ALIGNER_MODEL, 'to
 const WORK_FOLDER: string = 'work';
 
 export function alignerDir(): string {
-  return path.join(process.env.LOCALAPPDATA || os.homedir(), '48tools-plugins', 'aligner');
+  // 没有 LOCALAPPDATA 时用它在 Windows 上的默认位置（原来退回到用户文件夹本身，那里找不到已经装好的插件）
+  return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), '48tools-plugins', 'aligner');
+}
+
+/* 插件文件夹里缺了哪些文件（都在就是装好了） */
+export function missingAlignerFiles(): Array<string> {
+  const dir: string = alignerDir();
+
+  return [ALIGNER_MARKER, ALIGNER_EXE, ALIGNER_MODEL_FILE, ALIGNER_TOKENS_FILE].filter((file: string): boolean => !fs.existsSync(path.join(dir, file)));
 }
 
 export function isAlignerInstalled(): boolean {
-  const dir: string = alignerDir();
-
-  return [ALIGNER_MARKER, ALIGNER_EXE, ALIGNER_MODEL_FILE, ALIGNER_TOKENS_FILE].every((file: string): boolean => fs.existsSync(path.join(dir, file)));
+  return missingAlignerFiles().length === 0;
 }
 
 /**
