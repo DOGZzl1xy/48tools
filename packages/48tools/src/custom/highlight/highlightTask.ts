@@ -19,7 +19,7 @@ import {
 import { highlightDefaults, type GeminiConfig } from './highlightGemini';
 import { StagedQueue, type QueueStage, type QueueOutcome } from './highlightQueue';
 import { recognizeAudio, isAlignerInstalled } from './alignerRun';
-import { DEFAULT_GLOSSARY } from './highlightGlossary';
+import { readGlossaryFile } from './glossaryFile';
 import type { TimedToken } from './highlightTokens';
 import { safeFileName } from './highlightTime';
 import type { HighlightCount } from './highlightTypes';
@@ -95,7 +95,7 @@ export function highlightJobOf(record: HighlightRecord, count: HighlightCount, b
     workDir: path.join(outDir, WORK_FOLDER),
     ffmpeg: getFFmpeg(),
     gemini: highlightGeminiConfig(),
-    glossary: getSetting('highlightGlossary') ?? DEFAULT_GLOSSARY
+    glossary: readGlossaryFile()
   };
 }
 

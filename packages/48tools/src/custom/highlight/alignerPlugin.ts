@@ -57,7 +57,6 @@ const MARKER_VERSION: number = 1;
 const KEEP_IN_BIN: Array<string> = ['sherpa-onnx-offline.exe', 'onnxruntime.dll', 'onnxruntime_providers_shared.dll'];
 
 export const ALIGNER_DOWNLOAD_MB: number = Math.round(TOTAL_BYTES / 1_048_576);
-export const ALIGNER_DISK_MB: number = 250;
 
 /* ---------- 安装的状态（设置页显示用） ---------- */
 export interface AlignerState {

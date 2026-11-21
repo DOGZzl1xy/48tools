@@ -2,11 +2,14 @@
 
 import { promises as fsP } from 'node:fs';
 import type { SaveDialogReturnValue } from 'electron';
-import { Fragment, useEffect, useMemo, useTransition, type ReactElement, type ReactNode, type MouseEvent, type TransitionStartFunction } from 'react';
+import {
+  Fragment, useEffect, useMemo, useState, useTransition,
+  type ReactElement, type ReactNode, type MouseEvent, type TransitionStartFunction, type Dispatch as D, type SetStateAction as S
+} from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import type { Dispatch } from '@reduxjs/toolkit';
 import { createStructuredSelector, type Selector } from 'reselect';
-import { Select, Button, Table, message, Space, Popconfirm } from 'antd';
+import { Select, Button, Table, message, Space, Popconfirm, type TablePaginationConfig } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { DefaultOptionType } from 'rc-select/es/Select';
 import type { UseMessageReturnType } from '@48tools-types/antd';
@@ -37,6 +40,7 @@ import { ProgressNative, type ProgressSet } from '../../../../components/Progres
 import { formatTsUrl, getTeamId } from '../utils/utils';
 import type { WebWorkerChildItem } from '../../../../commonTypes';
 import type { MessageEventData } from '../../../../utils/worker/FFmpegDownload.worker/FFmpegDownload.worker';
+import { useAutoLoadMore } from '../../../../custom/table/useAutoLoadMore';
 
 const liveTypeSelectOptions: Array<DefaultOptionType> = ['SNH48', 'BEJ48', 'GNZ48', 'CKG48', 'CGT48']
   .map((o: string): DefaultOptionType => ({ label: o, value: o.toLowerCase() }));
@@ -82,6 +86,9 @@ function InVideo(props: {}): ReactElement {
   const dispatch: Dispatch = useDispatch();
   const [messageApi, messageContextHolder]: UseMessageReturnType = message.useMessage();
   const [getLiveListLoading, startGetLiveListStartTransition]: [boolean, TransitionStartFunction] = useTransition();
+  // 翻到最后一页自动加载下一页（custom/table/useAutoLoadMore）：noMore 是接口已经取不到更多了，refreshCount 每刷新一次加一（回到第一页）
+  const [noMore, setNoMore]: [boolean, D<S<boolean>>] = useState(false);
+  const [refreshCount, setRefreshCount]: [number, D<S<number>>] = useState(0);
 
   const inVideoList: Array<OpenLiveInfo> = useMemo(function(): Array<OpenLiveInfo> {
     if (inVideoQueryLiveType) return rSelector[`${ inVideoQueryLiveType }InVideoList`];
@@ -176,25 +183,22 @@ function InVideo(props: {}): ReactElement {
     }
   }
 
-  // 查询
-  function handleLiveTypeSelect(value: string): void {
-    dispatch(setInVideoQueryLiveType(value));
-  }
-
-  // 加载下一页
-  function handleGetVideoListClick(event: MouseEvent): void {
-    if (!inVideoQueryLiveType) return;
+  // 刷新录播
+  function handleGetVideoListClick(liveType: string | undefined = inVideoQueryLiveType): void {
+    if (!liveType) return;
 
     startGetLiveListStartTransition(async (): Promise<void> => {
       try {
         const res: OpenLiveList = await requestOpenLiveList({
-          groupId: getTeamId(inVideoQueryLiveType),
+          groupId: getTeamId(liveType),
           record: true
         });
 
         if (res?.content?.liveList) {
+          setNoMore(res.content.liveList.length === 0);
+          setRefreshCount((count: number): number => count + 1);
           dispatch(setInVideoGroupList({
-            liveType: inVideoQueryLiveType,
+            liveType,
             data: res.content.liveList,
             nextPage: Number(res.content.next)
           }));
@@ -208,8 +212,14 @@ function InVideo(props: {}): ReactElement {
     });
   }
 
-  // 刷新列表
-  function handleGetNextPageVideoListClick(event: MouseEvent): void {
+  // 选了队伍：马上加载这个队伍的录播（以前选完还要再点「刷新录播」，进来时页面是空的，不知道要先选队伍）
+  function handleLiveTypeSelect(value: string): void {
+    dispatch(setInVideoQueryLiveType(value));
+    handleGetVideoListClick(value);
+  }
+
+  // 加载下一页（翻到最后一页时自动调用，custom/table/useAutoLoadMore）
+  function handleGetNextPageVideoListClick(): void {
     if (!inVideoQueryLiveType) return;
 
     startGetLiveListStartTransition(async (): Promise<void> => {
@@ -221,6 +231,7 @@ function InVideo(props: {}): ReactElement {
         });
 
         if (res?.content?.liveList) {
+          res.content.liveList.length === 0 && setNoMore(true);
           dispatch(setInVideoGroupList({
             liveType: inVideoQueryLiveType,
             data: inVideoList.concat(res.content.liveList),
@@ -236,10 +247,13 @@ function InVideo(props: {}): ReactElement {
     });
   }
 
-  // 渲染分页
-  function showTotalRender(total: number, range: [number, number]): ReactElement {
-    return <Button size="small" onClick={ handleGetNextPageVideoListClick }>加载下一页</Button>;
-  }
+  const pagination: TablePaginationConfig = useAutoLoadMore({
+    loaded: inVideoList.length,
+    loading: getLiveListLoading,
+    noMore,
+    onLoadMore: handleGetNextPageVideoListClick,
+    resetKey: `${ inVideoQueryLiveType }-${ refreshCount }`
+  });
 
   const columns: ColumnsType<OpenLiveInfo> = [
     { title: '标题', dataIndex: 'title' },
@@ -299,15 +313,14 @@ function InVideo(props: {}): ReactElement {
     <Fragment>
       <Header>
         <Space size={ 8 } data-test-id="48-in-video-group-type">
-          <Select className="!w-[150px]" options={ liveTypeSelectOptions } value={ inVideoQueryLiveType } onSelect={ handleLiveTypeSelect } />
-          <Space.Compact>
-            <Button type="primary" disabled={ inVideoQueryLiveType === undefined } onClick={ handleGetVideoListClick }>
-              刷新录播
-            </Button>
-            <Button disabled={ inVideoQueryLiveType === undefined } onClick={ handleGetNextPageVideoListClick }>
-              加载下一页
-            </Button>
-          </Space.Compact>
+          <Select className="!w-[150px]"
+            options={ liveTypeSelectOptions }
+            value={ inVideoQueryLiveType }
+            placeholder="先选择队伍"
+            status={ inVideoQueryLiveType === undefined ? 'warning' : undefined }
+            onSelect={ handleLiveTypeSelect }
+          />
+          <Button disabled={ inVideoQueryLiveType === undefined } onClick={ (): void => handleGetVideoListClick() }>刷新</Button>
         </Space>
       </Header>
       <Table size="middle"
@@ -316,12 +329,8 @@ function InVideo(props: {}): ReactElement {
         bordered={ true }
         loading={ getLiveListLoading }
         rowKey="liveId"
-        pagination={{
-          showQuickJumper: true,
-          showSizeChanger: false,
-          pageSize: 20,
-          showTotal: showTotalRender
-        }}
+        locale={ inVideoQueryLiveType === undefined ? { emptyText: '先在右上角选择队伍，选好后会自动加载录播' } : undefined }
+        pagination={ pagination }
       />
       { messageContextHolder }
     </Fragment>

@@ -71,7 +71,7 @@ function TranscribeOption(props: {}): ReactElement {
 
   return (
     <Fragment>
-      <Row label="接口类型" hint="房间里的语音后面有「转文字」按钮。语音会发给这里配置的服务商来识别，转好的文字存在本机，同一条语音只转一次。转过的语音文件也存一份在本机，保留 6 个月。">
+      <Row label="接口类型" hint="语音会发给这里配置的服务商来识别，转好的文字存在本机，同一条语音只转一次。转过的语音文件也存一份在本机，保留 6 个月。">
         <Segmented options={ providerOptions } value={ config.provider } onChange={ handleProviderChange } />
       </Row>
       <Row label="API key" hint="只保存在这台电脑上（用 Windows 的加密功能加密后保存），只会发给下面的接口地址。">
@@ -104,9 +104,7 @@ function TranscribeOption(props: {}): ReactElement {
           onChange={ handleChange(names.baseUrl) }
         />
       </Row>
-      <Row label="参考聊天内容"
-        hint="成员念感谢名单时，粉丝的昵称和礼物名光靠听很容易写成别的字。打开后，会把语音前后十来分钟里成员发的文字、粉丝送的礼物（谁送了什么）和语音一起发给服务商，用来把这些名字写对。关掉就只发语音。"
-      >
+      <Row label="参考聊天内容">
         <Switch checked={ resolveSetting(overrides, 'sttHints') !== false } onChange={ handleHintsChange } />
       </Row>
       <Row label="测试" hint="用上面的 key 取一次模型列表，确认 key 能用、模型名称没写错。不会产生转写费用。">

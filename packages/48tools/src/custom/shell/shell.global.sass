@@ -432,3 +432,12 @@
 
 ::-webkit-scrollbar-corner
   background: transparent
+
+// ---------- 从右边 / 左边滑出的面板（下载队列、房间查找等） ----------
+// 系统标题栏被隐藏时，窗口最上面一条是「拖动窗口」的区域，右上角还压着系统的最小化 / 最大化 / 关闭按钮，
+// 面板的头部（关闭按钮、右上角的按钮）落在那一条里就点不动。让面板从标题栏下面开始。
+// env(titlebar-area-height) 只在隐藏系统标题栏时有值，其他时候是 0，面板照旧从最上面开始。
+.ant-drawer-right > .ant-drawer-content-wrapper,
+.ant-drawer-left > .ant-drawer-content-wrapper
+  top: env(titlebar-area-height, 0px)
+  -webkit-app-region: no-drag

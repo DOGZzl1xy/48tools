@@ -48,7 +48,7 @@ export interface HighlightJob {
   workDir: string;     // 中间文件放在这里
   ffmpeg: string;
   gemini: GeminiConfig;
-  glossary?: string;    // 专有词汇（设置里的原文，见 ./highlightGlossary）
+  glossary?: string;    // 专有词汇（本机那个文件的原文，见 ./glossaryFile、./highlightGlossary）
 }
 
 export interface HighlightDeps {

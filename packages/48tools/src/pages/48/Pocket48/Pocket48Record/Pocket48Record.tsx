@@ -16,12 +16,13 @@ import {
   type Dispatch as D,
   type SetStateAction as S,
   type MouseEvent,
+  type KeyboardEvent,
   type TransitionStartFunction
 } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import type { Dispatch } from '@reduxjs/toolkit';
 import { createStructuredSelector, type Selector } from 'reselect';
-import { Button, message, Table, Select, Form, Space, Popconfirm, Modal, AutoComplete, Spin, type FormInstance } from 'antd';
+import { Button, message, Table, Select, Form, Space, Popconfirm, Modal, AutoComplete, Spin, type FormInstance, type TablePaginationConfig } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { DefaultOptionType } from 'rc-select/es/Select';
 import type { UseModalReturnType, UseMessageReturnType } from '@48tools-types/antd';
@@ -61,10 +62,11 @@ import { recordListErrorText, recordListFailText } from '../../../../custom/pock
 import { pickAudioResume } from '../../../../custom/download/audioResume';
 import RowActions from '../../../../custom/table/RowActions';
 import MediaTitleCell from '../../../../custom/table/MediaTitleCell';
-import { recordTaskStart, recordTaskProgress, recordTaskEnd, audioMetaOf } from '../../../../custom/downloadQueue/recordTasks';
+import { recordTaskStart, recordTaskProgress, recordTaskEnd, recordTaskStopping, audioMetaOf } from '../../../../custom/downloadQueue/recordTasks';
 import { canHighlight } from '../../../../custom/highlight/highlightTask';
 import { openHighlightDialog } from '../../../../custom/highlight/highlightDialogStore';
 import HighlightRowProgress, { useHighlightRunning } from '../../../../custom/highlight/HighlightRowProgress';
+import { useAutoLoadMore } from '../../../../custom/table/useAutoLoadMore';
 import { useReqRoomIdQuery, type ReqRoomId } from '../../reducers/pocketFriends.api';
 import LiveType from '../../components/LiveType/LiveType';
 import type { MessageEventData } from '../../../../utils/worker/FFmpegDownload.worker/FFmpegDownload.worker';
@@ -145,6 +147,9 @@ function Pocket48Record(props: {}): ReactElement {
   const [refreshLiveListLoading, startRefreshLiveListStartTransition]: [boolean, TransitionStartFunction] = useTransition();
   const [userIdSearchLoading, startUserIdSearchStartTransition]: [boolean, TransitionStartFunction] = useTransition();
   const [form]: [FormInstance] = Form.useForm();
+  // 翻到最后一页自动加载更多（custom/table/useAutoLoadMore）：noMore 是接口已经取不到更多了，refreshCount 每刷新一次加一（回到第一页）
+  const [noMore, setNoMore]: [boolean, D<S<boolean>>] = useState(false);
+  const [refreshCount, setRefreshCount]: [number, D<S<number>>] = useState(0);
   const reqRoomId: ReqRoomId = useReqRoomIdQuery(undefined);
   const roomId: Array<RoomItem> = reqRoomId.data ?? [];
 
@@ -217,6 +222,7 @@ function Pocket48Record(props: {}): ReactElement {
     const index: number = recordChildList.findIndex((o: RecordVideoDownloadWebWorkerItem): boolean => o.id === record.liveId);
 
     if (index >= 0) {
+      recordTaskStopping(record.liveId); // 下载队列据此显示「已停止」而不是「已完成」（custom/downloadQueue/recordTasks）
       recordChildList[index].worker.postMessage({ type: 'stop' });
     }
   }
@@ -417,8 +423,8 @@ function Pocket48Record(props: {}): ReactElement {
     }
   }
 
-  // 加载列表
-  function handleLoadRecordListClick(event: MouseEvent): void {
+  // 加载下一批（翻到最后一页时自动调用）
+  function handleLoadRecordListClick(): void {
     startRefreshLiveListStartTransition(async (): Promise<void> => {
       try {
         const { groupId, userId }: { groupId?: number | 'all'; userId?: string | number | undefined } = form.getFieldsValue();
@@ -429,6 +435,8 @@ function Pocket48Record(props: {}): ReactElement {
 
           return;
         }
+
+        if (res.content.liveList.length === 0) setNoMore(true);
 
         const data: Array<LiveInfo> = recordList.concat(res.content.liveList);
 
@@ -443,11 +451,11 @@ function Pocket48Record(props: {}): ReactElement {
     });
   }
 
-  // 刷新列表
-  function handleRefreshLiveListClick(event: MouseEvent): void {
+  // 刷新列表（换了队伍、选了成员时也会调用；刚选的值可以直接传进来，表单的值可能还没更新）
+  function handleRefreshLiveListClick(query?: { groupId?: number | 'all'; userId?: string | number | undefined }): void {
     startRefreshLiveListStartTransition(async (): Promise<void> => {
       try {
-        const { groupId, userId }: { groupId?: number | 'all'; userId?: string | number | undefined } = form.getFieldsValue();
+        const { groupId, userId }: { groupId?: number | 'all'; userId?: string | number | undefined } = { ...form.getFieldsValue(), ...query };
         const res: LiveData = await requestLiveList('0', false, groupId, userId);
 
         if (!res.success || !res.content) {
@@ -456,6 +464,8 @@ function Pocket48Record(props: {}): ReactElement {
           return;
         }
 
+        setNoMore(res.content.liveList.length === 0);
+        setRefreshCount((count: number): number => count + 1);
         dispatch(setRecordList({
           next: res.content.next,
           data: res.content.liveList
@@ -467,10 +477,13 @@ function Pocket48Record(props: {}): ReactElement {
     });
   }
 
-  // 渲染分页
-  function showTotalRender(total: number, range: [number, number]): ReactElement {
-    return <Button size="small" onClick={ handleLoadRecordListClick }>加载列表</Button>;
-  }
+  const pagination: TablePaginationConfig = useAutoLoadMore({
+    loaded: recordList.length,
+    loading: refreshLiveListLoading,
+    noMore,
+    onLoadMore: handleLoadRecordListClick,
+    resetKey: String(refreshCount)
+  });
 
   const columns: ColumnsType<LiveInfo> = [
     {
@@ -570,7 +583,7 @@ function Pocket48Record(props: {}): ReactElement {
     proxyServerInit();
 
     // 进入页面时列表是空的就自动加载一次（以前要先点「加载列表」）
-    recordList.length === 0 && handleRefreshLiveListClick(undefined as unknown as MouseEvent);
+    recordList.length === 0 && handleRefreshLiveListClick();
   }, []);
 
   return (
@@ -582,12 +595,22 @@ function Pocket48Record(props: {}): ReactElement {
             <div className="relative inline-block mr-[8px] align-super">
               <Space.Compact>
                 <Form.Item name="groupId" noStyle={ true }>
-                  <Select className="w-[130px]" options={ groupIdSelectOptions } />
+                  <Select className="w-[130px]"
+                    options={ groupIdSelectOptions }
+                    onChange={ (groupId: number | 'all'): void => handleRefreshLiveListClick({ groupId }) }
+                  />
                 </Form.Item>
                 <Form.Item name="userId" noStyle={ true }>
+                  {/* 选中成员就只显示这位成员的录播；清空就回到全部；直接输入 ID 后按回车也行 */}
                   <AutoComplete className="w-[250px]"
-                    placeholder="搜索支持姓名、ID、拼音"
+                    placeholder="搜索成员：姓名、ID、拼音"
+                    allowClear={ true }
                     onSearch={ handleByContentSearch }
+                    onSelect={ (userId: string): void => handleRefreshLiveListClick({ userId }) }
+                    onClear={ (): void => handleRefreshLiveListClick({ userId: undefined }) }
+                    onKeyDown={ (event: KeyboardEvent): void => {
+                      event.key === 'Enter' && !userIdSearchResult.length && handleRefreshLiveListClick();
+                    } }
                     options={ userIdSearchResult }
                   />
                 </Form.Item>
@@ -596,10 +619,7 @@ function Pocket48Record(props: {}): ReactElement {
                 { userIdSearchLoading && <Spin size="small" indicator={ <IconLoadingOutlined spin={ true } /> } /> }
               </div>
             </div>
-            <Space.Compact>
-              <Button type="primary" onClick={ handleLoadRecordListClick }>加载列表</Button>
-              <Button onClick={ handleRefreshLiveListClick }>刷新列表</Button>
-            </Space.Compact>
+            <Button onClick={ (): void => handleRefreshLiveListClick() }>刷新</Button>
           </Space>
         </Form>
       </Header>
@@ -611,10 +631,7 @@ function Pocket48Record(props: {}): ReactElement {
         bordered={ true }
         loading={ refreshLiveListLoading }
         rowKey="liveId"
-        pagination={{
-          showQuickJumper: true,
-          showTotal: showTotalRender
-        }}
+        pagination={ pagination }
       />
       { modalContextHolder }
       { messageContextHolder }

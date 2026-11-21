@@ -23,6 +23,9 @@ describe('parseGlossary', (): void => {
 
     expect(glossary.hints.some((line: string): boolean => line.startsWith('袋王：'))).toBe(true);
     expect(glossary.hints.some((line: string): boolean => line.startsWith('叶总：'))).toBe(true);
+    expect(glossary.hints.some((line: string): boolean => line.startsWith('娜姐：闫娜'))).toBe(true);
+    // 「那姐」不做强制替换：「那姐姐呢」「那姐妹们」这种正常的话会被改坏
+    expect(glossary.replacements.some((item: { from: string }): boolean => item.from.includes('那姐'))).toBe(false);
     expect(glossary.replacements).toEqual(expect.arrayContaining([{ from: '代王', to: '袋王' }, { from: '艺龙', to: '叶总' }]));
   });
 });

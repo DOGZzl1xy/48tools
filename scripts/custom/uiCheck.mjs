@@ -115,6 +115,32 @@ try {
   // 录播下载：进入时自己加载
   await go('#/48/Pocket48Record', 'record', 6000);
   check('录播下载：进入后自动加载列表', (await win.locator('.ant-table-tbody tr.ant-table-row').count()) > 0);
+  check('录播下载：没有「加载列表」按钮（翻到最后一页自动加载）', (await win.getByRole('button', { name: /加载列表/ }).count()) === 0);
+
+  // 翻到最后一页：自动加载下一批，列表变长
+  const loadedBefore = await win.evaluate(() => document.querySelector('.ant-pagination-total-text')?.textContent ?? '');
+  const lastPage = win.locator('.ant-pagination-item').last();
+
+  await lastPage.click();
+  await sleep(5000);
+
+  const loadedAfter = await win.evaluate(() => document.querySelector('.ant-pagination-total-text')?.textContent ?? '');
+
+  check('录播下载：翻到最后一页会自动加载更多', /已加载 \d+ 条/.test(loadedBefore) && loadedAfter !== loadedBefore, `${ loadedBefore } → ${ loadedAfter }`);
+  await win.locator('.ant-pagination-item').first().click(); // 回到第一页，下面的自动切片检查从第一页找视频直播
+  await sleep(500);
+
+  // 公演录播：进来时提示先选队伍，选了就自动加载
+  await go('#/48/InVideo', 'in-video', 1500);
+  check('公演录播：提示先选择队伍', (await win.locator('.ant-select-selection-placeholder', { hasText: '先选择队伍' }).count()) === 1
+    && (await win.getByText('先在右上角选择队伍').count()) > 0);
+  await win.locator('.ant-select').first().click();
+  await sleep(400);
+  await win.locator('.ant-select-item-option', { hasText: 'SNH48' }).first().click();
+  await sleep(6000);
+  check('公演录播：选了队伍就自动加载', (await win.locator('.ant-table-tbody tr.ant-table-row').count()) > 0);
+  await win.screenshot({ path: path.join(SHOTS, 'in-video.png') });
+  await go('#/48/Pocket48Record', 'record-again', 2000); // 回到录播下载，下面检查自动切片
 
   // 自动切片：只打开对话框看一眼就取消，不开始任务。列表里可能全是电台（没有这一项），所以多试几行
   let highlightDialog = null;
@@ -157,7 +183,15 @@ try {
   check('下载队列：能打开', (await win.locator('.ant-drawer-open').count()) > 0);
   check('下载队列：有「清除记录」', (await win.locator('.ant-drawer-open .ant-drawer-extra button', { hasText: '清除记录' }).count()) === 1);
   await win.screenshot({ path: path.join(SHOTS, 'queue.png') });
-  await win.keyboard.press('Escape');
+
+  // 隐藏系统标题栏时，最上面一条是拖动窗口的区域，面板的关闭按钮落在那里就点不动（点了没反应），要在它下面
+  const titleBarBottom = await win.locator('.shell-titlebar').evaluate((el) => el.getBoundingClientRect().bottom).catch(() => 0);
+  const closeTop = await win.locator('.ant-drawer-open .ant-drawer-close').evaluate((el) => el.getBoundingClientRect().top);
+
+  check('下载队列：关闭按钮不在标题栏里', closeTop >= titleBarBottom, `关闭按钮 ${ Math.round(closeTop) }px，标题栏到 ${ Math.round(titleBarBottom) }px`);
+  await win.locator('.ant-drawer-open .ant-drawer-close').click();
+  await sleep(500);
+  check('下载队列：点关闭按钮能关上', (await win.locator('.ant-drawer-open').count()) === 0);
 } catch (error) {
   check(`检查中途出错：${ String(error?.message ?? error).slice(0, 300) }`, false);
   await win.screenshot({ path: path.join(SHOTS, 'error.png') }).catch(() => undefined);

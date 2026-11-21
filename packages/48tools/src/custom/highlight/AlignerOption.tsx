@@ -2,7 +2,7 @@ import type { ReactElement } from 'react';
 import { Button, Popconfirm, Progress, Space, Tag, Typography } from 'antd';
 import Row from '../settings/SettingsRow';
 import {
-  useAlignerState, installAligner, cancelAlignerInstall, uninstallAligner, ALIGNER_DOWNLOAD_MB, ALIGNER_DISK_MB, type AlignerState
+  useAlignerState, installAligner, cancelAlignerInstall, uninstallAligner, ALIGNER_DOWNLOAD_MB, type AlignerState
 } from './alignerPlugin';
 
 /**
@@ -13,11 +13,7 @@ function AlignerOption(props: {}): ReactElement {
   const state: AlignerState = useAlignerState();
 
   return (
-    <Row label="本地打轴模型（可选）"
-      hint={ '给字幕定时间用。不装时字幕的时间由 Gemini 给（再用声音里的停顿和音节对一遍），偶尔会有几句对不准；'
-        + '装了以后由本机的识别模型给每个字定时间，更准，每次结果都一样，音频也不会多发给任何人。'
-        + `从 GitHub（k2-fsa/sherpa-onnx）下载约 ${ ALIGNER_DOWNLOAD_MB }MB，装好后占约 ${ ALIGNER_DISK_MB }MB，装在本机的用户文件夹里，随时可以卸载。` }
-    >
+    <Row label="本地打轴模型（可选）">
       <Space direction="vertical" size={ 6 } className="w-full">
         <Space size={ 8 } wrap={ true }>
           <Tag className="mr-0" color={ state.installed ? 'success' : 'default' }>{ state.installed ? '已安装' : '未安装' }</Tag>

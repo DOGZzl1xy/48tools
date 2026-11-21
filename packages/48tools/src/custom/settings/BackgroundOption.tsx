@@ -66,13 +66,7 @@ function BackgroundOption(props: {}): ReactElement {
       <div className="settings-row">
         <div className="settings-row-label">
           <b>关闭窗口后留在后台</b>
-          <small>
-            {
-              state?.supported === false
-                ? '这个系统上暂时不支持。'
-                : '打开后，点窗口右上角的 × 只是把窗口收起来，直播抓取、下载和房间新消息检查会继续。在屏幕右下角的托盘里单击 48tools 图标可以重新打开窗口。'
-            }
-          </small>
+          { state?.supported === false ? <small>这个系统上暂时不支持。</small> : null }
         </div>
         <div className="settings-row-control">
           <Switch checked={ state?.enabled ?? false }

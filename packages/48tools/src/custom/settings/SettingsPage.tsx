@@ -150,7 +150,7 @@ function SettingsPage(props: {}): ReactElement {
       <section id="settings-live">
         <h2>直播抓取</h2>
         <Row label="启动后自动开始自动抓取"
-          hint="程序启动几秒后自动开始监听并录制（要先在自动抓取配置里选好成员）。录制方式用上次手动开始时选的，没选过就用 flv。关掉后要到「直播抓取」页面手动点开始。"
+          hint="程序启动几秒后自动开始监听并录制（要先在自动抓取配置里选好成员）。录制方式用上次手动开始时选的，没选过就用 flv。"
         >
           <Space wrap={ true }>
             <Switch checked={ resolveSetting(overrides, 'autoGrabAutoStart') !== false }
@@ -224,7 +224,7 @@ function SettingsPage(props: {}): ReactElement {
 
       <section id="settings-about">
         <h2>关于</h2>
-        <Row label={ document.title } hint="在原版 48tools（段昊辰开发的免费软件）基础上修改的自定义版本。">
+        <Row label={ document.title }>
           <Space wrap={ true }>
             <Button icon={ <IconFileSyncOutlined /> }
               onClick={ (): void => safeOpenExternal('https://yzb1g5r02h.feishu.cn/docx/MxfydWlNaovZ5sxsbJ5crnAlnVb') }
