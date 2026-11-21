@@ -178,7 +178,9 @@ export async function agyJson<T>(ask: AgyAsk, options: { model?: string; command
   await fsP.mkdir(dir, { recursive: true });
 
   try {
-    for (const file of input.files) await fsP.writeFile(path.join(dir, file.name), Buffer.from(file.data, 'base64'));
+    // 不用 for 循环：这个项目打包后，循环头部紧跟着的 node 模块调用会出错（打包时有检查）
+    await Promise.all(input.files.map((file: { name: string; data: string }): Promise<void> => (
+      fsP.writeFile(path.join(dir, file.name), Buffer.from(file.data, 'base64')))));
 
     const stdout: string = await new Promise((resolve: (value: string) => void, reject: (reason: Error) => void): void => {
       const child: ChildProcessWithoutNullStreams = spawn(options.command || agyDefaults.command, [
