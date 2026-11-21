@@ -31,7 +31,8 @@ export interface CaptionLine {
 /* 模型给一个片段写的东西：逐句字幕、标题、简介、封面上的看点 */
 export interface ClipScript {
   lines: Array<CaptionLine>;
-  title: string;
+  title: string;           // 画面和封面上用的标题（titles 的第一个）
+  titles?: Array<string>;  // 模型给的三个不同风格的标题，让发视频的人挑；以前存下来的结果里没有这一项
   description: string;
   points: Array<string>;
   people?: Array<string>; // 除了主播以外的主角（连麦的人、被认真讨论的成员），标题里会带上；以前存下来的结果里没有这一项

@@ -31,6 +31,8 @@ const WHITE: string = '&HFFFFFF&';
 const YELLOW: string = '&H4DE1FF&';    // ASS 的颜色是 BBGGRR
 const NICKNAME: string = '&HFFD0A6&';
 const TITLE_Y: number = 96;
+const TITLE_SIZE: number = 66; // 成片上标题和右上角小字的大小（像素）
+const TAG_SIZE: number = 34;
 const CAPTION_Y: number = 330;
 const PANEL: { x1: number; y1: number; x2: number; y2: number } = { x1: LEFT_WIDTH + 44, y1: 566, x2: W - 44, y2: H - 40 };
 const DANMU: { size: number; lineHeight: number; gap: number; maxUnits: number; x: number; bottom: number; top: number } = {
@@ -299,7 +301,12 @@ export function buildVideoAss(input: VideoAssInput): string {
   add(0, 0, total, 'Shape', `{\\an7\\pos(0,0)\\p1\\c&H000000&\\1a&HB8&}${ rect(PANEL.x1, PANEL.y1, PANEL.x2, PANEL.y2) }{\\p0}`);
   add(0, 0, total, 'Shape',
     `{\\an7\\pos(0,0)\\p1\\c${ YELLOW }}${ rect(LEFT_WIDTH + 44, TITLE_Y - 30, LEFT_WIDTH + 54, TITLE_Y + 30) }{\\p0}`);
-  add(1, 0, total, 'Title', `{\\an4\\pos(${ LEFT_WIDTH + 76 },${ TITLE_Y })}${ assEscape(title) }`);
+  // 标题和右边的成员、日期在同一行：标题长了就缩小，不压到右边的字（11 个字以内是原来的大小）
+  const titleLeft: number = LEFT_WIDTH + 76;
+  const titleRoom: number = W - 48 - (textWidth(tag) * TAG_SIZE) - 48 - titleLeft;
+  const titleSize: number = Math.min(TITLE_SIZE, Math.floor(titleRoom / Math.max(1, textWidth(title))));
+
+  add(1, 0, total, 'Title', `{\\an4\\pos(${ titleLeft },${ TITLE_Y })\\fs${ fontSize(titleSize, fonts) }}${ assEscape(title) }`);
   add(1, 0, total, 'Tag', `{\\an6\\pos(${ W - 48 },${ TITLE_Y })}${ assEscape(tag) }`);
   add(1, 0, total, 'Tag', `{\\an7\\pos(${ PANEL.x1 + 24 },${ PANEL.y1 + 14 })}弹幕`);
 
@@ -358,8 +365,8 @@ export function buildVideoAss(input: VideoAssInput): string {
 
   return assDocument([
     style('Caption', fonts.text, fontSize(76, fonts), '&H00FFFFFF', '&H66000000', false, 2, 3, 5),
-    style('Title', fonts.heavy, fontSize(66, fonts), '&H00FFFFFF', '&H00000000', fonts.heavyBold, 1, 0, 4),
-    style('Tag', fonts.regular, fontSize(34, fonts), '&H30FFFFFF', '&H00000000', false, 1, 0, 7),
+    style('Title', fonts.heavy, fontSize(TITLE_SIZE, fonts), '&H00FFFFFF', '&H00000000', fonts.heavyBold, 1, 0, 4),
+    style('Tag', fonts.regular, fontSize(TAG_SIZE, fonts), '&H30FFFFFF', '&H00000000', false, 1, 0, 7),
     style('Danmu', fonts.regular, fontSize(DANMU.size, fonts), '&H00FFFFFF', '&H00000000', false, 0, 0, 1),
     style('Shape', 'Arial', 20, '&H00FFFFFF', '&H00000000', false, 0, 0, 7)
   ], events);
@@ -420,14 +427,18 @@ export function splitTitle(title: string): Array<string> {
   if (textWidth(title) <= 7) return [title];
 
   const middle: number = Math.ceil(chars.length / 2);
-  let at: number = middle;
+  const spots: Array<number> = []; // 可以断开的位置：标点后面、左括号前面（「北大不比北芭差」/「（bushi）」）
 
-  for (const offset of [0, -1, 1, -2, 2]) {
-    if (/[，、！？,!?\s：:]/.test(chars[middle + offset - 1] ?? '')) {
-      at = middle + offset;
-      break;
-    }
-  }
+  chars.forEach((ch: string, index: number): void => {
+    if (/[，、！？,!?\s：:]/.test(ch)) spots.push(index + 1);
+
+    if (/[（(]/.test(ch)) spots.push(index);
+  });
+
+  // 取离正中间最近的那个（差得不超过 3 个字），没有就在正中间断
+  const at: number = spots
+    .filter((spot: number): boolean => spot > 0 && spot < chars.length && Math.abs(spot - middle) <= 3)
+    .sort((a: number, b: number): number => Math.abs(a - middle) - Math.abs(b - middle))[0] ?? middle;
 
   return [chars.slice(0, at).join('').replace(/[，,\s]+$/, ''), chars.slice(at).join('').trim()].filter((row: string): boolean => row !== '');
 }

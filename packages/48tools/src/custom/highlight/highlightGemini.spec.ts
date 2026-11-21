@@ -130,12 +130,13 @@ describe('片段的字幕、标题、简介', (): void => {
   test('读出句子、标题、简介、看点', (): void => {
     const script: ReturnType<typeof readScript> = readScript({
       lines: [{ start: 1.5, end: 3, text: '一句话', keep: true, emphasis: ['一句'] }, { start: '4', end: 5, text: '另一句' }],
-      title: ' 新标题 ',
+      titles: [' 新标题 ', '第二个标题。', '新标题', '', '第三个标题？', '第四个不要'],
       description: '第一句。第二句。',
       points: ['看点一', ' ', '看点二']
     }, highlight);
 
     expect(script.title).toBe('新标题');
+    expect(script.titles).toEqual(['新标题', '第二个标题', '第三个标题？']);
     expect(script.description).toBe('第一句。第二句。');
     expect(script.points).toEqual(['看点一', '看点二']);
     expect(script.lines).toEqual([
@@ -144,16 +145,28 @@ describe('片段的字幕、标题、简介', (): void => {
     ]);
   });
 
-  test('标题结尾的标点和外面的括号去掉，中间的留着', (): void => {
+  test('标题结尾的句号感叹号和外面的书名号去掉；中间的标点、结尾的问号和括号吐槽留着', (): void => {
     expect(cleanTitle(' 没小号只能用大号夸自己！ ')).toBe('没小号只能用大号夸自己');
     expect(cleanTitle('「忘切小号？用大号自吹好萌」')).toBe('忘切小号？用大号自吹好萌');
-    expect(readScript({ lines: [], title: '卡凳还卡电梯有多社死？！' }, highlight).title).toBe('卡凳还卡电梯有多社死');
+    expect(cleanTitle('北大不比北芭差（bushi）。')).toBe('北大不比北芭差（bushi）');
+    expect(cleanTitle('这算不算一种自产自销?')).toBe('这算不算一种自产自销？');
+    expect(readScript({ lines: [], title: '卡凳还卡电梯有多社死？！' }, highlight).title).toBe('卡凳还卡电梯有多社死？');
+  });
+
+  test('取标题的规则：要「串」、给了正反例、最长 16 个字', (): void => {
+    const prompt: string = scriptRequest({ member: '测试成员', title: '测试直播' }, highlight, 60, 'QUJD', []).parts[0].text!;
+
+    expect(prompt).toContain('「串」感');
+    expect(prompt).toContain('口误把北大说成北芭笑疯了 → 北大不比北芭差（bushi）');
+    expect(prompt).toContain('三个风格不同的标题');
+    expect(prompt).toContain('16 个字以内');
+    expect(prompt).toContain('不能编造');
   });
 
   test('没给标题、简介、看点时用第一步的', (): void => {
     const script: ReturnType<typeof readScript> = readScript({ lines: [] }, highlight);
 
-    expect([script.title, script.description, script.points, script.people]).toEqual(['第一步的标题', '理由', ['封面的话'], []]);
+    expect([script.title, script.titles, script.description, script.points, script.people]).toEqual(['第一步的标题', ['第一步的标题'], '理由', ['封面的话'], []]);
   });
 
   test('其他主角：提示里说清楚什么人算；读结果时去掉主播自己', (): void => {

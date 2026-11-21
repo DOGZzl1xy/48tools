@@ -57,6 +57,7 @@ describe('封面候选和说明文字', (): void => {
       index: 1,
       title: '标题在这',
       postTitle: '【测试成员】标题在这 | 20261115 直播切片',
+      otherTitles: ['【测试成员】第二个标题 | 20261115 直播切片', '【测试成员】第三个标题？ | 20261115 直播切片'],
       description: '第一句。第二句。',
       points: ['看点一', '看点二'],
       people: [],
@@ -67,6 +68,8 @@ describe('封面候选和说明文字', (): void => {
     });
 
     expect(text).toContain('标题：【测试成员】标题在这 | 20261115 直播切片');
+    expect(text).toContain('备选标题');
+    expect(text).toContain('  【测试成员】第三个标题？ | 20261115 直播切片');
     expect(text).toContain('简介：第一句。第二句。');
     expect(text).toContain('看点：看点一 / 看点二');
     expect(text).toContain('录播 20:30 ~ 22:15');

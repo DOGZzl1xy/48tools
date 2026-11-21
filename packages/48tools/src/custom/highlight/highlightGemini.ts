@@ -35,6 +35,7 @@ export const highlightDefaults: { model: string; baseUrl: string } = {
 const REQUEST_TIMEOUT: number = 600_000;
 const RETRY_DELAY: number = 6_000;
 const DANMU_TEXT_LENGTH: number = 60;
+const MAX_TITLES: number = 3;
 
 export class HighlightStopped extends Error {
   constructor() {
@@ -249,7 +250,11 @@ export function scriptRequest(
 三、标出重点（emphasis）：这一句里最有梗、最关键的词或短语，原样抄写（必须是这一句里连续出现的字）。大部分句子没有重点，留空数组；整段里有重点的句子不要超过三分之一。
 
 四、给这个短视频写：
-- title：标题，12 个字以内，口语化，可以带一点悬念，不要和内容不符。不要标点符号，不用写主播自己的名字（发布时会在前面加上【主播名字】）。例如：忘切小号用大号自吹好萌。
+- titles：三个风格不同的标题，让发视频的人挑。第一个放你觉得最吸引人的（画面和封面上用它）。模仿很会玩梗的饭圈切片手，写出「串」感（抽象、一本正经地胡说、善意的锐评），让人一眼就想点进来；不要写成概括事情经过的新闻摘要。
+  · 三个标题要用三种不同的手法，角度和句式都不要重复：直接截取或稍微改编她最好笑的那句原话；顺着她的逻辑下一个离谱的结论；抓前后言行的反差；用设问句阴阳吐槽；说反话时在结尾加（bushi）（确信）这类括号吐槽（三个里最多一个用括号）。
+  · 不要用「把A说成B笑疯了」「竟然…」「当场破防」「原因竟是…」这种讲经过的公式句，不要用「笑疯了」「太好笑了」替观众下结论。
+  · 对比（前面是不要的写法，后面是要的）：口误把北大说成北芭笑疯了 → 北大不比北芭差（bushi）；自信展示画作却忘画下巴 → 登顶神作，但是没有下巴；直播自嘲今天脸有点水肿 → 我只是稍微富态了一点点；前一秒深情清唱下一秒破音 → 帅不过三秒属于是；忘切小号用大号自吹 → 这算不算一种自产自销。
+  · 每个 16 个字以内（括号里的也算）。梗要来自这段里真的说过、发生过的事，不能编造；不低俗，不攻击成员和粉丝。不用写主播自己的名字（发布时会在前面加上【主播名字】）。结尾不要句号和感叹号。
 - description：视频简介，2 到 3 句话，说清楚是谁、在聊什么、看点在哪，像粉丝发视频时写的简介，不要加话题标签。
 - points：写在封面上的 2 到 3 个看点，每个 10 个字以内，口语化。
 - people：留下来的这部分里，除了主播以外的主角是谁（发布时标题前面会写成【主播&她】）。只有两种人算：
@@ -281,19 +286,19 @@ ${ danmu.map((item: DanmuLine): string => item.message.slice(0, DANMU_TEXT_LENGT
             required: ['start', 'end', 'text', 'keep', 'emphasis']
           }
         },
-        title: { type: 'STRING' },
+        titles: { type: 'ARRAY', items: { type: 'STRING' } },
         description: { type: 'STRING' },
         points: { type: 'ARRAY', items: { type: 'STRING' } },
         people: { type: 'ARRAY', items: { type: 'STRING' } }
       },
-      required: ['lines', 'title', 'description', 'points', 'people']
+      required: ['lines', 'titles', 'description', 'points', 'people']
     }
   };
 }
 
-/* 短标题：去掉模型有时还是会加的书名号、结尾的标点（发布时前后还要拼上名字和日期） */
+/* 短标题：去掉模型有时还是会加的书名号、结尾的句号感叹号等（发布时前后还要拼上名字和日期）；结尾的问号和括号吐槽是标题的一部分，留着 */
 export function cleanTitle(title: string): string {
-  return title.trim().replace(/^[【「『《]+|[】」』》]+$/g, '').replace(/[！!？?。，,、~～…\s]+$/g, '').trim();
+  return title.trim().replace(/^[【「『《]+|[】」』》]+$/g, '').replace(/[！!。，,、~～…\s]+$/g, '').replace(/[?？][！!?？]*$/, '？').trim();
 }
 
 /* 第 2 步的结果：缺的东西用第 1 步的补上；member 是主播（「其他主角」里不能有她自己） */
@@ -309,9 +314,17 @@ export function readScript(data: any, highlight: Highlight, member: string = '')
     .map((point: unknown): string => String(point ?? '').trim())
     .filter((point: string): boolean => point !== '');
 
+  // 三个标题：去掉空的和重复的。以前只有一个 title（存下来的旧结果），也认
+  const titles: Array<string> = Array.from(new Set([...(Array.isArray(data?.titles) ? data.titles : []), data?.title]
+    .map((title: unknown): string => cleanTitle(String(title ?? '')))
+    .filter((title: string): boolean => title !== ''))).slice(0, MAX_TITLES);
+
+  if (titles.length === 0) titles.push(cleanTitle(highlight.title));
+
   return {
     lines,
-    title: cleanTitle(String(data?.title ?? '')) || cleanTitle(highlight.title),
+    title: titles[0],
+    titles,
     description: String(data?.description ?? '').trim() || highlight.reason,
     points: points.length > 0 ? points : [highlight.cover].filter((point: string): boolean => point !== ''),
     people: cleanPeople(data?.people, member)

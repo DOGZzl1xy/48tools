@@ -1,7 +1,8 @@
 import * as fs from 'node:fs';
 import { shell } from 'electron';
 import type { ReactElement } from 'react';
-import { Drawer, Progress, Tag, Button, Empty, Typography, Space } from 'antd';
+import { App, Drawer, Progress, Tag, Button, Empty, Typography, Space, Tooltip } from 'antd';
+import type { useAppProps } from 'antd/es/app/context';
 import { useShellState, setQueueOpen, type ShellState } from '../shell/shellStore';
 import {
   useQueueTasks,
@@ -14,6 +15,7 @@ import {
 /**
  * 下载队列的界面：从右边滑出的任务列表。入口是侧边栏底部的「下载队列」（显示正在进行的任务数和总进度）。
  * 数据来自 ./downloadQueue，开关状态在 shell/shellStore。失败或停止的任务有「重试」（这次运行里开始的任务才有）。
+ * 右上角「清除记录」把已经结束的任务从列表里拿掉（文件不删），每一条上的「移除」只拿掉那一条。
  * 由 custom/shell/AppShell 渲染，所有页面都能打开。
  */
 const statusText: Record<QueueTaskStatus, string> = {
@@ -89,12 +91,25 @@ function DownloadQueuePanel(props: {}): ReactElement {
   const { queueOpen }: ShellState = useShellState();
   const running: Array<QueueTask> = tasks.filter((task: QueueTask): boolean => task.status === 'running');
   const hasFinished: boolean = running.length < tasks.length;
+  const { message: messageApi }: useAppProps = App.useApp();
+
+  /* 清除记录：只是把已经结束的从列表里拿掉，文件还在 */
+  function handleClearClick(): void {
+    const count: number = tasks.length - running.length;
+
+    queueClearFinished();
+    messageApi.success(`已清除 ${ count } 条记录，下载好的文件还在`);
+  }
 
   return (
     <Drawer title={ `下载队列${ running.length > 0 ? `（进行中 ${ running.length }）` : '' }` }
       open={ queueOpen }
       width={ 440 }
-      extra={ hasFinished ? <Button size="small" onClick={ queueClearFinished }>清除已结束</Button> : null }
+      extra={ (
+        <Tooltip title="只清掉这里已经结束的记录（完成、失败、停止的），下载好的文件不会删除；进行中的任务不受影响" placement="bottomRight">
+          <Button size="small" disabled={ !hasFinished } onClick={ handleClearClick }>清除记录</Button>
+        </Tooltip>
+      ) }
       onClose={ (): void => setQueueOpen(false) }
     >
       {

@@ -116,6 +116,17 @@ describe('buildVideoAss / renderFilter', (): void => {
     expect(ass).not.toContain('谢谢礼物');
   });
 
+  test('标题太长时缩小，不压到右上角的成员和日期；短的保持原来的大小', (): void => {
+    const sizeOf: (title: string) => number = (title: string): number => Number(/,Title,.*\\fs(\d+)/.exec(buildVideoAss({
+      title, tag: 'SNH48 测试成员  2026.11.15', lines: [], segments, total: 20, danmu: [], fonts
+    }))?.[1]);
+    const normal: number = sizeOf('被说一笑就老气到回怼');
+
+    expect(sizeOf('好萌')).toBe(normal);
+    expect(sizeOf('没人叫妈怎么了，小孩就不能打瓦吗')).toBeLessThan(normal * 0.8);
+    expect(sizeOf('没人叫妈怎么了，小孩就不能打瓦吗')).toBeGreaterThan(normal * 0.5);
+  });
+
   test('字幕的时间是成片里的时间', (): void => {
     expect(ass).toMatch(/Dialogue: 2,0:00:01\.00,[^,]+,Caption/);   // 片段 11 秒 → 成片 1 秒
     expect(ass).toMatch(/Dialogue: 2,0:00:11\.00,[^,]+,Caption/);   // 片段 41 秒 → 成片 11 秒
@@ -137,6 +148,12 @@ describe('封面', (): void => {
     expect(splitTitle('好萌')).toEqual(['好萌']);
     expect(splitTitle('忘切小号！用大号自吹好萌')).toEqual(['忘切小号！', '用大号自吹好萌']);
     expect(splitTitle('被说一笑就老气到回怼')).toEqual(['被说一笑就', '老气到回怼']);
+  });
+
+  test('结尾的括号吐槽单独一行；逗号离中间远一点也在逗号后面断', (): void => {
+    expect(splitTitle('北大不比北芭差（bushi）')).toEqual(['北大不比北芭差', '（bushi）']);
+    expect(splitTitle('登顶神作，但是没有下巴')).toEqual(['登顶神作', '但是没有下巴']);
+    expect(splitTitle('只要礼物到位，串子也冰清玉洁')).toEqual(['只要礼物到位', '串子也冰清玉洁']);
   });
 
   test('封面上有标题、成员和最多三个看点', (): void => {

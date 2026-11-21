@@ -155,6 +155,7 @@ try {
   await win.locator('.shell-footer button.shell-item').first().click();
   await sleep(700);
   check('下载队列：能打开', (await win.locator('.ant-drawer-open').count()) > 0);
+  check('下载队列：有「清除记录」', (await win.locator('.ant-drawer-open .ant-drawer-extra button', { hasText: '清除记录' }).count()) === 1);
   await win.screenshot({ path: path.join(SHOTS, 'queue.png') });
   await win.keyboard.press('Escape');
 } catch (error) {

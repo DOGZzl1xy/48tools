@@ -22,7 +22,7 @@ import type { AudioWindow, CaptionLine, ClipScript, DanmuLine, Highlight, Highli
  *   1. 取录播地址和弹幕文件，把整场录播下载到工作文件夹（同时下 4 个分片，不重新编码，见 ./highlightDownload）
  *   2. 每半小时一段，音频和弹幕（只有时间和内容）交给 Gemini，找出可能成为爆点的片段和时间
  *   3. 各段的结果合在一起按分数排，决定做哪几个（用户选的数量，或者自动）
- *   4. 每个片段前后多留十几秒再交给 Gemini：出逐句字幕、每句留不留、重点词、标题、简介、看点、除了主播还有谁是主角
+ *   4. 每个片段前后多留十几秒再交给 Gemini：出逐句字幕、每句留不留、重点词、三个不同风格的标题（第一个用在画面上）、简介、看点、除了主播还有谁是主角
  *   5. 按留下的句子剪掉沉默和无关的话，合成横屏视频；再从成片里挑一帧做封面（16:9 和 4:3 各一张）
  *   6. 成片、两张封面、说明（标题和简介）放进输出文件夹；工作文件夹用完删掉
  * 中途失败或停止时工作文件夹留着，重试时下载好的录播和已经问过 Gemini 的结果不用重来。
@@ -67,6 +67,7 @@ export interface ClipResult {
   index: number;
   title: string;       // 模型取的短标题（画面和封面上用）
   postTitle: string;   // 发布时用的标题：【沈馨】短标题 | 20261115 直播切片（有其他主角时是【沈馨&徐佳琳】）
+  otherTitles: Array<string>; // 另外两个风格的标题（也是发布用的完整写法），想换的时候用
   description: string;
   points: Array<string>;
   people: Array<string>; // 除了主播以外的主角（连麦的人、被认真讨论的成员）
@@ -149,6 +150,7 @@ export function coverTimes(lines: Array<CaptionLine>, segments: Array<Segment>, 
 export function clipInfoText(job: Pick<HighlightJob, 'member' | 'title' | 'date'>, clip: ClipInfo): string {
   return [
     `标题：${ clip.postTitle }`,
+    ...(clip.otherTitles.length > 0 ? ['备选标题（另外两种风格，画面和封面上用的是上面那个）：', ...clip.otherTitles.map((title: string): string => `  ${ title }`)] : []),
     '',
     `简介：${ clip.description }`,
     '',
@@ -299,6 +301,8 @@ async function makeClip(
     index,
     title: script.title,
     postTitle: postTitle(job.member, job.date, script.title, script.people),
+    otherTitles: (script.titles ?? []).filter((title: string): boolean => title !== script.title)
+      .map((title: string): string => postTitle(job.member, job.date, title, script.people)),
     people: script.people ?? [],
     description: script.description,
     points: script.points,
@@ -476,6 +480,7 @@ export async function processHighlight(
       ...clips.flatMap((clip: ClipResult): Array<string> => [
         `${ String(clip.index).padStart(2, '0') }. ${ clip.postTitle }（${ clock(clip.start) } ~ ${ clock(clip.end) }，${
           Math.round(clip.duration) } 秒，${ clip.score } 分）`,
+        ...clip.otherTitles.map((title: string): string => `    备选：${ title }`),
         `    ${ clip.description }`,
         ''
       ]),
