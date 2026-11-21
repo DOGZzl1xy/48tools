@@ -106,7 +106,7 @@ try {
   await win.screenshot({ path: path.join(SHOTS, 'settings.png') });
   check('设置：分区导航', (await win.locator('.settings-nav button').count()) >= 8);
   check('设置：明暗主题可以直接选', (await win.locator('#settings-look .ant-segmented-item').count()) >= 3);
-  check('设置：录播切片', (await win.locator('#settings-highlight .settings-row').count()) === 3);
+  check('设置：录播切片', (await win.locator('#settings-highlight .settings-row').count()) === 4);
 
   // 自动抓取配置
   await go('#/48/LiveOptions', 'auto-grab');

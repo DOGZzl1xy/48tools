@@ -10,6 +10,7 @@ import {
 import { parseLrc, planWindows, mergeHighlights, targetCount, safeFileName, postTitle, clock } from './highlightTime';
 import { tidyLines, buildSegments } from './highlightCut';
 import { alignLines, envelopeOf, syllablePeaks } from './highlightAlign';
+import { timeLinesByTokens, type TimedToken, type TokenTiming } from './highlightTokens';
 import {
   placeDanmu, buildVideoAss, renderFilter, buildCoverAss, coverFilter, LEFT_WIDTH, COVER_WIDTHS, type FontSet, type PlacedDanmu
 } from './highlightAss';
@@ -24,7 +25,7 @@ import type { AudioWindow, CaptionLine, ClipScript, DanmuLine, Highlight, Highli
  *   2. 每半小时一段，音频和弹幕（只有时间和内容）交给 Gemini，找出可能成为爆点的片段和时间
  *   3. 各段的结果合在一起按分数排，决定做哪几个（用户选的数量，或者自动）
  *   4. 每个片段前后多留十几秒再交给 Gemini：出逐句字幕、每句留不留、重点词、三个不同风格的标题（第一个用在画面上）、简介、看点、除了主播还有谁是主角
- *   5. 用声音里的停顿和音节把每句话的时间对准（模型标的时间偶尔早一两秒，见 ./highlightAlign），按留下的句子剪掉沉默和无关的话，合成横屏视频；再从成片里挑一帧做封面（16:9 和 4:3 各一张）
+ *   5. 用声音里的停顿和音节把每句话的时间对准（模型标的时间偶尔早一两秒，见 ./highlightAlign）；装了本地打轴模型时再用它认出来的每个字的时间（见 ./highlightTokens），按留下的句子剪掉沉默和无关的话，合成横屏视频；再从成片里挑一帧做封面（16:9 和 4:3 各一张）
  *   6. 成片、两张封面、说明（标题和简介）放进输出文件夹；工作文件夹用完删掉
  * 中途失败或停止时工作文件夹留着，重试时下载好的录播和已经问过 Gemini 的结果不用重来。
  *
@@ -50,6 +51,8 @@ export interface HighlightDeps {
   fetchText: (url: string) => Promise<string>;
   /* 下载录播的一个分片；不给的话让 ffmpeg 自己下载整场（只有一条连接，慢） */
   fetchSegment?: SegmentFetcher;
+  /* 本地打轴：用本机的识别模型认出一段音频里每个字的时间；没装模型时返回 null（见 ./alignerPlugin） */
+  recognize?: (audioFile: string, signal?: AbortSignal) => Promise<Array<TimedToken> | null>;
   fetchImpl?: typeof fetch;
 }
 
@@ -76,6 +79,7 @@ export interface ClipResult {
   start: number;       // 在录播里的时间（秒）
   end: number;
   duration: number;    // 成片的长度（秒）
+  timing: string;      // 字幕的时间是怎么来的（写在说明里）
   video: string;
   cover: string;       // 16:9 的封面
   cover43: string;     // 4:3 的封面
@@ -159,6 +163,7 @@ export function clipInfoText(job: Pick<HighlightJob, 'member' | 'title' | 'date'
     '',
     `来源：${ job.member }「${ job.title }」${ job.date }，录播 ${ clock(clip.start) } ~ ${ clock(clip.end) }`,
     `成片长度：${ Math.round(clip.duration) } 秒，爆点分：${ clip.score }`,
+    `字幕时间：${ clip.timing }`,
     ''
   ].join('\r\n');
 }
@@ -218,7 +223,30 @@ async function makeClip(
   // 模型标的时间不稳（偶尔整段早一两秒），用声音里的停顿和音节把每句话对回去，再定剪辑点
   const silences: Array<Silence> = await detectSilences(job.ffmpeg, audio, signal);
   const peaks: Array<number> = syllablePeaks(envelopeOf(await readPcm(job.ffmpeg, audio, signal), PCM_RATE));
-  const lines: Array<CaptionLine> = alignLines(tidyLines(script.lines, clipLength), silences, peaks, clipLength);
+  let lines: Array<CaptionLine> = alignLines(tidyLines(script.lines, clipLength), silences, peaks, clipLength);
+  let timing: string = 'Gemini 标的时间，用声音里的停顿和音节对过';
+
+  // 装了本地打轴模型：用它认出来的每个字的时间。认不出来、对上的字太少、出错时保持上面的时间
+  if (deps.recognize) {
+    report('打轴', 0.3);
+
+    try {
+      const tokens: Array<TimedToken> | null = await deps.recognize(audio, signal);
+      const byTokens: TokenTiming | null = tokens && tokens.length > 0 ? timeLinesByTokens(lines, tokens, clipLength) : null;
+
+      if (byTokens?.used) {
+        lines = byTokens.lines;
+        timing = `本地模型打轴（${ byTokens.total } 个字里对上 ${ byTokens.matched } 个）`;
+      } else if (byTokens) {
+        timing += `（本地模型只对上 ${ byTokens.matched }/${ byTokens.total } 个字，没有用）`;
+      }
+    } catch (err) {
+      if (err instanceof HighlightStopped) throw err;
+
+      console.warn('本地打轴失败，用 Gemini 给的时间', err);
+      timing += '（本地打轴出错，没有用）';
+    }
+  }
   const { segments, total }: { segments: Array<Segment>; total: number } = buildSegments(lines, clipLength);
 
   if (segments.length === 0 || total < MIN_CLIP_SECONDS) {
@@ -311,7 +339,8 @@ async function makeClip(
     score: highlight.score,
     start: clipStart + segments[0].start,
     end: clipStart + segments[segments.length - 1].end,
-    duration: total
+    duration: total,
+    timing
   };
   const result: ClipResult = {
     ...info,

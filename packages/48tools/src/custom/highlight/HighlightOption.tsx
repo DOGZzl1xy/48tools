@@ -7,9 +7,10 @@ import { resolveLocalDir } from '../download/defaultSaveDir';
 import Row from '../settings/SettingsRow';
 import { highlightDefaults } from './highlightGemini';
 import { AUTO_SCORE, AUTO_SCORE_OPTIONS } from './highlightTime';
+import AlignerOption from './AlignerOption';
 
 /**
- * 设置页面里的「录播切片」：用哪个 Gemini 模型、「自动」时多少分以上才做、切片保存在哪里。
+ * 设置页面里的「录播切片」：用哪个 Gemini 模型、「自动」时多少分以上才做、切片保存在哪里、本地打轴模型装不装。
  * API key 和接口地址用「语音转文字」里 Google Gemini 的那一份，不用另外填。
  * 接入点：custom/settings/SettingsPage.tsx。
  */
@@ -61,6 +62,7 @@ function HighlightOption(props: {}): ReactElement {
           { overrides.highlightDir ? <Button onClick={ (): void => setSetting('highlightDir', undefined) }>恢复默认</Button> : null }
         </Space.Compact>
       </Row>
+      <AlignerOption />
     </Fragment>
   );
 }

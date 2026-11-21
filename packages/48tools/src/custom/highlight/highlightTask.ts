@@ -18,6 +18,8 @@ import {
 } from './highlightPipeline';
 import { highlightDefaults, type GeminiConfig } from './highlightGemini';
 import { StagedQueue, type QueueStage, type QueueOutcome } from './highlightQueue';
+import { recognizeAudio } from './alignerRun';
+import type { TimedToken } from './highlightTokens';
 import { safeFileName } from './highlightTime';
 import type { HighlightCount } from './highlightTypes';
 
@@ -130,7 +132,9 @@ const deps: HighlightDeps = {
     return { playStreamPath: res.content.playStreamPath, msgFilePath: res.content.msgFilePath };
   },
   fetchText: (url: string): Promise<string> => requestDownloadFile(url),
-  fetchSegment
+  fetchSegment,
+  // 装了本地打轴模型就用它给字幕定时间；没装时返回 null，流程用 Gemini 给的时间
+  recognize: (audioFile: string, signal?: AbortSignal): Promise<Array<TimedToken> | null> => recognizeAudio(getFFmpeg(), audioFile, signal)
 };
 
 /**

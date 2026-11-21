@@ -17,6 +17,8 @@ import {
   type HighlightResult, type HighlightProgress, type HighlightDeps, type HighlightJob, type PreparedSource
 } from './highlightPipeline';
 import { highlightDefaults } from './highlightGemini';
+import { recognizeAudio } from './alignerRun';
+import type { TimedToken } from './highlightTokens';
 import type { CaptionLine, Segment } from './highlightTypes';
 
 describe('读 ffmpeg 打印的内容', (): void => {
@@ -64,7 +66,8 @@ describe('封面候选和说明文字', (): void => {
       score: 9,
       start: 1_230,
       end: 1_335,
-      duration: 74.6
+      duration: 74.6,
+      timing: '本地模型打轴（100 个字里对上 90 个）'
     });
 
     expect(text).toContain('标题：【测试成员】标题在这 | 20261115 直播切片');
@@ -74,6 +77,7 @@ describe('封面候选和说明文字', (): void => {
     expect(text).toContain('看点：看点一 / 看点二');
     expect(text).toContain('录播 20:30 ~ 22:15');
     expect(text).toContain('成片长度：75 秒');
+    expect(text).toContain('字幕时间：本地模型打轴（100 个字里对上 90 个）');
   });
 });
 
@@ -119,7 +123,9 @@ const downloadOnly: boolean = process.env.HIGHLIGHT_ONLY === 'download';
       fs.writeFileSync(file, data);
 
       return data.length;
-    }
+    },
+    // 这台电脑上装了本地打轴模型就用它（没装时返回 null）
+    recognize: (file: string, signal?: AbortSignal): Promise<Array<TimedToken> | null> => recognizeAudio('ffmpeg', file, signal)
   };
 
   /* 进度：百分比和速度一直在变，同一步只打印一次；下载时每 10% 打印一次 */
