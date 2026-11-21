@@ -12,6 +12,7 @@ import { useHighlightDialogRecord, closeHighlightDialog } from './highlightDialo
 import { startHighlight, type HighlightRecord } from './highlightTask';
 import { highlightDefaults } from './highlightGemini';
 import { AUTO_SCORE } from './highlightTime';
+import { agyDefaults } from './highlightAgy';
 import type { HighlightCount } from './highlightTypes';
 
 /**
@@ -37,7 +38,8 @@ function HighlightDialog(props: {}): ReactElement {
   const navigate: NavigateFunction = useNavigate();
   const count: HighlightCount = resolveSetting(overrides, 'highlightCount') ?? 'auto';
   const model: string = resolveSetting(overrides, 'highlightModel') || highlightDefaults.model;
-  const hasKey: boolean = !!resolveSetting(overrides, 'sttGeminiKey');
+  const viaAgy: boolean = resolveSetting(overrides, 'highlightVia') === 'agy';
+  const hasKey: boolean = viaAgy || !!resolveSetting(overrides, 'sttGeminiKey'); // 走本机的 agy 时不需要 key
   const ownDir: string | undefined = resolveLocalDir(resolveSetting(overrides, 'highlightDir'));
   const downloadDir: string | undefined = resolveLocalDir(resolveSetting(overrides, 'downloadDir'));
   const baseDir: string | undefined = ownDir ?? (downloadDir ? path.join(downloadDir, OUT_FOLDER) : undefined);
@@ -113,7 +115,7 @@ function HighlightDialog(props: {}): ReactElement {
               </Typography.Text>
             </div>
             <Typography.Text className="block text-[12px]" type="secondary">
-              会先把整场录播下载下来（做完自动删除），再把音频和弹幕内容（不含粉丝昵称）发给 Google Gemini（{ model }）找爆点、写字幕。
+              会先把整场录播下载下来（做完自动删除），再把音频和弹幕内容（不含粉丝昵称）{ viaAgy ? `通过本机的 agy 交给 Gemini（${ resolveSetting(overrides, 'highlightAgyModel') || agyDefaults.model }，用订阅额度）` : `发给 Google Gemini（${ model }，按量付费）` }找爆点、写字幕。
               一小时的录播大约要 15 分钟，进度在下载队列和录播列表里看。可以连着加几场：前一场开始切片时，后一场就开始下载。
             </Typography.Text>
             {

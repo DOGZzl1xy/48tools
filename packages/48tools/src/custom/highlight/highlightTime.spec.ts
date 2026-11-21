@@ -1,8 +1,11 @@
 /**
  * 录播自动切片里和时间有关的计算：读弹幕文件、分段、合并爆点、决定做几个、文件名。
  */
-import { toSeconds, clock, parseLrc, planWindows, mergeHighlights, targetCount, safeFileName, postTitle, cleanPeople } from './highlightTime';
-import type { Highlight } from './highlightTypes';
+import {
+  toSeconds, clock, parseLrc, planWindows, mergeHighlights, targetCount, safeFileName, postTitle, cleanPeople,
+  isGiftDanmu, isReactionDanmu, danmuHeat
+} from './highlightTime';
+import type { DanmuLine, Highlight } from './highlightTypes';
 
 function highlight(start: number, end: number, score: number, title: string = '标题'): Highlight {
   return { start, end, score, title, cover: '', quote: '', reason: '' };
@@ -93,6 +96,18 @@ describe('mergeHighlights', (): void => {
   });
 });
 
+describe('planWindows：每段的长度和重叠可以改', (): void => {
+  test('一小时、20 分钟一段、重叠 5 分钟：0~20、15~35、30~50、45~60', (): void => {
+    expect(planWindows(3_600, 1_200, 300)).toEqual([
+      { start: 0, length: 1_200 }, { start: 900, length: 1_200 }, { start: 1_800, length: 1_200 }, { start: 2_700, length: 900 }
+    ]);
+  });
+
+  test('最后剩下不到 5 分钟就并进前一段', (): void => {
+    expect(planWindows(1_400, 1_200, 300)).toEqual([{ start: 0, length: 1_400 }]);
+  });
+});
+
 describe('targetCount', (): void => {
   const sorted: Array<Highlight> = [highlight(0, 60, 9.5), highlight(100, 160, 9), highlight(200, 260, 8.5), highlight(300, 360, 5)];
 
@@ -129,6 +144,11 @@ describe('postTitle', (): void => {
     expect(postTitle('', '', '标题')).toBe('标题 | 直播切片');
   });
 
+  test('片段里有另外的爆点：短标题用 | 接在主标题后面', (): void => {
+    expect(postTitle('SNH48 测试成员', '2026.11.21', '全队全是萝莉', [], ['傻瓜也是瓜'])).toBe('【测试成员】全队全是萝莉 | 傻瓜也是瓜 | 20261121 直播切片');
+    expect(postTitle('SNH48 测试成员', '2026.11.21', '主标题', ['成员乙'], ['第二个', ' ', '第三个'])).toBe('【测试成员&成员乙】主标题 | 第二个 | 第三个 | 20261121 直播切片');
+  });
+
   test('有其他主角时用 & 连在主播后面', (): void => {
     expect(postTitle('SNH48 测试成员', '2026.11.15', '标题', ['成员乙'])).toBe('【测试成员&成员乙】标题 | 20261115 直播切片');
     expect(postTitle('SNH48 测试成员', '2026.11.15', '标题', ['成员乙', '成员丙'])).toBe('【测试成员&成员乙&成员丙】标题 | 20261115 直播切片');
@@ -148,6 +168,44 @@ describe('cleanPeople', (): void => {
   test('模型没给或者给的不是列表', (): void => {
     expect(cleanPeople(undefined, '测试成员')).toEqual([]);
     expect(cleanPeople('成员乙', '测试成员')).toEqual([]);
+  });
+});
+
+describe('弹幕热度', (): void => {
+  function line(time: number, message: string): DanmuLine {
+    return { time, nickname: '测试粉丝', message };
+  }
+
+  test('礼物消息和反应词', (): void => {
+    expect(isGiftDanmu('送给SNH48-测试成员 1个荧光棒-SII')).toBe(true);
+    expect(isGiftDanmu('送给你一首歌')).toBe(false);
+    expect(['爆', '典中典', '串子快滚', '？？？', '哈哈哈哈', '绷不住了', '谁哭了？'].every(isReactionDanmu)).toBe(true);
+    expect(['晚上好', '今天吃什么', '哈哈'].some(isReactionDanmu)).toBe(false);
+  });
+
+  test('弹幕突然变多、反应扎堆的时刻：时间是这一段里的，礼物不算', (): void => {
+    const danmu: Array<DanmuLine> = [
+      // 平时：每半分钟两条
+      ...Array.from({ length: 60 }, (item: unknown, index: number): DanmuLine => line(1_800 + (index * 15), '日常聊天')),
+      // 1800 + 600 秒起：一下子十条，其中六条是反应
+      ...['爆', '爆', '？？？', '哈哈哈哈', '典', '绷', '这也行', '好家伙吗', '我不理解', '真的假的'].map(
+        (message: string, index: number): DanmuLine => line(2_400 + index, message)),
+      // 礼物刷屏不算
+      ...Array.from({ length: 20 }, (item: unknown, index: number): DanmuLine => line(2_000 + index, '送给SNH48-测试成员 1个荧光棒')),
+      // 这一段以外的不算
+      ...Array.from({ length: 20 }, (item: unknown, index: number): DanmuLine => line(100 + index, '爆'))
+    ];
+    const heat: Array<string> = danmuHeat(danmu, { start: 1_800, length: 900 });
+
+    expect(heat).toHaveLength(1);
+    expect(heat[0]).toContain('10:00 起的 30 秒：12 条弹幕（平时约 2 条）');
+    expect(heat[0]).toContain('其中反应 7 条');
+    expect(heat[0]).toContain('「爆」');
+  });
+
+  test('没有明显的高峰时什么都不给', (): void => {
+    expect(danmuHeat(Array.from({ length: 40 }, (item: unknown, index: number): DanmuLine => line(index * 20, '日常聊天')), { start: 0, length: 900 })).toEqual([]);
+    expect(danmuHeat([], { start: 0, length: 900 })).toEqual([]);
   });
 });
 

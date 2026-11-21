@@ -4,6 +4,7 @@
  * 最后一组测试是真的跑一遍（下载录播、问 Gemini、合成），平时跳过。要跑的话：
  *   HIGHLIGHT_LIVE_ID=<直播 ID> HIGHLIGHT_OUT=<输出文件夹> node --run test -- highlightPipeline
  * 可选：HIGHLIGHT_SOURCE=<已经下载好的录播文件>（省掉下载）、HIGHLIGHT_COUNT=<数量>（默认 1）、HIGHLIGHT_MODEL；
+ *       HIGHLIGHT_VIA=agy 不走接口，走本机的 agy（要装了本地打轴模型）；
  *       HIGHLIGHT_ONLY=download 只下载录播（不问 Gemini、不花钱），下载好的留在「输出文件夹/.work」里，接着跑完整的会直接用它。
  * key 从仓库根目录的 local/pocket48.json 读（sttGeminiKey），完整跑会产生一点接口费用。
  */
@@ -154,7 +155,8 @@ const downloadOnly: boolean = process.env.HIGHLIGHT_ONLY === 'download';
       gemini: {
         apiKey: local.sttGeminiKey ?? '',
         model: process.env.HIGHLIGHT_MODEL ?? highlightDefaults.model,
-        baseUrl: highlightDefaults.baseUrl
+        baseUrl: highlightDefaults.baseUrl,
+        via: process.env.HIGHLIGHT_VIA === 'agy' ? 'agy' : 'api'
       }
     };
   });

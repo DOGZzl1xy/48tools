@@ -30,6 +30,8 @@ export interface CustomSettings {
   autoGrabMode?: AutoGrabMode;        // 自动抓取用哪种方式录（上次手动开始时选的；默认 flv）
   highlightModel?: string;            // 录播切片：用哪个 Gemini 模型（key 和接口地址用语音转文字里 Gemini 的那一份）
   highlightDir?: string;              // 录播切片：保存的文件夹（不设置就用 downloadDir 下面的「录播切片」）
+  highlightVia?: 'api' | 'agy';       // 录播切片：Gemini 走按量付费的接口（默认），还是本机的 agy（Antigravity 的订阅额度）
+  highlightAgyModel?: string;         // 录播切片：走 agy 时用的模型名（不填用 gemini-4-hydrogen-medium）
   highlightAutoScore?: number;        // 录播切片：选「自动」时，爆点分不低于它的才做（不设置用默认的 8.5）
   highlightCount?: number;            // 录播切片：上次选的数量（没选过或选了「自动」时不保存）
 }

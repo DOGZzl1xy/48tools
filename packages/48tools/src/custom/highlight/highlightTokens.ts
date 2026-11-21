@@ -38,11 +38,12 @@ function normalize(text: string): Array<string> {
 }
 
 /**
- * 读识别程序（sherpa-onnx-offline）打印的结果：一行 JSON，里面 tokens 是字、timestamps 是每个字开始的时间
+ * 读识别程序（sherpa-onnx-offline）打印的结果：每个音频文件一行 JSON，里面 tokens 是字、timestamps 是每个字开始的时间。
+ * 返回每个文件的结果（一次给它好几个文件时按给的顺序）
  * @param { string } stdout
  */
-export function parseRecognizerOutput(stdout: string): Array<TimedToken> {
-  const tokens: Array<TimedToken> = [];
+export function parseRecognizerFiles(stdout: string): Array<Array<TimedToken>> {
+  const files: Array<Array<TimedToken>> = [];
 
   for (const line of stdout.split(/\r?\n/)) {
     if (!line.trim().startsWith('{')) continue;
@@ -57,14 +58,22 @@ export function parseRecognizerOutput(stdout: string): Array<TimedToken> {
 
     if (!Array.isArray(data.tokens) || !Array.isArray(data.timestamps)) continue;
 
+    const tokens: Array<TimedToken> = [];
+
     data.tokens.forEach((text: unknown, index: number): void => {
       const time: number = Number((data.timestamps as Array<unknown>)[index]);
 
       if (typeof text === 'string' && Number.isFinite(time)) tokens.push({ text, time });
     });
+    files.push(tokens);
   }
 
-  return tokens;
+  return files;
+}
+
+/* 只有一个音频文件时的结果 */
+export function parseRecognizerOutput(stdout: string): Array<TimedToken> {
+  return parseRecognizerFiles(stdout).flat();
 }
 
 /**

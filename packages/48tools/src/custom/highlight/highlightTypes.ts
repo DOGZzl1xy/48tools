@@ -17,6 +17,8 @@ export interface Highlight {
   quote: string;
   reason: string;
   score: number; // 1 ~ 10
+  first?: string; // 开头、结尾的原话：只有走 agy 时才要（它说的时间不准，用原话到本地识别的结果里找时间，见 ./highlightQuotes）
+  last?: string;
 }
 
 /* 片段里的一句话：start、end 是在这个片段的音频里的时间（秒） */
@@ -33,6 +35,7 @@ export interface ClipScript {
   lines: Array<CaptionLine>;
   title: string;           // 画面和封面上用的标题（titles 的第一个）
   titles?: Array<string>;  // 模型给的三个不同风格的标题，让发视频的人挑；以前存下来的结果里没有这一项
+  more?: Array<string>;    // 片段里另外的爆点的短标题（最多两个），发布用的标题里接在主标题后面
   description: string;
   points: Array<string>;
   people?: Array<string>; // 除了主播以外的主角（连麦的人、被认真讨论的成员），标题里会带上；以前存下来的结果里没有这一项

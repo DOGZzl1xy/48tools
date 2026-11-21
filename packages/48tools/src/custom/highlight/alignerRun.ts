@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import * as process from 'node:process';
 import { runFfmpeg } from './highlightFfmpeg';
 import { HighlightStopped } from './highlightGemini';
-import { parseRecognizerOutput, type TimedToken } from './highlightTokens';
+import { parseRecognizerOutput, parseRecognizerFiles, type TimedToken } from './highlightTokens';
 
 /**
  * 「本地打轴」插件里和使用有关的部分：插件装在哪、装没装、怎么调用它识别一段音频。
@@ -85,9 +85,25 @@ export function runTool(command: string, args: Array<string>, cwd: string, signa
 }
 
 let counter: number = 0;
+const CHUNK_SECONDS: number = 30;  // 长音频切成这么长的小段分别识别（模型是按 30 秒以内的话训练的，太长会漏）
+const LONG_SECONDS: number = 300;  // 超过这么长才切；几分钟的片段整段识别更准（不会把一个字切成两半）
+const WAV_HEADER: number = 44;
+const WAV_BYTES_PER_SECOND: number = 16_000 * 2;
+const FILES_PER_RUN: number = 80;
+
+function recognizerArgs(files: Array<string>): Array<string> {
+  return [
+    `--tokens=${ ALIGNER_TOKENS_FILE }`,
+    `--sense-voice-model=${ ALIGNER_MODEL_FILE }`,
+    '--sense-voice-language=zh',
+    '--sense-voice-use-itn=false',
+    `--num-threads=${ Math.max(1, Math.min(4, os.cpus().length - 1)) }`,
+    ...files
+  ];
+}
 
 /**
- * 用本地模型识别一段音频，返回每个字和它开始的时间；没装插件时返回 null
+ * 用本地模型识别一段音频（几分钟的片段，或者半小时的一整段），返回每个字和它开始的时间；没装插件时返回 null
  * @param { string } ffmpeg
  * @param { string } audioFile - 任意格式的音频文件
  * @param { AbortSignal } [signal]
@@ -103,16 +119,45 @@ export async function recognizeAudio(ffmpeg: string, audioFile: string, signal?:
   try {
     await runFfmpeg(ffmpeg, ['-y', '-v', 'error', '-i', audioFile, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', path.join(dir, wav)], { signal });
 
-    const stdout: string = await runTool(path.join(dir, ALIGNER_EXE), [
-      `--tokens=${ ALIGNER_TOKENS_FILE }`,
-      `--sense-voice-model=${ ALIGNER_MODEL_FILE }`,
-      '--sense-voice-language=zh',
-      '--sense-voice-use-itn=false',
-      `--num-threads=${ Math.max(1, Math.min(4, os.cpus().length - 1)) }`,
-      wav
-    ], dir, signal);
+    // 几分钟以内的整段识别
+    if ((await fsP.stat(path.join(dir, wav))).size <= WAV_HEADER + (LONG_SECONDS * WAV_BYTES_PER_SECOND)) {
+      return parseRecognizerOutput(await runTool(path.join(dir, ALIGNER_EXE), recognizerArgs([wav]), dir, signal));
+    }
 
-    return parseRecognizerOutput(stdout);
+    // 长音频（找爆点时的半小时一段）：切成 30 秒的小段，一次交给识别程序几十个文件，再把每段的时间加上它在整段里的位置
+    const chunkDir: string = wav.replace(/\.wav$/, '');
+
+    await fsP.mkdir(path.join(dir, chunkDir), { recursive: true });
+
+    try {
+      await runFfmpeg(ffmpeg, [
+        '-y', '-v', 'error', '-i', path.join(dir, wav), '-f', 'segment', '-segment_time', String(CHUNK_SECONDS), '-c:a', 'pcm_s16le',
+        path.join(dir, chunkDir, '%05d.wav')
+      ], { signal });
+
+      const names: Array<string> = (await fsP.readdir(path.join(dir, chunkDir))).filter((name: string): boolean => name.endsWith('.wav')).sort();
+      const tokens: Array<TimedToken> = [];
+      let offset: number = 0;
+
+      for (let from: number = 0; from < names.length; from += FILES_PER_RUN) {
+        const batch: Array<string> = names.slice(from, from + FILES_PER_RUN);
+        const results: Array<Array<TimedToken>> = parseRecognizerFiles(await runTool(
+          path.join(dir, ALIGNER_EXE), recognizerArgs(batch.map((name: string): string => path.join(chunkDir, name))), dir, signal));
+
+        if (results.length !== batch.length) throw new Error(`本地识别的结果数量不对（给了 ${ batch.length } 段，回来 ${ results.length } 段）`);
+
+        for (const [order, name] of batch.entries()) {
+          for (const token of results[order]) tokens.push({ text: token.text, time: offset + token.time });
+
+          // 这一小段实际有多长，从文件大小算（切的地方不一定正好是 30 秒）
+          offset += ((await fsP.stat(path.join(dir, chunkDir, name))).size - WAV_HEADER) / WAV_BYTES_PER_SECOND;
+        }
+      }
+
+      return tokens;
+    } finally {
+      await fsP.rm(path.join(dir, chunkDir), { recursive: true, force: true });
+    }
   } finally {
     await fsP.rm(path.join(dir, wav), { force: true });
   }

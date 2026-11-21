@@ -18,7 +18,7 @@ import {
 } from './highlightPipeline';
 import { highlightDefaults, type GeminiConfig } from './highlightGemini';
 import { StagedQueue, type QueueStage, type QueueOutcome } from './highlightQueue';
-import { recognizeAudio } from './alignerRun';
+import { recognizeAudio, isAlignerInstalled } from './alignerRun';
 import type { TimedToken } from './highlightTokens';
 import { safeFileName } from './highlightTime';
 import type { HighlightCount } from './highlightTypes';
@@ -55,7 +55,9 @@ export function highlightGeminiConfig(): GeminiConfig {
   return {
     apiKey: getSetting('sttGeminiKey') ?? '',
     model: getSetting('highlightModel') || highlightDefaults.model,
-    baseUrl: getSetting('sttGeminiBaseUrl') || highlightDefaults.baseUrl
+    baseUrl: getSetting('sttGeminiBaseUrl') || highlightDefaults.baseUrl,
+    via: getSetting('highlightVia') === 'agy' ? 'agy' : 'api',
+    agyModel: getSetting('highlightAgyModel') || undefined
   };
 }
 
@@ -154,7 +156,11 @@ export function startHighlight(record: HighlightRecord, count: HighlightCount): 
 
   const job: HighlightJob = highlightJobOf(record, count, baseDir);
 
-  if (!job.gemini.apiKey.trim()) return '还没有填写 Gemini 的 API key（设置 → 语音转文字）';
+  if (job.gemini.via === 'agy') {
+    if (!isAlignerInstalled()) return '通过本机的 agy 做切片时，要先在「设置 → 录播切片」里安装「本地打轴模型」';
+  } else if (!job.gemini.apiKey.trim()) {
+    return '还没有填写 Gemini 的 API key（设置 → 语音转文字）';
+  }
 
   const id: string = highlightTaskId(record.liveId);
   let started: boolean = false; // 开始下载了没有（停止时的说明不一样）

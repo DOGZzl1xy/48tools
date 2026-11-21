@@ -89,6 +89,32 @@ describe('找爆点', (): void => {
     expect(request.parts[1].inlineData).toEqual({ mimeType: 'audio/mp3', data: 'QUJD' });
   });
 
+  test('礼物消息不发；提示里解释反应词；弹幕扎堆的时刻单独列出来', (): void => {
+    const danmu: Array<{ time: number; nickname: string; message: string }> = [
+      { time: 50, nickname: '甲', message: '送给SNH48-测试成员 1个荧光棒-SII' },
+      ...['爆', '爆', '？？？', '哈哈哈哈', '典', '绷不住了'].map((message: string, index: number): { time: number; nickname: string; message: string } => (
+        { time: 600 + index, nickname: '乙', message }))
+    ];
+    const prompt: string = findRequest({ member: '测试成员', title: '测试直播' }, { start: 0, length: 1_800 }, 'QUJD', danmu).parts[0].text!;
+
+    expect(prompt).not.toContain('荧光棒');
+    expect(prompt).toContain('爆 = 出爆点了');
+    expect(prompt).toContain('<弹幕热度>');
+    expect(prompt).toContain('10:00 起的 30 秒：6 条弹幕');
+    expect(prompt).not.toContain('first、last');
+  });
+
+  test('走 agy 时多要开头、结尾的原话，读结果时带上', (): void => {
+    const request: GeminiAsk = findRequest({ member: '测试成员', title: '测试直播' }, { start: 0, length: 1_800 }, 'QUJD', [], true);
+    const found: ReturnType<typeof readFound> = readFound({
+      summary: '', highlights: [{ start: '01:00', end: '02:00', title: '标题', score: 8, quote: '关键的话', first: ' 开头的话 ', last: '结尾的话' }]
+    }, { start: 0, length: 1_800 });
+
+    expect(request.parts[0].text).toContain('first、last 是这个片段第一句话和最后一句话的原话');
+    expect(JSON.stringify(request.schema)).toContain('"first"');
+    expect([found.highlights[0].first, found.highlights[0].last]).toEqual(['开头的话', '结尾的话']);
+  });
+
   test('结果里的时间换成整场录播里的秒数；时间不对、太短、没有标题的不要', (): void => {
     const found: ReturnType<typeof readFound> = readFound({
       summary: ' 聊了很多 ',
@@ -137,6 +163,7 @@ describe('片段的字幕、标题、简介', (): void => {
 
     expect(script.title).toBe('新标题');
     expect(script.titles).toEqual(['新标题', '第二个标题', '第三个标题？']);
+    expect(script.more).toEqual([]);
     expect(script.description).toBe('第一句。第二句。');
     expect(script.points).toEqual(['看点一', '看点二']);
     expect(script.lines).toEqual([
@@ -156,11 +183,21 @@ describe('片段的字幕、标题、简介', (): void => {
   test('取标题的规则：要「串」、给了正反例、最长 16 个字', (): void => {
     const prompt: string = scriptRequest({ member: '测试成员', title: '测试直播' }, highlight, 60, 'QUJD', []).parts[0].text!;
 
-    expect(prompt).toContain('「串」感');
-    expect(prompt).toContain('口误把北大说成北芭笑疯了 → 北大不比北芭差（bushi）');
-    expect(prompt).toContain('三个风格不同的标题');
-    expect(prompt).toContain('16 个字以内');
+    expect(prompt).toContain('三个标题，让发视频的人挑');
+    expect(prompt).toContain('不要套公式');
+    expect(prompt).toContain('三个标题的写法必须互不相同');
+    expect(prompt).toContain('最长 16 个字');
     expect(prompt).toContain('不能编造');
+    expect(prompt).toContain('而且不能是「确信」');
+    expect(prompt).toContain('- more：');
+  });
+
+  test('片段里另外的爆点：最多两个，不和标题重复', (): void => {
+    const script: ReturnType<typeof readScript> = readScript({
+      lines: [], titles: ['全队全是萝莉', '第二个'], more: ['傻瓜也是瓜。', '全队全是萝莉', ' ', '铁T认证', '第三个不要']
+    }, highlight);
+
+    expect(script.more).toEqual(['傻瓜也是瓜', '铁T认证']);
   });
 
   test('没给标题、简介、看点时用第一步的', (): void => {

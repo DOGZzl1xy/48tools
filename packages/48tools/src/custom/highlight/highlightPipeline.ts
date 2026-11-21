@@ -7,10 +7,13 @@ import {
   geminiJson, findRequest, readFound, scriptRequest, readScript, coverRequest, HighlightStopped,
   type GeminiConfig, type LiveMeta
 } from './highlightGemini';
-import { parseLrc, planWindows, mergeHighlights, targetCount, safeFileName, postTitle, clock } from './highlightTime';
+import {
+  parseLrc, planWindows, mergeHighlights, targetCount, safeFileName, postTitle, clock, AGY_WINDOW_LENGTH, AGY_WINDOW_OVERLAP
+} from './highlightTime';
 import { tidyLines, buildSegments } from './highlightCut';
 import { alignLines, envelopeOf, syllablePeaks } from './highlightAlign';
 import { timeLinesByTokens, type TimedToken, type TokenTiming } from './highlightTokens';
+import { fixHighlightTimes } from './highlightQuotes';
 import {
   placeDanmu, buildVideoAss, renderFilter, buildCoverAss, coverFilter, LEFT_WIDTH, COVER_WIDTHS, type FontSet, type PlacedDanmu
 } from './highlightAss';
@@ -22,7 +25,9 @@ import type { AudioWindow, CaptionLine, ClipScript, DanmuLine, Highlight, Highli
  *
  * 流程（runHighlight；第 1 步是 prepareHighlight，后面是 processHighlight）：
  *   1. 取录播地址和弹幕文件，把整场录播下载到工作文件夹（同时下 4 个分片，不重新编码，见 ./highlightDownload）
- *   2. 每半小时一段，音频和弹幕（只有时间和内容）交给 Gemini，找出可能成为爆点的片段和时间
+ *   2. 每半小时一段，音频和弹幕（只有时间和内容）交给 Gemini，找出可能成为爆点的片段和时间。
+ *      Gemini 可以走按量付费的接口，也可以走本机的 agy（订阅额度，见 ./highlightAgy）；走 agy 时它说的时间不准，
+ *      改用它引的原话到本地识别的结果里定位（见 ./highlightQuotes），所以要装本地打轴模型
  *   3. 各段的结果合在一起按分数排，决定做哪几个（用户选的数量，或者自动）
  *   4. 每个片段前后多留十几秒再交给 Gemini：出逐句字幕、每句留不留、重点词、三个不同风格的标题（第一个用在画面上）、简介、看点、除了主播还有谁是主角
  *   5. 用声音里的停顿和音节把每句话的时间对准（模型标的时间偶尔早一两秒，见 ./highlightAlign）；装了本地打轴模型时再用它认出来的每个字的时间（见 ./highlightTokens），按留下的句子剪掉沉默和无关的话，合成横屏视频；再从成片里挑一帧做封面（16:9 和 4:3 各一张）
@@ -100,6 +105,7 @@ const CLIP_PAD_BEFORE: number = 15; // 第 1 步的时间可能差几秒，前�
 const CLIP_PAD_AFTER: number = 12;
 const MIN_CLIP_SECONDS: number = 20; // 剪完不到这么长的不要
 const COVER_CANDIDATES: number = 6;
+const NEED_ALIGNER: string = '通过本机的 agy 做切片时，要先在「设置 → 录播切片」里安装「本地打轴模型」（agy 说的时间不准，要靠它定时间）';
 
 /* 各步占总进度的多少 */
 export const DOWNLOAD_END: number = 30;
@@ -330,9 +336,9 @@ async function makeClip(
   const info: ClipInfo = {
     index,
     title: script.title,
-    postTitle: postTitle(job.member, job.date, script.title, script.people),
+    postTitle: postTitle(job.member, job.date, script.title, script.people, script.more),
     otherTitles: (script.titles ?? []).filter((title: string): boolean => title !== script.title)
-      .map((title: string): string => postTitle(job.member, job.date, title, script.people)),
+      .map((title: string): string => postTitle(job.member, job.date, title, script.people, script.more)),
     people: script.people ?? [],
     description: script.description,
     points: script.points,
@@ -438,10 +444,15 @@ export async function processHighlight(
 
   const duration: number = await mediaDuration(job.ffmpeg, source, signal);
 
-  // 2. 每半小时一段，找爆点
-  const windows: Array<AudioWindow> = planWindows(duration);
+  // 2. 一段一段找爆点（走接口时半小时一段；走 agy 时 20 分钟一段、重叠 5 分钟）
+  const viaAgy: boolean = job.gemini.via === 'agy';
+  const windows: Array<AudioWindow> = viaAgy ? planWindows(duration, AGY_WINDOW_LENGTH, AGY_WINDOW_OVERLAP) : planWindows(duration);
   const all: Array<Highlight> = [];
   const summaries: Array<string> = [];
+  const unlocated: Array<string> = []; // 走 agy 时在录音里找不到原话、没法定位的爆点
+
+  // 通过 agy 问的时候它说的时间不准，要靠本地识别的结果按原话定位，所以必须装了本地打轴模型
+  if (viaAgy && !deps.recognize) throw new Error(NEED_ALIGNER);
 
   for (const [order, window] of windows.entries()) {
     const label: string = `找爆点 ${ order + 1 }/${ windows.length }`;
@@ -458,7 +469,32 @@ export async function processHighlight(
         '-vn', '-ac', '1', '-ar', '16000', '-b:a', '32k', audio
       ], { signal });
       found = readFound(await geminiJson<unknown>(
-        job.gemini, findRequest(meta, window, await base64Of(audio), danmu), signal, deps.fetchImpl), window);
+        job.gemini, findRequest(meta, window, await base64Of(audio), danmu, viaAgy), signal, deps.fetchImpl), window);
+
+      if (viaAgy) {
+        onProgress({ percent: DOWNLOAD_END + (((order + 0.6) / windows.length) * (FIND_END - DOWNLOAD_END)), detail: `${ label }：按原话定位…` });
+
+        const tokens: Array<TimedToken> | null = await deps.recognize!(audio, signal);
+
+        if (!tokens) throw new Error(NEED_ALIGNER);
+
+        // 本地识别的时间是这一段里的，爆点的时间是整场里的
+        const absolute: Array<TimedToken> = tokens.map((token: TimedToken): TimedToken => ({ text: token.text, time: token.time + window.start }));
+        const located: Array<Highlight> = [];
+
+        for (const item of found.highlights) {
+          const fixed: Highlight | null = fixHighlightTimes(item, absolute);
+
+          if (fixed) {
+            located.push({ ...fixed, end: Math.min(fixed.end, window.start + window.length) });
+          } else {
+            unlocated.push(`「${ item.title }」在录音里找不到它引的原话，没法定位，跳过`);
+          }
+        }
+
+        found = { summary: found.summary, highlights: located };
+      }
+
       await fsP.writeFile(cacheFile, JSON.stringify(found, null, 2));
       await fsP.rm(audio, { force: true });
     }
@@ -476,7 +512,7 @@ export async function processHighlight(
     fonts: fonts.dir ? { ...fonts, dir: `../${ fonts.dir }` } : fonts // 合成时的当前文件夹是 clip-N
   };
   const clips: Array<ClipResult> = [];
-  const skipped: Array<string> = [];
+  const skipped: Array<string> = [...unlocated];
 
   // 4 ~ 6. 一个一个做；某个剪完太短就换下一个候选
   for (const [slot, highlight] of candidates.entries()) {
