@@ -64,6 +64,7 @@ import MediaTitleCell from '../../../../custom/table/MediaTitleCell';
 import { recordTaskStart, recordTaskProgress, recordTaskEnd, audioMetaOf } from '../../../../custom/downloadQueue/recordTasks';
 import { canHighlight } from '../../../../custom/highlight/highlightTask';
 import { openHighlightDialog } from '../../../../custom/highlight/highlightDialogStore';
+import HighlightRowProgress, { useHighlightRunning } from '../../../../custom/highlight/HighlightRowProgress';
 import { useReqRoomIdQuery, type ReqRoomId } from '../../reducers/pocketFriends.api';
 import LiveType from '../../components/LiveType/LiveType';
 import type { MessageEventData } from '../../../../utils/worker/FFmpegDownload.worker/FFmpegDownload.worker';
@@ -136,6 +137,7 @@ const selector: Selector<RState, RSelector> = createStructuredSelector({
 /* 录播列表 */
 function Pocket48Record(props: {}): ReactElement {
   const { recordList, recordNext, recordChildList, recordFields, progress }: RSelector = useSelector(selector);
+  const highlightRunning: boolean = useHighlightRunning(); // 有切片任务时也显示「下载进度」这一列
   const dispatch: Dispatch = useDispatch();
   const [modalApi, modalContextHolder]: UseModalReturnType = Modal.useModal();
   const [messageApi, messageContextHolder]: UseMessageReturnType = message.useMessage();
@@ -498,11 +500,12 @@ function Pocket48Record(props: {}): ReactElement {
         const idx: number = recordChildList.findIndex(
           (o: RecordVideoDownloadWebWorkerItem): boolean => o.id === record.liveId);
 
-        if (inDownload) {
-          return <ProgressDetail progressSet={ progress[value] } />;
-        } else {
-          return idx >= 0 ? '准备中' : '未下载';
-        }
+        // 这一行正在自动切片时显示切片进度（custom/highlight/HighlightRowProgress）
+        return (
+          <HighlightRowProgress liveId={ value } downloading={ inDownload || idx >= 0 }>
+            { inDownload ? <ProgressDetail progressSet={ progress[value] } /> : (idx >= 0 ? '准备中' : '未下载') }
+          </HighlightRowProgress>
+        );
       }
     },
     {
@@ -560,7 +563,8 @@ function Pocket48Record(props: {}): ReactElement {
 
   // 没有任务在下载时不显示「下载进度」这一列（以前每一行都写着「未下载」）
   const shownColumns: ColumnsType<LiveInfo> = columns.filter(
-    (column: ColumnsType<LiveInfo>[number]): boolean => column.title !== '下载进度' || recordChildList.length > 0 || Object.keys(progress).length > 0);
+    (column: ColumnsType<LiveInfo>[number]): boolean => (
+      column.title !== '下载进度' || recordChildList.length > 0 || Object.keys(progress).length > 0 || highlightRunning));
 
   useEffect(function(): void {
     proxyServerInit();

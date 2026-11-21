@@ -1,17 +1,21 @@
 /**
- * 录播自动切片：读 ffmpeg 打印的内容（静音、m3u8 的时长）、封面候选的时间、说明文字。
+ * 录播自动切片：读 ffmpeg 打印的内容（静音）、封面候选的时间、说明文字。
  *
- * 最后一个测试是真的跑一遍（下载录播、问 Gemini、合成），平时跳过。要跑的话：
+ * 最后一组测试是真的跑一遍（下载录播、问 Gemini、合成），平时跳过。要跑的话：
  *   HIGHLIGHT_LIVE_ID=<直播 ID> HIGHLIGHT_OUT=<输出文件夹> node --run test -- highlightPipeline
- * 可选：HIGHLIGHT_SOURCE=<已经下载好的录播文件>（省掉下载）、HIGHLIGHT_COUNT=<数量>（默认 1）、HIGHLIGHT_MODEL。
- * key 从仓库根目录的 local/pocket48.json 读（sttGeminiKey），会产生一点接口费用。
+ * 可选：HIGHLIGHT_SOURCE=<已经下载好的录播文件>（省掉下载）、HIGHLIGHT_COUNT=<数量>（默认 1）、HIGHLIGHT_MODEL；
+ *       HIGHLIGHT_ONLY=download 只下载录播（不问 Gemini、不花钱），下载好的留在「输出文件夹/.work」里，接着跑完整的会直接用它。
+ * key 从仓库根目录的 local/pocket48.json 读（sttGeminiKey），完整跑会产生一点接口费用。
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import * as process from 'node:process';
-import { parseSilences, m3u8Duration } from './highlightFfmpeg';
-import { coverTimes, clipInfoText, runHighlight, type HighlightResult, type HighlightProgress } from './highlightPipeline';
+import { parseSilences, mediaDuration } from './highlightFfmpeg';
+import {
+  coverTimes, clipInfoText, runHighlight, prepareHighlight,
+  type HighlightResult, type HighlightProgress, type HighlightDeps, type HighlightJob, type PreparedSource
+} from './highlightPipeline';
 import { highlightDefaults } from './highlightGemini';
 import type { CaptionLine, Segment } from './highlightTypes';
 
@@ -27,10 +31,6 @@ describe('读 ffmpeg 打印的内容', (): void => {
     ].join('\r\n'))).toEqual([{ start: 0, end: 1.5 }, { start: 27.1, end: 28.47875 }]);
   });
 
-  test('m3u8 各个分片的时长加起来', (): void => {
-    expect(m3u8Duration('#EXTM3U\n#EXTINF:10.000,\na.ts\n#EXTINF: 9.5,\nb.ts\n#EXT-X-ENDLIST')).toBe(19.5);
-    expect(m3u8Duration('<html>不是 m3u8</html>')).toBeUndefined();
-  });
 });
 
 describe('封面候选和说明文字', (): void => {
@@ -59,6 +59,7 @@ describe('封面候选和说明文字', (): void => {
       postTitle: '【测试成员】标题在这 | 20261115 直播切片',
       description: '第一句。第二句。',
       points: ['看点一', '看点二'],
+      people: [],
       score: 9,
       start: 1_230,
       end: 1_335,
@@ -75,23 +76,64 @@ describe('封面候选和说明文字', (): void => {
 
 const liveId: string | undefined = process.env.HIGHLIGHT_LIVE_ID;
 const outDir: string | undefined = process.env.HIGHLIGHT_OUT;
+const downloadOnly: boolean = process.env.HIGHLIGHT_ONLY === 'download';
 
 (liveId && outDir ? describe : describe.skip)('真的跑一遍', (): void => {
-  test('下载、找爆点、出成片和封面', async (): Promise<void> => {
-    const local: { sttGeminiKey?: string; proxy?: string } = JSON.parse(
-      fs.readFileSync(path.join(__dirname, '../../../../../local/pocket48.json'), 'utf8'));
-    const workDir: string = path.join(outDir!, '.work');
-    const source: string | undefined = process.env.HIGHLIGHT_SOURCE;
-    const steps: Array<string> = [];
+  const workDir: string = path.join(outDir ?? '', '.work');
+  const steps: Array<string> = [];
+  let local: { sttGeminiKey?: string; proxy?: string } = {};
+  let job: HighlightJob;
 
-    // 已经下载好的录播：放进工作文件夹，流程会当成上次下载好的接着做
-    if (source && !fs.existsSync(path.join(workDir, 'source.done'))) {
-      fs.mkdirSync(workDir, { recursive: true });
-      fs.copyFileSync(source, path.join(workDir, 'source.mp4'));
-      fs.writeFileSync(path.join(workDir, 'source.done'), '');
+  const deps: HighlightDeps = {
+    // 取录播信息：和程序里一样的接口，这里用 curl 走本机配置的代理
+    liveInfo(id: string): Promise<{ playStreamPath: string; msgFilePath: string }> {
+      const body: string = execFileSync('curl', [
+        '-sS', '--max-time', '30', '-X', 'POST', 'https://pocketapi.48.cn/live/api/v1/live/getLiveOne',
+        ...(local.proxy ? ['-x', local.proxy] : []),
+        '-H', 'Content-Type: application/json;charset=utf-8',
+        '-H', 'User-Agent: PocketFans201807/7.1.48 (iPhone; iOS 26.5.2; Scale/3.00)',
+        '-H', `appInfo: ${ JSON.stringify({
+          vendor: 'apple', deviceId: '9F3C5A7B-0000-4000-8000-9F3C5A7B1D2E', appVersion: '7.1.48', appBuild: '26102601',
+          osVersion: '26.5.2', osType: 'ios', deviceName: 'iPhone17,1', os: 'ios'
+        }) }`,
+        '--data-binary', JSON.stringify({ liveId: id })
+      ], { encoding: 'utf8' });
+      const json: { content?: { playStreamPath: string; msgFilePath: string } } = JSON.parse(body);
+
+      return Promise.resolve({ playStreamPath: json.content?.playStreamPath ?? '', msgFilePath: json.content?.msgFilePath ?? '' });
+    },
+    async fetchText(url: string): Promise<string> {
+      return (await fetch(url)).text();
+    },
+    // 程序里用 got 下载分片（见 highlightTask），这里用 fetch，请求头一样
+    async fetchSegment(uri: string, file: string, signal: AbortSignal): Promise<number> {
+      const res: Response = await fetch(uri, { headers: { 'User-Agent': 'SNH48 ENGINE' }, signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]) });
+
+      if (!res.ok) throw new Error(`分片下载失败：${ res.status }`);
+
+      const data: Buffer = Buffer.from(await res.arrayBuffer());
+
+      fs.writeFileSync(file, data);
+
+      return data.length;
     }
+  };
 
-    const result: HighlightResult = await runHighlight({
+  /* 进度：百分比和速度一直在变，同一步只打印一次；下载时每 10% 打印一次 */
+  function report(progress: HighlightProgress): void {
+    const step: string = progress.detail.startsWith('下载录播')
+      ? `下载录播 ${ Math.floor(Number(/(\d+)%/.exec(progress.detail)?.[1] ?? 0) / 10) * 10 }`
+      : progress.detail.replace(/\d+%/, '');
+
+    if (steps[steps.length - 1] !== step) {
+      steps.push(step);
+      console.log(`${ progress.percent.toFixed(0) }% ${ progress.detail }`);
+    }
+  }
+
+  beforeAll((): void => {
+    local = JSON.parse(fs.readFileSync(path.join(__dirname, '../../../../../local/pocket48.json'), 'utf8'));
+    job = {
       liveId: liveId!,
       member: process.env.HIGHLIGHT_MEMBER ?? '测试成员',
       title: process.env.HIGHLIGHT_TITLE ?? '测试直播',
@@ -105,35 +147,36 @@ const outDir: string | undefined = process.env.HIGHLIGHT_OUT;
         model: process.env.HIGHLIGHT_MODEL ?? highlightDefaults.model,
         baseUrl: highlightDefaults.baseUrl
       }
-    }, {
-      // 取录播信息：和程序里一样的接口，这里用 curl 走本机配置的代理
-      liveInfo(id: string): Promise<{ playStreamPath: string; msgFilePath: string }> {
-        const body: string = execFileSync('curl', [
-          '-sS', '--max-time', '30', '-X', 'POST', 'https://pocketapi.48.cn/live/api/v1/live/getLiveOne',
-          ...(local.proxy ? ['-x', local.proxy] : []),
-          '-H', 'Content-Type: application/json;charset=utf-8',
-          '-H', 'User-Agent: PocketFans201807/7.1.48 (iPhone; iOS 26.5.2; Scale/3.00)',
-          '-H', `appInfo: ${ JSON.stringify({
-            vendor: 'apple', deviceId: '9F3C5A7B-0000-4000-8000-9F3C5A7B1D2E', appVersion: '7.1.48', appBuild: '26102601',
-            osVersion: '26.5.2', osType: 'ios', deviceName: 'iPhone17,1', os: 'ios'
-          }) }`,
-          '--data-binary', JSON.stringify({ liveId: id })
-        ], { encoding: 'utf8' });
-        const json: { content?: { playStreamPath: string; msgFilePath: string } } = JSON.parse(body);
+    };
+  });
 
-        return Promise.resolve({ playStreamPath: json.content?.playStreamPath ?? '', msgFilePath: json.content?.msgFilePath ?? '' });
-      },
-      async fetchText(url: string): Promise<string> {
-        return (await fetch(url)).text();
-      }
-    }, (progress: HighlightProgress): void => {
-      const step: string = progress.detail.replace(/\d+%/, '');
+  (downloadOnly ? test : test.skip)('只下载录播：同时下 4 个分片，合成一个文件，长度和 m3u8 里写的一样', async (): Promise<void> => {
+    const started: number = Date.now();
+    const prepared: PreparedSource = await prepareHighlight(job, deps, report);
+    const info: { playStreamPath: string } = await deps.liveInfo(liveId!);
+    const expected: number = Array.from((await deps.fetchText(info.playStreamPath)).matchAll(/#EXTINF:\s*([\d.]+)/g))
+      .reduce((sum: number, match: RegExpMatchArray): number => sum + Number(match[1]), 0);
+    const duration: number = await mediaDuration('ffmpeg', prepared.source);
+    const size: number = fs.statSync(prepared.source).size;
 
-      if (steps[steps.length - 1] !== step) {
-        steps.push(step);
-        console.log(`${ progress.percent.toFixed(0) }% ${ progress.detail }`);
-      }
-    });
+    console.log(`录播 ${ Math.round(duration) } 秒（m3u8 里是 ${ Math.round(expected) } 秒），${ (size / 1_048_576).toFixed(0) } MB，用了 ${
+      Math.round((Date.now() - started) / 1_000) } 秒，弹幕 ${ prepared.danmu.length } 条`);
+    expect(Math.abs(duration - expected)).toBeLessThan(5);
+    expect(fs.existsSync(path.join(workDir, 'source.done'))).toBe(true);
+    expect(fs.existsSync(path.join(workDir, 'segments'))).toBe(false);
+  }, 3_600_000);
+
+  (downloadOnly ? test.skip : test)('下载、找爆点、出成片和封面', async (): Promise<void> => {
+    const source: string | undefined = process.env.HIGHLIGHT_SOURCE;
+
+    // 已经下载好的录播：放进工作文件夹，流程会当成上次下载好的接着做
+    if (source && !fs.existsSync(path.join(workDir, 'source.done'))) {
+      fs.mkdirSync(workDir, { recursive: true });
+      fs.copyFileSync(source, path.join(workDir, 'source.mp4'));
+      fs.writeFileSync(path.join(workDir, 'source.done'), '');
+    }
+
+    const result: HighlightResult = await runHighlight(job, deps, report);
 
     console.log(JSON.stringify(result, null, 2));
     expect(result.clips.length).toBeGreaterThan(0);

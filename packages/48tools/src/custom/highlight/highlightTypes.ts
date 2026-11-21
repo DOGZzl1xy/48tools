@@ -34,6 +34,7 @@ export interface ClipScript {
   title: string;
   description: string;
   points: Array<string>;
+  people?: Array<string>; // 除了主播以外的主角（连麦的人、被认真讨论的成员），标题里会带上；以前存下来的结果里没有这一项
 }
 
 /* 成片里连续的一段：from、to 是句子的下标，start、end 是片段里的时间，out 是它在成片里开始的时间 */

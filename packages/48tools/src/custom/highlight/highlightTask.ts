@@ -1,19 +1,30 @@
+import * as fs from 'node:fs';
+import { promises as fsP } from 'node:fs';
 import * as path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import * as dayjs from 'dayjs';
+// @ts-expect-error
+import got from 'got';
 import { requestLiveRoomInfo, requestDownloadFile, type LiveRoomInfo } from '@48tools-api/48';
 import { getFFmpeg } from '../../utils/utils';
+import { engineUserAgent } from '../../utils/snh48';
 import { getSetting } from '../settings/settingsStore';
 import { resolveLocalDir } from '../download/defaultSaveDir';
+import { SEGMENT_TIMEOUT } from '../download/segmentRetry';
 import { queueTaskStart, queueTaskProgress, queueTaskEnd } from '../downloadQueue/downloadQueue';
-import { runHighlight, isStopped, type HighlightJob, type HighlightProgress, type HighlightResult, type ClipResult } from './highlightPipeline';
+import {
+  prepareHighlight, processHighlight, DOWNLOAD_END,
+  type HighlightJob, type HighlightDeps, type HighlightProgress, type HighlightResult, type ClipResult, type PreparedSource
+} from './highlightPipeline';
 import { highlightDefaults, type GeminiConfig } from './highlightGemini';
+import { StagedQueue, type QueueStage, type QueueOutcome } from './highlightQueue';
 import { safeFileName } from './highlightTime';
 import type { HighlightCount } from './highlightTypes';
 
 /**
- * 录播自动切片接到程序里的部分：从设置里读 Gemini 的 key 和保存位置，登记到下载队列，一个一个地做。
- * 真正干活的是 ./highlightPipeline。
- * 同一时间只做一场（合成视频很吃 CPU），后面加进来的排队；同一场录播不会重复加。
+ * 录播自动切片接到程序里的部分：从设置里读 Gemini 的 key 和保存位置，登记到下载队列，排队执行。
+ * 真正干活的是 ./highlightPipeline，排队的规则在 ./highlightQueue：
+ * 同一时间只切一场（合成视频很吃 CPU），前一场开始切的时候后一场就开始下载录播；同一场录播不会重复加。
  * 接入点：./HighlightDialog（录播列表里点「自动切片」后的对话框）。
  */
 export interface HighlightRecord {
@@ -26,16 +37,16 @@ export interface HighlightRecord {
 
 const OUT_FOLDER: string = '录播切片';
 const WORK_FOLDER: string = '.work';
-const active: Set<string> = new Set();
-let chain: Promise<void> = Promise.resolve();
+const queue: StagedQueue<PreparedSource> = new StagedQueue();
 
 /* 只有视频直播能切（电台没有画面） */
 export function canHighlight(record: HighlightRecord): boolean {
   return Number(record.liveType) === 1;
 }
 
-export function isHighlightActive(liveId: string): boolean {
-  return active.has(liveId);
+/* 这场录播的切片任务在下载队列里的 id */
+export function highlightTaskId(liveId: string): string {
+  return `highlight:${ liveId }`;
 }
 
 export function highlightGeminiConfig(): GeminiConfig {
@@ -57,10 +68,6 @@ export function highlightBaseDir(): string | undefined {
   return download ? path.join(download, OUT_FOLDER) : undefined;
 }
 
-function taskId(liveId: string): string {
-  return `highlight:${ liveId }`;
-}
-
 /* 成员名字：SNH48-沈馨 → SNH48 沈馨 */
 function memberName(nickname: string): string {
   return nickname.replace(/-/g, ' ').trim();
@@ -78,6 +85,7 @@ export function highlightJobOf(record: HighlightRecord, count: HighlightCount, b
     title: record.title,
     date: time.isValid() ? time.format('YYYY.MM.DD') : '',
     count,
+    autoScore: getSetting('highlightAutoScore'),
     outDir,
     workDir: path.join(outDir, WORK_FOLDER),
     ffmpeg: getFFmpeg(),
@@ -99,41 +107,31 @@ function notify(title: string, body: string): void {
   } catch { /* 系统不让弹通知就算了，下载队列里也看得到 */ }
 }
 
-async function run(record: HighlightRecord, job: HighlightJob, controller: AbortController): Promise<void> {
-  const id: string = taskId(record.liveId);
+/* 下载录播的一个分片：和普通录播下载用同样的请求头和超时（卡住 30 秒就断开，由调用的地方重试） */
+async function fetchSegment(uri: string, file: string, signal: AbortSignal): Promise<number> {
+  await pipeline(
+    got.stream(uri, { headers: { Host: new URL(uri).hostname, 'User-Agent': engineUserAgent }, timeout: SEGMENT_TIMEOUT }),
+    fs.createWriteStream(file),
+    { signal });
 
-  try {
-    if (controller.signal.aborted) {
-      queueTaskEnd(id, 'stopped');
+  const size: number = (await fsP.stat(file)).size;
 
-      return;
-    }
+  if (size === 0) throw new Error('下载到的分片是空的');
 
-    const result: HighlightResult = await runHighlight(job, {
-      async liveInfo(liveId: string): Promise<{ playStreamPath: string; msgFilePath: string }> {
-        const res: LiveRoomInfo = await requestLiveRoomInfo(liveId);
-
-        if (!res.success || !res.content) throw new Error(res.message || '取不到这场录播的信息');
-
-        return { playStreamPath: res.content.playStreamPath, msgFilePath: res.content.msgFilePath };
-      },
-      fetchText: (url: string): Promise<string> => requestDownloadFile(url)
-    }, (progress: HighlightProgress): void => queueTaskProgress(id, progress.percent, progress.detail), controller.signal);
-    const text: string = doneText(result);
-
-    queueTaskEnd(id, 'done', undefined, text);
-    notify(`切片完成：${ job.member } ${ job.title }`, text);
-  } catch (err) {
-    if (isStopped(err)) {
-      queueTaskEnd(id, 'stopped', undefined, '已停止。再点「重试」会接着做，下载好的录播不用重新下载');
-    } else {
-      console.error('自动切片失败', err);
-      queueTaskEnd(id, 'error', err instanceof Error ? err.message : String(err));
-    }
-  } finally {
-    active.delete(record.liveId);
-  }
+  return size;
 }
+
+const deps: HighlightDeps = {
+  async liveInfo(liveId: string): Promise<{ playStreamPath: string; msgFilePath: string }> {
+    const res: LiveRoomInfo = await requestLiveRoomInfo(liveId);
+
+    if (!res.success || !res.content) throw new Error(res.message || '取不到这场录播的信息');
+
+    return { playStreamPath: res.content.playStreamPath, msgFilePath: res.content.msgFilePath };
+  },
+  fetchText: (url: string): Promise<string> => requestDownloadFile(url),
+  fetchSegment
+};
 
 /**
  * 开始给一场录播做切片（加到下载队列里，排队执行）
@@ -144,7 +142,7 @@ async function run(record: HighlightRecord, job: HighlightJob, controller: Abort
 export function startHighlight(record: HighlightRecord, count: HighlightCount): string | undefined {
   if (!canHighlight(record)) return '电台直播没有画面，不能做切片';
 
-  if (active.has(record.liveId)) return '这场录播已经在切片了，进度在下载队列里';
+  if (queue.has(record.liveId)) return '这场录播已经在切片了，进度在下载队列里';
 
   const baseDir: string | undefined = highlightBaseDir();
 
@@ -154,22 +152,51 @@ export function startHighlight(record: HighlightRecord, count: HighlightCount): 
 
   if (!job.gemini.apiKey.trim()) return '还没有填写 Gemini 的 API key（设置 → 语音转文字）';
 
-  const controller: AbortController = new AbortController();
+  const id: string = highlightTaskId(record.liveId);
+  let started: boolean = false; // 开始下载了没有（停止时的说明不一样）
+  let text: string = '';        // 做完后显示的说明
 
-  active.add(record.liveId);
+  function report(progress: HighlightProgress): void {
+    queueTaskProgress(id, progress.percent, progress.detail);
+  }
+
   queueTaskStart({
-    id: taskId(record.liveId),
+    id,
     title: `${ record.userInfo.nickname } ${ record.title }`,
     kind: '切片',
     filePath: job.outDir,
     percent: 0,
-    detail: '排队中…',
-    stop: (): void => controller.abort(),
+    detail: '排队中，等前面那场开始切片后就开始下载…',
+    stop: (): void => queue.stop(record.liveId),
     retry(): void {
       startHighlight(record, count);
     }
   });
-  chain = chain.then((): Promise<void> => run(record, job, controller));
+  queue.add({
+    id: record.liveId,
+    prepare: (signal: AbortSignal): Promise<PreparedSource> => prepareHighlight(job, deps, report, signal),
+    async process(prepared: PreparedSource, signal: AbortSignal): Promise<void> {
+      text = doneText(await processHighlight(job, deps, prepared, report, signal));
+    },
+    onStage(stage: QueueStage): void {
+      if (stage === 'preparing') started = true;
+
+      if (stage === 'ready') queueTaskProgress(id, DOWNLOAD_END, '录播下载好了，等前面那场切完就开始…');
+    },
+    onEnd(outcome: QueueOutcome, err?: unknown): void {
+      if (outcome === 'done') {
+        queueTaskEnd(id, 'done', undefined, text);
+        notify(`切片完成：${ job.member } ${ job.title }`, text);
+      } else if (outcome === 'stopped') {
+        queueTaskEnd(id, 'stopped', undefined, started
+          ? '已停止。再点「重试」会接着做，已经下载的部分不用重新下载'
+          : '已取消，还没有开始下载');
+      } else {
+        console.error('自动切片失败', err);
+        queueTaskEnd(id, 'error', err instanceof Error ? err.message : String(err));
+      }
+    }
+  });
 
   return undefined;
 }

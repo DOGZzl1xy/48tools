@@ -11,6 +11,7 @@ import { setQueueOpen } from '../shell/shellStore';
 import { useHighlightDialogRecord, closeHighlightDialog } from './highlightDialogStore';
 import { startHighlight, type HighlightRecord } from './highlightTask';
 import { highlightDefaults } from './highlightGemini';
+import { AUTO_SCORE } from './highlightTime';
 import type { HighlightCount } from './highlightTypes';
 
 /**
@@ -96,7 +97,7 @@ function HighlightDialog(props: {}): ReactElement {
               <Typography.Text className="block mt-[6px] text-[12px]" type="secondary">
                 {
                   count === 'auto'
-                    ? '只做爆点分 8 分以上的，平均每 8 分钟最多一个，最多 8 个。'
+                    ? `只做爆点分 ${ resolveSetting(overrides, 'highlightAutoScore') ?? AUTO_SCORE } 分以上的（门槛在设置页「录播切片」里改），最多 8 个。`
                     : '按爆点分从高到低做；找到的不够就有几个做几个。'
                 }
               </Typography.Text>
@@ -113,7 +114,7 @@ function HighlightDialog(props: {}): ReactElement {
             </div>
             <Typography.Text className="block text-[12px]" type="secondary">
               会先把整场录播下载下来（做完自动删除），再把音频和弹幕内容（不含粉丝昵称）发给 Google Gemini（{ model }）找爆点、写字幕。
-              一小时的录播大约要 15 分钟，进度在下载队列里看。
+              一小时的录播大约要 15 分钟，进度在下载队列和录播列表里看。可以连着加几场：前一场开始切片时，后一场就开始下载。
             </Typography.Text>
             {
               hasKey ? null : (

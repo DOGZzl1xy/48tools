@@ -153,7 +153,23 @@ describe('片段的字幕、标题、简介', (): void => {
   test('没给标题、简介、看点时用第一步的', (): void => {
     const script: ReturnType<typeof readScript> = readScript({ lines: [] }, highlight);
 
-    expect([script.title, script.description, script.points]).toEqual(['第一步的标题', '理由', ['封面的话']]);
+    expect([script.title, script.description, script.points, script.people]).toEqual(['第一步的标题', '理由', ['封面的话'], []]);
+  });
+
+  test('其他主角：提示里说清楚什么人算；读结果时去掉主播自己', (): void => {
+    const prompt: string = scriptRequest({ member: '测试成员', title: '测试直播' }, highlight, 60, 'QUJD', []).parts[0].text!;
+
+    expect(prompt).toContain('people');
+    expect(prompt).toContain('只是顺口提到名字');
+    expect(readScript({ lines: [], people: ['测试成员', 'SNH48-成员乙'] }, highlight, 'SNH48 测试成员').people).toEqual(['成员乙']);
+  });
+
+  test('找爆点的提示里要求严格打分', (): void => {
+    const prompt: string = findRequest({ member: '测试成员', title: '测试直播' }, { start: 0, length: 1_800 }, 'QUJD', []).parts[0].text!;
+
+    expect(prompt).toContain('打分要严格');
+    expect(prompt).toContain('9 分以上');
+    expect(prompt).toContain('可以用半分');
   });
 });
 

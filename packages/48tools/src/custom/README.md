@@ -65,7 +65,7 @@
 | 设置页：顶部有分区导航；明暗主题直接三选一（不用再点开弹窗）；加了「直播抓取」一节；FFmpeg 那一行不再显示原版的红色提示 | `settings/SettingsPage.tsx`、`settings/SettingsRow.tsx`、`settings/settings.global.sass` | `components/basic/Theme/ThemeProvider.tsx`、`ThemeContext.ts`（多给出 `theme`、`changeTheme`） |
 | Ctrl+K 还能搜到设置、下载队列、自动抓取配置；方向键选到看不见的项时列表跟着滚。侧边栏：窗口拖窄时自动收起、拖宽时恢复；同一平台的「视频」和「直播」图标用线条 / 实心区分 | `shell/CommandPalette.tsx`、`shell/shellStore.ts`、`shell/navConfig.tsx` | 无 |
 | 录播下载页：进入时自动加载列表；没有任务在下载时不显示「下载进度」一列；操作列固定在右边（直播抓取页也是） | 无 | `Pocket48Record.tsx`、`Pocket48Live.tsx` |
-| 录播自动切片：在「录播下载」里点一场直播（电台没有）的「更多 → 自动切片」，选做几个（或者自动：只做爆点分 8 分以上的）。程序把整场录播下载到工作文件夹，每半小时一段把音频和弹幕（只有时间和内容，不带昵称）交给 Gemini 找爆点和时间；再把每个片段交给 Gemini 出逐句字幕、标出哪些句子留下、重点词、标题、2～3 句简介和封面看点；然后用 ffmpeg 剪掉沉默和无关的话，合成 1920×1080 的横屏视频（左边直播画面，右上她说的话、重点词加粗变黄，右下弹幕往上滚），并从成片里让 Gemini 挑一帧做封面（右边盖磨砂玻璃，写标题和看点；16:9 和 4:3 各一张）。每场录播一个文件夹，里面是成片（mp4）、两张封面（jpg）、说明（txt：发布用的标题「【沈馨】短标题 | 20261115 直播切片」、简介、看点、在录播里的位置）和一份汇总；工作文件夹做完自动删除，失败或停止时留着，重试时下载好的录播和问过 Gemini 的结果不用重来。进度在下载队列里，同一时间只做一场。key 和接口地址用「语音转文字」里 Google Gemini 的那一份，模型在设置页「录播切片」里改（默认 `gemini-4-hydrogen`）。字体：电脑上装了思源黑体就用它，否则用微软雅黑。需要带 libx264 和 libass 的 ffmpeg | `highlight/highlightPipeline.ts`（流程）、`highlight/highlightGemini.ts`（怎么问 Gemini）、`highlight/highlightCut.ts`（剪辑点）、`highlight/highlightAss.ts`（画面排版）、`highlight/highlightFfmpeg.ts`、`highlight/highlightTime.ts`、`highlight/highlightTask.ts`（设置和下载队列）、`highlight/HighlightDialog.tsx`、`highlight/HighlightOption.tsx` | `Pocket48Record.tsx`（「更多」菜单里的「自动切片」）、`shell/AppShell.tsx`（对话框）、`settings/SettingsPage.tsx`、`settings/settingsStore.ts`（`highlight*` 设置项） |
+| 录播自动切片：在「录播下载」里点一场直播（电台没有）的「更多 → 自动切片」，选做几个（或者自动：只做爆点分 8.5 分以上的，门槛在设置页「录播切片」里改；提示里要求模型严格打分）。程序把整场录播下载到工作文件夹（和普通录播下载一样同时下 4 个分片、卡住或失败自动重试，下完在本机合成一个 mp4；停止后再来时下好的分片不用重下），每半小时一段把音频和弹幕（只有时间和内容，不带昵称）交给 Gemini 找爆点和时间；再把每个片段交给 Gemini 出逐句字幕、标出哪些句子留下、重点词、标题、2～3 句简介、封面看点，以及除了主播还有谁是主角（连麦的人、被认真讨论的成员，只是提到名字的不算）；然后用 ffmpeg 剪掉沉默和无关的话，合成 1920×1080 的横屏视频（左边直播画面，右上她说的话、重点词加粗变黄，右下弹幕往上滚），并从成片里让 Gemini 挑一帧做封面（右边盖磨砂玻璃，写标题和看点；16:9 和 4:3 各一张）。每场录播一个文件夹，里面是成片（mp4）、两张封面（jpg）、说明（txt：发布用的标题「【沈馨】短标题 | 20261115 直播切片」，有其他主角时是「【沈馨&徐佳琳】…」、简介、看点、在录播里的位置）和一份汇总；工作文件夹做完自动删除，失败或停止时留着，重试时下载好的录播和问过 Gemini 的结果不用重来。进度在下载队列和录播列表的「下载进度」列里（下载时有速度和剩余时间）。可以连着加几场：同一时间只切一场，前一场开始切的时候后一场就开始下载，最多提前下载好一场；排队中的任务点「停止」立刻取消。key 和接口地址用「语音转文字」里 Google Gemini 的那一份，模型在设置页「录播切片」里改（默认 `gemini-4-hydrogen`）。字体：电脑上装了思源黑体就用它，否则用微软雅黑。需要带 libx264 和 libass 的 ffmpeg | `highlight/highlightPipeline.ts`（流程）、`highlight/highlightDownload.ts`（下载录播）、`highlight/highlightQueue.ts`（排队）、`highlight/highlightGemini.ts`（怎么问 Gemini）、`highlight/highlightCut.ts`（剪辑点）、`highlight/highlightAss.ts`（画面排版）、`highlight/highlightFfmpeg.ts`、`highlight/highlightTime.ts`、`highlight/highlightTask.ts`（设置和下载队列）、`highlight/HighlightDialog.tsx`、`highlight/HighlightOption.tsx`、`highlight/HighlightRowProgress.tsx`（列表里的进度） | `Pocket48Record.tsx`（「更多」菜单里的「自动切片」、「下载进度」列）、`shell/AppShell.tsx`（对话框）、`settings/SettingsPage.tsx`、`settings/settingsStore.ts`（`highlight*` 设置项） |
 | 几个模块共用的小工具：IndexedDB 的打开和 Promise 包装、等一会儿、读写 localStorage 里的 JSON | `common/idb.ts`、`common/util.ts` | 无 |
 
 ## 原版文件里的其他小改动
@@ -91,8 +91,8 @@
 
 ## 测试
 
-- 单元测试：`custom/` 下的 `*.spec.ts`（20 个文件，148 个测试），在 `packages/48tools` 目录运行 `node --run test`。
-  其中 `highlight/highlightPipeline.spec.ts` 最后一个测试是真的把录播切片跑一遍（下载、问 Gemini、合成），平时跳过，
+- 单元测试：`custom/` 下的 `*.spec.ts`（22 个文件，166 个测试），在 `packages/48tools` 目录运行 `node --run test`。
+  其中 `highlight/highlightPipeline.spec.ts` 最后一组测试是真的把录播切片跑一遍（下载、问 Gemini、合成；也可以只下载），平时跳过，
   要跑时按那个文件开头的说明设置环境变量。
   除了纯函数，房间消息的加载和同步（`room/roomStore.spec.ts`）、语音转文字的状态（`transcribe/transcribeStore.spec.ts`）
   也有测试，接口和缓存用假的代替。

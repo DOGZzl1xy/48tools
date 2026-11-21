@@ -1,7 +1,7 @@
 /**
  * 录播自动切片里和时间有关的计算：读弹幕文件、分段、合并爆点、决定做几个、文件名。
  */
-import { toSeconds, clock, parseLrc, planWindows, mergeHighlights, targetCount, safeFileName, postTitle } from './highlightTime';
+import { toSeconds, clock, parseLrc, planWindows, mergeHighlights, targetCount, safeFileName, postTitle, cleanPeople } from './highlightTime';
 import type { Highlight } from './highlightTypes';
 
 function highlight(start: number, end: number, score: number, title: string = '标题'): Highlight {
@@ -94,24 +94,27 @@ describe('mergeHighlights', (): void => {
 });
 
 describe('targetCount', (): void => {
-  const sorted: Array<Highlight> = [highlight(0, 60, 9), highlight(100, 160, 8), highlight(200, 260, 7), highlight(300, 360, 5)];
+  const sorted: Array<Highlight> = [highlight(0, 60, 9.5), highlight(100, 160, 9), highlight(200, 260, 8.5), highlight(300, 360, 5)];
 
   test('选了数量就按数量，不够就有几个做几个', (): void => {
     expect(targetCount(sorted, 2, 3_600)).toBe(2);
     expect(targetCount(sorted, 8, 3_600)).toBe(4);
   });
 
-  test('自动：只做 8 分以上的', (): void => {
-    expect(targetCount(sorted, 'auto', 3_600)).toBe(2);
+  test('自动：只做 8.5 分以上的；门槛可以改', (): void => {
+    expect(targetCount(sorted, 'auto', 3_600)).toBe(3);
+    expect(targetCount(sorted, 'auto', 3_600, 9)).toBe(2);
+    expect(targetCount(sorted, 'auto', 3_600, 9.5)).toBe(1);
   });
 
   test('自动：短的录播最多的个数跟着变少', (): void => {
     expect(targetCount(sorted, 'auto', 400)).toBe(1);
   });
 
-  test('自动：没有 8 分以上的，最高的有 6 分也做一个', (): void => {
-    expect(targetCount([highlight(0, 60, 7), highlight(100, 160, 6)], 'auto', 3_600)).toBe(1);
-    expect(targetCount([highlight(0, 60, 5)], 'auto', 3_600)).toBe(0);
+  test('自动：没有够分的，最高的有 7 分也做一个', (): void => {
+    expect(targetCount([highlight(0, 60, 8), highlight(100, 160, 8)], 'auto', 3_600)).toBe(1);
+    expect(targetCount([highlight(0, 60, 7)], 'auto', 3_600)).toBe(1);
+    expect(targetCount([highlight(0, 60, 6.5)], 'auto', 3_600)).toBe(0);
     expect(targetCount([], 'auto', 3_600)).toBe(0);
   });
 });
@@ -124,6 +127,27 @@ describe('postTitle', (): void => {
 
   test('没有名字或日期时不留空的括号', (): void => {
     expect(postTitle('', '', '标题')).toBe('标题 | 直播切片');
+  });
+
+  test('有其他主角时用 & 连在主播后面', (): void => {
+    expect(postTitle('SNH48 测试成员', '2026.11.15', '标题', ['成员乙'])).toBe('【测试成员&成员乙】标题 | 20261115 直播切片');
+    expect(postTitle('SNH48 测试成员', '2026.11.15', '标题', ['成员乙', '成员丙'])).toBe('【测试成员&成员乙&成员丙】标题 | 20261115 直播切片');
+  });
+});
+
+describe('cleanPeople', (): void => {
+  test('去掉队伍名、主播自己、重复的和空的，最多 3 个', (): void => {
+    expect(cleanPeople(['SNH48-成员乙', ' 成员乙 ', '测试成员', '', 'GNZ48 成员丙'], 'SNH48 测试成员')).toEqual(['成员乙', '成员丙']);
+    expect(cleanPeople(['甲', '乙', '丙', '丁'], '测试成员')).toEqual(['甲', '乙', '丙']);
+  });
+
+  test('不是名字的东西不要：太长的一句话、带括号的', (): void => {
+    expect(cleanPeople(['一个不知道是谁的很长很长的描述性文字', '【成员乙】'], '测试成员')).toEqual(['成员乙']);
+  });
+
+  test('模型没给或者给的不是列表', (): void => {
+    expect(cleanPeople(undefined, '测试成员')).toEqual([]);
+    expect(cleanPeople('成员乙', '测试成员')).toEqual([]);
   });
 });
 

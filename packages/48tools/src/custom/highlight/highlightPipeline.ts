@@ -1,7 +1,8 @@
 import * as fs from 'node:fs';
 import { promises as fsP } from 'node:fs';
 import * as path from 'node:path';
-import { runFfmpeg, mediaDuration, detectSilences, m3u8Duration, pickFonts } from './highlightFfmpeg';
+import { runFfmpeg, mediaDuration, detectSilences, pickFonts } from './highlightFfmpeg';
+import { downloadReplay, type DownloadProgress, type SegmentFetcher } from './highlightDownload';
 import {
   geminiJson, findRequest, readFound, scriptRequest, readScript, coverRequest, HighlightStopped,
   type GeminiConfig, type LiveMeta
@@ -17,11 +18,11 @@ import type { AudioWindow, CaptionLine, ClipScript, DanmuLine, Highlight, Highli
  * 录播自动切片：给一场直播的录播，自动剪出几个横屏短视频（左边直播画面，右上她说的话，右下弹幕），
  * 每个带封面、标题和简介。听音频、挑片段、写字幕都由 Gemini 做，剪和合成用 ffmpeg。
  *
- * 流程（runHighlight）：
- *   1. 取录播地址和弹幕文件，把整场录播下载到工作文件夹（不重新编码）
+ * 流程（runHighlight；第 1 步是 prepareHighlight，后面是 processHighlight）：
+ *   1. 取录播地址和弹幕文件，把整场录播下载到工作文件夹（同时下 4 个分片，不重新编码，见 ./highlightDownload）
  *   2. 每半小时一段，音频和弹幕（只有时间和内容）交给 Gemini，找出可能成为爆点的片段和时间
  *   3. 各段的结果合在一起按分数排，决定做哪几个（用户选的数量，或者自动）
- *   4. 每个片段前后多留十几秒再交给 Gemini：出逐句字幕、每句留不留、重点词、标题、简介、看点
+ *   4. 每个片段前后多留十几秒再交给 Gemini：出逐句字幕、每句留不留、重点词、标题、简介、看点、除了主播还有谁是主角
  *   5. 按留下的句子剪掉沉默和无关的话，合成横屏视频；再从成片里挑一帧做封面（16:9 和 4:3 各一张）
  *   6. 成片、两张封面、说明（标题和简介）放进输出文件夹；工作文件夹用完删掉
  * 中途失败或停止时工作文件夹留着，重试时下载好的录播和已经问过 Gemini 的结果不用重来。
@@ -34,6 +35,7 @@ export interface HighlightJob {
   title: string;       // 直播标题
   date: string;        // 直播日期，画面右上角显示，例如 2026.11.15
   count: HighlightCount;
+  autoScore?: number;  // count 是 'auto' 时，爆点分不低于它的才做；不填用默认的
   outDir: string;      // 成片放在这里
   workDir: string;     // 中间文件放在这里
   ffmpeg: string;
@@ -45,7 +47,15 @@ export interface HighlightDeps {
   liveInfo: (liveId: string) => Promise<{ playStreamPath: string; msgFilePath: string }>;
   /* 下载一个文本文件（弹幕、m3u8） */
   fetchText: (url: string) => Promise<string>;
+  /* 下载录播的一个分片；不给的话让 ffmpeg 自己下载整场（只有一条连接，慢） */
+  fetchSegment?: SegmentFetcher;
   fetchImpl?: typeof fetch;
+}
+
+/* 第 1 步的结果：下载好的录播和弹幕 */
+export interface PreparedSource {
+  source: string;
+  danmu: Array<DanmuLine>;
 }
 
 export interface HighlightProgress {
@@ -56,9 +66,10 @@ export interface HighlightProgress {
 export interface ClipResult {
   index: number;
   title: string;       // 模型取的短标题（画面和封面上用）
-  postTitle: string;   // 发布时用的标题：【沈馨】短标题 | 20261115 直播切片
+  postTitle: string;   // 发布时用的标题：【沈馨】短标题 | 20261115 直播切片（有其他主角时是【沈馨&徐佳琳】）
   description: string;
   points: Array<string>;
+  people: Array<string>; // 除了主播以外的主角（连麦的人、被认真讨论的成员）
   score: number;
   start: number;       // 在录播里的时间（秒）
   end: number;
@@ -85,7 +96,7 @@ const MIN_CLIP_SECONDS: number = 20; // 剪完不到这么长的不要
 const COVER_CANDIDATES: number = 6;
 
 /* 各步占总进度的多少 */
-const DOWNLOAD_END: number = 30;
+export const DOWNLOAD_END: number = 30;
 const FIND_END: number = 45;
 
 async function exists(file: string): Promise<boolean> {
@@ -197,7 +208,7 @@ async function makeClip(
       (item: DanmuLine): boolean => item.time >= clipStart && item.time < clipStart + clipLength);
 
     script = readScript(await geminiJson<unknown>(
-      job.gemini, scriptRequest(meta, highlight, clipLength, await base64Of(audio), clipDanmu), signal, deps.fetchImpl), highlight);
+      job.gemini, scriptRequest(meta, highlight, clipLength, await base64Of(audio), clipDanmu), signal, deps.fetchImpl), highlight, job.member);
     await fsP.writeFile(scriptFile, JSON.stringify(script, null, 2));
   }
 
@@ -287,7 +298,8 @@ async function makeClip(
   const info: ClipInfo = {
     index,
     title: script.title,
-    postTitle: postTitle(job.member, job.date, script.title),
+    postTitle: postTitle(job.member, job.date, script.title, script.people),
+    people: script.people ?? [],
     description: script.description,
     points: script.points,
     score: highlight.score,
@@ -314,22 +326,21 @@ async function makeClip(
 }
 
 /**
- * 给一场录播做自动切片
+ * 第 1 步：取录播地址和弹幕，把整场录播下载到工作文件夹。上次已经下载好的不重新下载。
+ * 和后面的步骤分开，是为了前一场还在切的时候下一场可以先下载（见 ./highlightTask）
  * @param { HighlightJob } job
  * @param { HighlightDeps } deps
- * @param { (progress: HighlightProgress) => void } onProgress
+ * @param { (progress: HighlightProgress) => void } onProgress - 这一步占总进度的 0 ~ DOWNLOAD_END
  * @param { AbortSignal } [signal] - 用户点了停止
  */
-export async function runHighlight(
+export async function prepareHighlight(
   job: HighlightJob, deps: HighlightDeps, onProgress: (progress: HighlightProgress) => void, signal?: AbortSignal
-): Promise<HighlightResult> {
-  const meta: LiveMeta = { member: job.member, title: job.title };
+): Promise<PreparedSource> {
   const source: string = path.join(job.workDir, 'source.mp4');
   const sourceDone: string = path.join(job.workDir, 'source.done');
 
+  checkStopped(signal);
   await fsP.mkdir(job.workDir, { recursive: true });
-
-  // 1. 录播地址、弹幕、下载
   onProgress({ percent: 0, detail: '取录播地址…' });
 
   const info: { playStreamPath: string; msgFilePath: string } = await deps.liveInfo(job.liveId);
@@ -349,28 +360,46 @@ export async function runHighlight(
   }
 
   if (!(await exists(sourceDone)) || !(await exists(source))) {
-    let expected: number | undefined;
+    let playlist: string | undefined;
 
     try {
-      expected = /\.m3u8(\?|$)/i.test(info.playStreamPath) ? m3u8Duration(await deps.fetchText(info.playStreamPath)) : undefined;
-    } catch { /* 算不出总时长就不显示百分比 */ }
+      playlist = /\.m3u8(\?|$)/i.test(info.playStreamPath) ? await deps.fetchText(info.playStreamPath) : undefined;
+    } catch { /* 读不到 m3u8 的内容就让 ffmpeg 自己下载，不显示百分比 */ }
 
-    onProgress({ percent: 0, detail: '下载录播…' });
-    await runFfmpeg(job.ffmpeg, [
-      '-y', '-v', 'error', '-nostats', '-progress', 'pipe:1', '-i', info.playStreamPath, '-c', 'copy', source
-    ], {
+    checkStopped(signal);
+    await downloadReplay({
+      ffmpeg: job.ffmpeg,
+      url: info.playStreamPath,
+      playlist,
+      workDir: job.workDir,
+      output: source,
+      fetchSegment: deps.fetchSegment,
       signal,
-      onTime(seconds: number): void {
-        const part: number = expected ? Math.min(1, seconds / expected) : 0;
-
-        onProgress({
-          percent: part * DOWNLOAD_END,
-          detail: expected ? `下载录播 ${ Math.floor(part * 100) }%` : `下载录播，已下载 ${ clock(seconds) }`
-        });
-      }
+      onProgress: (progress: DownloadProgress): void => onProgress({ percent: progress.part * DOWNLOAD_END, detail: progress.detail })
     });
     await fsP.writeFile(sourceDone, '');
   }
+
+  onProgress({ percent: DOWNLOAD_END, detail: '录播下载好了' });
+
+  return { source, danmu };
+}
+
+/**
+ * 第 2 ~ 6 步：找爆点、写字幕、剪、合成、做封面
+ * @param { HighlightJob } job
+ * @param { HighlightDeps } deps
+ * @param { PreparedSource } prepared - prepareHighlight 的结果
+ * @param { (progress: HighlightProgress) => void } onProgress - 这几步占总进度的 DOWNLOAD_END ~ 100
+ * @param { AbortSignal } [signal] - 用户点了停止
+ */
+export async function processHighlight(
+  job: HighlightJob, deps: HighlightDeps, prepared: PreparedSource, onProgress: (progress: HighlightProgress) => void, signal?: AbortSignal
+): Promise<HighlightResult> {
+  const meta: LiveMeta = { member: job.member, title: job.title };
+  const { source, danmu }: PreparedSource = prepared;
+
+  checkStopped(signal);
 
   const duration: number = await mediaDuration(job.ffmpeg, source, signal);
 
@@ -405,7 +434,7 @@ export async function runHighlight(
 
   // 3. 决定做哪几个
   const candidates: Array<Highlight> = mergeHighlights(all);
-  const target: number = targetCount(candidates, job.count, duration);
+  const target: number = targetCount(candidates, job.count, duration, job.autoScore);
   const fonts: FontSet = await pickFonts(job.workDir);
   const context: ClipContext = {
     job, deps, signal, source, duration, danmu, meta,
@@ -464,8 +493,17 @@ export async function runHighlight(
   return { clips, found: candidates.length, summary: summaries.join(' '), skipped, infoFile };
 }
 
-export function isStopped(err: unknown): boolean {
-  return err instanceof HighlightStopped;
+/**
+ * 给一场录播做自动切片：下载完接着切，中间不停
+ * @param { HighlightJob } job
+ * @param { HighlightDeps } deps
+ * @param { (progress: HighlightProgress) => void } onProgress
+ * @param { AbortSignal } [signal] - 用户点了停止
+ */
+export async function runHighlight(
+  job: HighlightJob, deps: HighlightDeps, onProgress: (progress: HighlightProgress) => void, signal?: AbortSignal
+): Promise<HighlightResult> {
+  return processHighlight(job, deps, await prepareHighlight(job, deps, onProgress, signal), onProgress, signal);
 }
 
 /* 工作文件夹里有没有上次没做完留下的东西 */

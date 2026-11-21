@@ -108,14 +108,6 @@ export async function detectSilences(ffmpeg: string, file: string, signal?: Abor
   return parseSilences(log);
 }
 
-/* m3u8 里各个分片的时长加起来（下载时算进度用）；不是 m3u8 或读不出来时返回 undefined */
-export function m3u8Duration(text: string): number | undefined {
-  const total: number = Array.from(text.matchAll(/#EXTINF:\s*([\d.]+)/g))
-    .reduce((sum: number, match: RegExpMatchArray): number => sum + Number(match[1]), 0);
-
-  return total > 0 ? total : undefined;
-}
-
 const sourceHanFiles: Array<string> = [
   'SourceHanSansSC-Medium.otf', 'SourceHanSansSC-Heavy.otf', 'SourceHanSansSC-Regular.otf', 'SourceHanSansSC-Bold.otf'
 ];
