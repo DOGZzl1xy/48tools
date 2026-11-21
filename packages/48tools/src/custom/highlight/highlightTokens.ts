@@ -28,13 +28,31 @@ const TAIL: number = 0.3;           // 最后一个字开始之后，这句话�
 const JOIN_GAP: number = 0.6;       // 两句之间空得比这短，就让前一句一直显示到后一句出来
 const MIN_TOTAL_RATIO: number = 0.35; // 整体至少要对上这么多字才用本地识别的时间
 const MIN_LINE_RATIO: number = 0.4;   // 一句话至少要对上这么多字才用它的时间
+const RUN_RATIO: number = 0.6;        // 相同的字太少时，至少这么多字要对到一串连在一起的字上（见 substitutedRun）
+const RUN_RATIO_BLIND: number = 0.85; // 一个相同的字都没有时要求更高
+const RUN_SECONDS_PER_CHAR: number = 0.6;
 const EDIT: number = 2;               // 对齐时错一个字、多一个字、少一个字的代价
 const PAUSE_SECONDS: number = 1;      // 识别出来的相邻两个字隔了这么久，算中间有停顿
 const FAR: number = 0x3fffffff;       // 对齐时表示「走不到」
 
 /* 只留字母、数字、汉字，字母变小写 */
+const DIGITS: string = '零一二三四五六七八九';
+
+/* 字幕里写成阿拉伯数字的，本地模型听出来的是汉字（12 月 → 十二月），比对前换成汉字：两位数按「十二」「二十」读，更长的一位一位读（2026 → 二零二六） */
+export function digitsToChinese(text: string): string {
+  return text.replace(/\d+/g, (number: string): string => {
+    const value: number = Number(number);
+
+    if (number.length === 2 && value >= 10) {
+      return `${ value >= 20 ? DIGITS[Math.floor(value / 10)] : '' }十${ value % 10 === 0 ? '' : DIGITS[value % 10] }`;
+    }
+
+    return Array.from(number, (digit: string): string => DIGITS[Number(digit)]).join('');
+  });
+}
+
 function normalize(text: string): Array<string> {
-  return Array.from(text.toLowerCase()).filter((ch: string): boolean => /[\p{L}\p{N}]/u.test(ch));
+  return Array.from(digitsToChinese(text).toLowerCase()).filter((ch: string): boolean => /[\p{L}\p{N}]/u.test(ch));
 }
 
 /**
@@ -168,6 +186,33 @@ export function alignChars(
 }
 
 /**
+ * 一句相同的字太少的话：如果它大部分字都对到了识别结果里连在一起、长短差不多的一串字上（错字也算），返回那串字的时间。
+ * 字幕里这句话前后的句子都对上了时，夹在中间没人认领的那串字就是这句话（人名、梗、英文最容易被本地模型听错）
+ * @param { Array<{ index: number; same: boolean }> } own - 这句话每个字对到了识别结果的第几个字
+ * @param { Array<{ time: number }> } heard - 识别结果（每个字一项）
+ * @param { number } count - 这句话有几个字
+ * @param { number } same - 其中完全相同的有几个
+ */
+export function substitutedRun(
+  own: Array<{ index: number; same: boolean }>, heard: Array<{ time: number }>, count: number, same: number
+): { start: number; end: number } | null {
+  const indexes: Array<number> = own.filter((pair: { index: number }): boolean => pair.index >= 0).map((pair: { index: number }): number => pair.index);
+
+  // 对上（相同或错字）的字要占这句话的大部分；一个相同的字都没有时要求更高
+  if (indexes.length < Math.max(2, Math.ceil(count * (same > 0 ? RUN_RATIO : RUN_RATIO_BLIND)))) return null;
+
+  const firstIndex: number = indexes[0];
+  const lastIndex: number = indexes[indexes.length - 1];
+  const start: number = heard[firstIndex].time;
+  const end: number = heard[lastIndex].time;
+
+  // 对到的那串字要连在一起（中间夹的别的字不多），说完用的时间和字数相称（不会一个字一秒以上）
+  if (lastIndex - firstIndex + 1 > (indexes.length * 1.5) + 1 || end - start > (count * RUN_SECONDS_PER_CHAR) + 1) return null;
+
+  return { start, end };
+}
+
+/**
  * 用本地识别的每个字的时间给字幕定时间
  * @param { Array<CaptionLine> } lines - 按时间排好的句子（时间是模型给的、已经用停顿和音节对过的）
  * @param { Array<TimedToken> } tokens - 本地识别的结果
@@ -205,7 +250,15 @@ export function timeLinesByTokens(lines: Array<CaptionLine>, tokens: Array<Timed
     offset += count;
 
     if (count === 0 || first === -1 || same < Math.max(1, Math.ceil(count * MIN_LINE_RATIO))) {
-      timed.push({ ...line, anchored: false });
+      // 相同的字太少，但这句话整句对到了识别结果里连在一起的一串字上（多半是本地模型把人名、梗听错了，
+      // 比如「彤馨恋BE了呀」听成「我今天闭异了呀」）：前后的句子都对上了，夹在中间的这串字就是这句话，用它的时间
+      const run: { start: number; end: number } | null = count > 0 ? substitutedRun(own, heard, count, same) : null;
+
+      if (run) {
+        timed.push({ ...line, start: Math.max(0, run.start - LEAD), end: Math.min(length, Math.max(run.start + 0.2, run.end + TAIL)), anchored: true });
+      } else {
+        timed.push({ ...line, anchored: false });
+      }
 
       return;
     }

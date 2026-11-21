@@ -32,6 +32,7 @@ export interface CustomSettings {
   highlightDir?: string;              // 录播切片：保存的文件夹（不设置就用 downloadDir 下面的「录播切片」）
   highlightVia?: 'api' | 'agy';       // 录播切片：Gemini 走按量付费的接口（默认），还是本机的 agy（Antigravity 的订阅额度）
   highlightAgyModel?: string;         // 录播切片：走 agy 时用的模型名（不填用 gemini-4-hydrogen-medium）
+  highlightGlossary?: string;         // 录播切片：专有词汇（每行一条，见 custom/highlight/highlightGlossary；不设置用默认的）
   highlightAutoScore?: number;        // 录播切片：选「自动」时，爆点分不低于它的才做（不设置用默认的 8.5）
   highlightCount?: number;            // 录播切片：上次选的数量（没选过或选了「自动」时不保存）
 }

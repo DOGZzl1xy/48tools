@@ -1,7 +1,7 @@
 /**
  * 录播自动切片的本地打轴：读识别程序的输出、两串字逐个对齐、用对上的字的时间给每句话定时间。
  */
-import { parseRecognizerOutput, alignChars, timeLinesByTokens, type TimedToken, type TokenTiming } from './highlightTokens';
+import { parseRecognizerOutput, alignChars, timeLinesByTokens, digitsToChinese, type TimedToken, type TokenTiming } from './highlightTokens';
 import type { CaptionLine } from './highlightTypes';
 
 function line(start: number, end: number, text: string, keep: boolean = true): CaptionLine {
@@ -109,6 +109,41 @@ describe('timeLinesByTokens', (): void => {
     expect(result.lines[1].start).toBeGreaterThanOrEqual(result.lines[0].start);
     expect(result.lines[1].end).toBeLessThanOrEqual(result.lines[2].start);
     expect(result.lines[2].start).toBeCloseTo(14);
+  });
+
+  test('本地模型把一句话听错了（人名、英文）：前后的句子对上了，夹在中间的那串字就是它', (): void => {
+    // 实际：35.3「哎」，停了十秒，46.1 说「彤馨恋BE了呀」（本地模型听成「我今天闭异了呀」），53.0「哎不是为啥我这iPad会突然重启」
+    const misheard: Array<TimedToken> = [
+      ...heard('我怕他跟我闹我怕他又生气', 32.5 - 2.2), { text: '哎', time: 35.3 }, ...heard('我今天闭异了呀', 46.1), ...heard('哎不是为啥我这iPad会突然重启', 53)
+    ];
+    // 模型把「彤馨恋BE了呀」的时间标早了十秒，落在「哎」上
+    const result: TokenTiming = timeLinesByTokens([
+      line(29, 33, '我怕他跟我闹，我怕他又生气', false), line(35.2, 36.1, '彤馨恋BE了呀'), line(36.2, 38, '哎不是，为啥'), line(38, 41, '我这iPad会突然重启啊')
+    ], misheard, 70);
+
+    expect(result.lines[1].start).toBeCloseTo(46.1);
+    expect(result.lines[1].end).toBeGreaterThan(47.3);
+    expect(result.lines[2].start).toBeCloseTo(53);
+  });
+
+  test('字幕里的阿拉伯数字按汉字比（本地模型听出来的是汉字）', (): void => {
+    expect(digitsToChinese('12月')).toBe('十二月');
+    expect(digitsToChinese('20岁、10个、99分、5点')).toBe('二十岁、十个、九十九分、五点');
+    expect(digitsToChinese('2026年1米74')).toBe('二零二六年一米七十四');
+
+    // 「12月准备整点啥活」被听成「十二月怎么咱那啥活」：换成汉字后有一半的字相同，按它的时间
+    const result: TokenTiming = timeLinesByTokens(
+      [line(10, 11.8, '12月准备整点啥活'), line(12, 14, '12月我给直播间里放个炸药')],
+      [...heard('十二月怎么咱那啥活', 15.5), ...heard('十二月我给直播间里放个炸药', 17.4)], 40);
+
+    expect(result.lines[0].start).toBeCloseTo(15.5);
+  });
+
+  test('一句话没对上，夹在中间的那串字和它长短差太多：不硬套，保持原来的时间', (): void => {
+    const misheard: Array<TimedToken> = [...heard('给我点费大厨了', 10), ...heard('一二三四五六七八九十一二三四五六七八九十', 20), ...heard('都没吃完', 40)];
+    const result: TokenTiming = timeLinesByTokens([line(9.5, 11.5, '给我点费大厨了'), line(12, 13, '嗯'), line(39, 41, '都没吃完')], misheard, 60);
+
+    expect(result.lines[1].start).toBeCloseTo(12);
   });
 
   test('整体对上的字太少（识别的是另一段话）：不用，原样返回', (): void => {

@@ -14,6 +14,7 @@ import { tidyLines, buildSegments } from './highlightCut';
 import { alignLines, envelopeOf, syllablePeaks } from './highlightAlign';
 import { timeLinesByTokens, type TimedToken, type TokenTiming } from './highlightTokens';
 import { fixHighlightTimes } from './highlightQuotes';
+import { parseGlossary, glossaryPrompt, applyGlossary, type Glossary } from './highlightGlossary';
 import {
   placeDanmu, buildVideoAss, renderFilter, buildCoverAss, coverFilter, LEFT_WIDTH, COVER_WIDTHS, type FontSet, type PlacedDanmu
 } from './highlightAss';
@@ -47,6 +48,7 @@ export interface HighlightJob {
   workDir: string;     // 中间文件放在这里
   ffmpeg: string;
   gemini: GeminiConfig;
+  glossary?: string;    // 专有词汇（设置里的原文，见 ./highlightGlossary）
 }
 
 export interface HighlightDeps {
@@ -174,7 +176,26 @@ export function clipInfoText(job: Pick<HighlightJob, 'member' | 'title' | 'date'
   ].join('\r\n');
 }
 
+/* 字幕、标题、简介、看点、人名里错的写法换成对的 */
+function glossaryScript(script: ClipScript, glossary: Glossary): ClipScript {
+  if (glossary.replacements.length === 0) return script;
+
+  const fix: (text: string) => string = (text: string): string => applyGlossary(text, glossary);
+
+  return {
+    ...script,
+    lines: script.lines.map((line: CaptionLine): CaptionLine => ({ ...line, text: fix(line.text), emphasis: line.emphasis.map(fix) })),
+    title: fix(script.title),
+    titles: script.titles?.map(fix),
+    more: script.more?.map(fix),
+    description: fix(script.description),
+    points: script.points.map(fix),
+    people: script.people?.map(fix)
+  };
+}
+
 interface ClipContext {
+  glossary: Glossary;
   job: HighlightJob;
   deps: HighlightDeps;
   signal?: AbortSignal;
@@ -225,6 +246,9 @@ async function makeClip(
       job.gemini, scriptRequest(meta, highlight, clipLength, await base64Of(audio), clipDanmu), signal, deps.fetchImpl), highlight, job.member);
     await fsP.writeFile(scriptFile, JSON.stringify(script, null, 2));
   }
+
+  // 专有词汇里「错 → 对」的替换（存下来的是 Gemini 的原文，每次用的时候换，改了词汇表重做也生效）
+  script = glossaryScript(script, context.glossary);
 
   // 模型标的时间不稳（偶尔整段早一两秒），用声音里的停顿和音节把每句话对回去，再定剪辑点
   const silences: Array<Silence> = await detectSilences(job.ffmpeg, audio, signal);
@@ -437,7 +461,8 @@ export async function prepareHighlight(
 export async function processHighlight(
   job: HighlightJob, deps: HighlightDeps, prepared: PreparedSource, onProgress: (progress: HighlightProgress) => void, signal?: AbortSignal
 ): Promise<HighlightResult> {
-  const meta: LiveMeta = { member: job.member, title: job.title };
+  const glossary: Glossary = parseGlossary(job.glossary);
+  const meta: LiveMeta = { member: job.member, title: job.title, glossary: glossaryPrompt(glossary) };
   const { source, danmu }: PreparedSource = prepared;
 
   checkStopped(signal);
@@ -470,6 +495,13 @@ export async function processHighlight(
       ], { signal });
       found = readFound(await geminiJson<unknown>(
         job.gemini, findRequest(meta, window, await base64Of(audio), danmu, viaAgy), signal, deps.fetchImpl), window);
+      // 原话（quote、first、last）不换：要拿它们去本地识别的结果里找
+      found = {
+        summary: applyGlossary(found.summary, glossary),
+        highlights: found.highlights.map((item: Highlight): Highlight => ({
+          ...item, title: applyGlossary(item.title, glossary), cover: applyGlossary(item.cover, glossary), reason: applyGlossary(item.reason, glossary)
+        }))
+      };
 
       if (viaAgy) {
         onProgress({ percent: DOWNLOAD_END + (((order + 0.6) / windows.length) * (FIND_END - DOWNLOAD_END)), detail: `${ label }：按原话定位…` });
@@ -508,7 +540,7 @@ export async function processHighlight(
   const target: number = targetCount(candidates, job.count, duration, job.autoScore);
   const fonts: FontSet = await pickFonts(job.workDir);
   const context: ClipContext = {
-    job, deps, signal, source, duration, danmu, meta,
+    job, deps, signal, source, duration, danmu, meta, glossary,
     fonts: fonts.dir ? { ...fonts, dir: `../${ fonts.dir }` } : fonts // 合成时的当前文件夹是 clip-N
   };
   const clips: Array<ClipResult> = [];

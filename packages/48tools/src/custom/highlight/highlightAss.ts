@@ -128,6 +128,9 @@ export function captionText(line: Pick<CaptionLine, 'text' | 'emphasis'>, fonts:
     chars.forEach((ch: string, index: number): void => {
       if (index < 3 || index > chars.length - 4) return;
 
+      // 一个英文单词、一串数字不能从中间断开（iPad 不能变成 i / Pad）
+      if (/[A-Za-z0-9]/.test(ch) && /[A-Za-z0-9]/.test(chars[index + 1] ?? '')) return;
+
       // 离中间近的好；标点后面断最好；不要把一个重点词断开
       const score: number = Math.abs(index + 1 - middle)
         - (/[，、！？,!?\s]/.test(ch) ? 4 : 0)

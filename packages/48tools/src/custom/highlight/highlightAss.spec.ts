@@ -54,6 +54,14 @@ describe('captionText', (): void => {
     expect(long.size).toBeLessThanOrEqual(120);
   });
 
+  test('英文单词、数字不从中间断开', (): void => {
+    const { text }: { text: string } = captionText({ text: '欸不是，为啥我这iPad会突然重启啊', emphasis: ['突然重启'] }, fonts);
+    const rows: Array<string> = text.replace(/\{[^}]*\}/g, '').split('\\N');
+
+    expect(rows).toHaveLength(2);
+    expect(rows.some((row: string): boolean => row.includes('iPad'))).toBe(true);
+  });
+
   test('一行放不下又没有标点时也会分行，而且放得进画面', (): void => {
     const { text, size }: { text: string; size: number } = captionText({ text: '一二三四五六七八九十一二三四五六七八九十', emphasis: [] }, fonts);
 

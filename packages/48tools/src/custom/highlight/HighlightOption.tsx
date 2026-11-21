@@ -9,9 +9,10 @@ import { highlightDefaults } from './highlightGemini';
 import { AUTO_SCORE, AUTO_SCORE_OPTIONS } from './highlightTime';
 import AlignerOption from './AlignerOption';
 import { agyDefaults } from './highlightAgy';
+import { DEFAULT_GLOSSARY } from './highlightGlossary';
 
 /**
- * 设置页面里的「录播切片」：用哪个 Gemini 模型、走接口还是本机的 agy、「自动」时多少分以上才做、切片保存在哪里、本地打轴模型装不装。
+ * 设置页面里的「录播切片」：用哪个 Gemini 模型、走接口还是本机的 agy、专有词汇、「自动」时多少分以上才做、切片保存在哪里、本地打轴模型装不装。
  * API key 和接口地址用「语音转文字」里 Google Gemini 的那一份，不用另外填。
  * 接入点：custom/settings/SettingsPage.tsx。
  */
@@ -82,6 +83,19 @@ function HighlightOption(props: {}): ReactElement {
           <Button icon={ <IconFolderOpenOutlined /> } onClick={ handleChooseClick }>选择</Button>
           { overrides.highlightDir ? <Button onClick={ (): void => setSetting('highlightDir', undefined) }>恢复默认</Button> : null }
         </Space.Compact>
+      </Row>
+      <Row label="专有词汇"
+        hint={ '粉丝圈的叫法、人名、昵称这类 Gemini 不认识、容易听错的词，每次找爆点、写字幕都会告诉它。每行一条：'
+          + '「词：说明」告诉它这个词是什么；「错的写法 → 对的写法」在它写完后直接替换（字幕、标题、简介都会换）。以 # 开头的行不算。' }
+      >
+        <Space direction="vertical" size={ 6 } className="w-full">
+          <Input.TextArea value={ overrides.highlightGlossary ?? DEFAULT_GLOSSARY }
+            autoSize={{ minRows: 4, maxRows: 12 }}
+            spellCheck={ false }
+            onChange={ (event: ChangeEvent<HTMLTextAreaElement>): void => setSetting('highlightGlossary', event.target.value) }
+          />
+          { overrides.highlightGlossary !== undefined ? <Button size="small" onClick={ (): void => setSetting('highlightGlossary', undefined) }>恢复默认</Button> : null }
+        </Space>
       </Row>
       <AlignerOption />
     </Fragment>
