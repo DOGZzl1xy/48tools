@@ -1,7 +1,7 @@
 /**
  * 录播自动切片的「剪」：整理模型给的句子、用静音修正时间、留下的句子拼成几段、时间换算。
  */
-import { tidyLines, snapLines, buildSegments, toOut } from './highlightCut';
+import { tidyLines, buildSegments, toOut } from './highlightCut';
 import type { CaptionLine, Segment } from './highlightTypes';
 
 function line(start: number, end: number, keep: boolean = true, text: string = '一句话'): CaptionLine {
@@ -25,29 +25,6 @@ describe('tidyLines', (): void => {
 
   test('结束时间不超过片段长度', (): void => {
     expect(tidyLines([line(95, 120)], 100)[0].end).toBe(100);
-  });
-});
-
-describe('snapLines', (): void => {
-  test('开头落在静音里：从静音结束的地方开始', (): void => {
-    // 模型说 36.9 开始，其实 36.98 ~ 38.29 是静音，38.29 才开口
-    const [snapped]: Array<CaptionLine> = snapLines([line(36.9, 41)], [{ start: 36.98, end: 38.29 }]);
-
-    expect(snapped.start).toBeCloseTo(38.19);
-    expect(snapped.end).toBe(41);
-  });
-
-  test('结尾落在静音里：到静音开始的地方结束', (): void => {
-    const [snapped]: Array<CaptionLine> = snapLines([line(7.3, 11.1)], [{ start: 10.19, end: 12.18 }]);
-
-    expect(snapped.start).toBe(7.3);
-    expect(snapped.end).toBeCloseTo(10.34);
-  });
-
-  test('句子中间的短暂停顿不动', (): void => {
-    const [snapped]: Array<CaptionLine> = snapLines([line(10, 20)], [{ start: 14, end: 14.6 }]);
-
-    expect([snapped.start, snapped.end]).toEqual([10, 20]);
   });
 });
 

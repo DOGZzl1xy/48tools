@@ -1,9 +1,9 @@
-import type { CaptionLine, Segment, Silence } from './highlightTypes';
+import type { CaptionLine, Segment } from './highlightTypes';
 
 /**
  * 录播自动切片里的「剪」：模型给出逐句字幕和每句留不留，这里算出成片由原片的哪几段拼成。
  *   1. tidyLines：整理模型给的句子（时间不合理的去掉、按时间排好、相邻的不重叠）
- *   2. snapLines：用静音的位置修正每句的开始和结束（模型给的时间有时会早一秒左右）
+ *   2. （每句的时间在 ./highlightAlign 里用声音对准）
  *   3. buildSegments：留下来的句子拼成几段，中间的沉默和不要的句子剪掉
  *   4. toOut：片段里的时间 → 成片里的时间
  * 都是纯计算，方便测试。
@@ -32,34 +32,6 @@ export function tidyLines(lines: Array<CaptionLine>, clipLength: number): Array<
     const next: CaptionLine | undefined = list[index + 1];
 
     return next && line.end > next.start ? { ...line, end: Math.max(line.start + 0.1, next.start) } : line;
-  });
-}
-
-export function snapLines(lines: Array<CaptionLine>, silences: Array<Silence>): Array<CaptionLine> {
-  const snapped: Array<CaptionLine> = lines.map((line: CaptionLine): CaptionLine => {
-    let { start, end }: CaptionLine = line;
-
-    for (const silence of silences) {
-      const length: number = end - start;
-
-      // 这一句的开头落在一段静音里（或紧挨着它）：从静音结束的地方开始
-      if (silence.start <= start + 0.4 && silence.end > start + 0.15 && silence.end < start + (length * 0.7)) {
-        start = silence.end - 0.1;
-      }
-
-      // 结尾落在静音里：到静音开始的地方结束
-      if (silence.end >= end - 0.4 && silence.start < end - 0.15 && silence.start > start + (length * 0.3)) {
-        end = silence.start + 0.15;
-      }
-    }
-
-    return { ...line, start, end };
-  });
-
-  return snapped.map((line: CaptionLine, index: number): CaptionLine => {
-    const next: CaptionLine | undefined = snapped[index + 1];
-
-    return next && line.end > next.start ? { ...line, end: next.start } : line;
   });
 }
 

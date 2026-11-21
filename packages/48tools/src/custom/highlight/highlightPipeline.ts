@@ -1,14 +1,15 @@
 import * as fs from 'node:fs';
 import { promises as fsP } from 'node:fs';
 import * as path from 'node:path';
-import { runFfmpeg, mediaDuration, detectSilences, pickFonts } from './highlightFfmpeg';
+import { runFfmpeg, mediaDuration, detectSilences, readPcm, pickFonts, PCM_RATE } from './highlightFfmpeg';
 import { downloadReplay, type DownloadProgress, type SegmentFetcher } from './highlightDownload';
 import {
   geminiJson, findRequest, readFound, scriptRequest, readScript, coverRequest, HighlightStopped,
   type GeminiConfig, type LiveMeta
 } from './highlightGemini';
 import { parseLrc, planWindows, mergeHighlights, targetCount, safeFileName, postTitle, clock } from './highlightTime';
-import { tidyLines, snapLines, buildSegments } from './highlightCut';
+import { tidyLines, buildSegments } from './highlightCut';
+import { alignLines, envelopeOf, syllablePeaks } from './highlightAlign';
 import {
   placeDanmu, buildVideoAss, renderFilter, buildCoverAss, coverFilter, LEFT_WIDTH, COVER_WIDTHS, type FontSet, type PlacedDanmu
 } from './highlightAss';
@@ -23,7 +24,7 @@ import type { AudioWindow, CaptionLine, ClipScript, DanmuLine, Highlight, Highli
  *   2. 每半小时一段，音频和弹幕（只有时间和内容）交给 Gemini，找出可能成为爆点的片段和时间
  *   3. 各段的结果合在一起按分数排，决定做哪几个（用户选的数量，或者自动）
  *   4. 每个片段前后多留十几秒再交给 Gemini：出逐句字幕、每句留不留、重点词、三个不同风格的标题（第一个用在画面上）、简介、看点、除了主播还有谁是主角
- *   5. 按留下的句子剪掉沉默和无关的话，合成横屏视频；再从成片里挑一帧做封面（16:9 和 4:3 各一张）
+ *   5. 用声音里的停顿和音节把每句话的时间对准（模型标的时间偶尔早一两秒，见 ./highlightAlign），按留下的句子剪掉沉默和无关的话，合成横屏视频；再从成片里挑一帧做封面（16:9 和 4:3 各一张）
  *   6. 成片、两张封面、说明（标题和简介）放进输出文件夹；工作文件夹用完删掉
  * 中途失败或停止时工作文件夹留着，重试时下载好的录播和已经问过 Gemini 的结果不用重来。
  *
@@ -214,9 +215,10 @@ async function makeClip(
     await fsP.writeFile(scriptFile, JSON.stringify(script, null, 2));
   }
 
-  // 剪辑点
+  // 模型标的时间不稳（偶尔整段早一两秒），用声音里的停顿和音节把每句话对回去，再定剪辑点
   const silences: Array<Silence> = await detectSilences(job.ffmpeg, audio, signal);
-  const lines: Array<CaptionLine> = snapLines(tidyLines(script.lines, clipLength), silences);
+  const peaks: Array<number> = syllablePeaks(envelopeOf(await readPcm(job.ffmpeg, audio, signal), PCM_RATE));
+  const lines: Array<CaptionLine> = alignLines(tidyLines(script.lines, clipLength), silences, peaks, clipLength);
   const { segments, total }: { segments: Array<Segment>; total: number } = buildSegments(lines, clipLength);
 
   if (segments.length === 0 || total < MIN_CLIP_SECONDS) {

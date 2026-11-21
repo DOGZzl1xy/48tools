@@ -108,6 +108,30 @@ export async function detectSilences(ffmpeg: string, file: string, signal?: Abor
   return parseSilences(log);
 }
 
+export const PCM_RATE: number = 8_000;
+
+/**
+ * 一段音频的采样（单声道、8kHz，只留人声的频段），找音节用（见 ./highlightAlign）
+ * @param { string } ffmpeg
+ * @param { string } file - 音频文件；采样先写到它旁边的 .pcm 文件里，读完就删
+ * @param { AbortSignal } [signal]
+ */
+export async function readPcm(ffmpeg: string, file: string, signal?: AbortSignal): Promise<Int16Array> {
+  const pcmFile: string = `${ file }.pcm`;
+
+  try {
+    await runFfmpeg(ffmpeg, [
+      '-y', '-v', 'error', '-i', file, '-ac', '1', '-ar', String(PCM_RATE), '-af', 'highpass=f=200,lowpass=f=3400', '-f', 's16le', pcmFile
+    ], { signal });
+
+    const data: Buffer = await fsP.readFile(pcmFile);
+
+    return new Int16Array(data.buffer, data.byteOffset, Math.floor(data.length / 2));
+  } finally {
+    await fsP.rm(pcmFile, { force: true });
+  }
+}
+
 const sourceHanFiles: Array<string> = [
   'SourceHanSansSC-Medium.otf', 'SourceHanSansSC-Heavy.otf', 'SourceHanSansSC-Regular.otf', 'SourceHanSansSC-Bold.otf'
 ];
