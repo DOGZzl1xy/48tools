@@ -141,6 +141,10 @@ describe('buildVideoAss / renderFilter', (): void => {
     expect(filter).toContain('subtitles=overlay.ass:fontsdir=../fonts[vout]');
     expect(renderFilter(segments, system)).toContain('subtitles=overlay.ass[vout]');
   });
+
+  test('滤镜：响度拉齐之后要重新算音频的时间戳（不然开头卡顿、音画不同步）', (): void => {
+    expect(renderFilter(segments, fonts)).toMatch(/\[ac\]loudnorm=[^;[]*,aresample=48000,asetpts=N\/SR\/TB\[aout\]$/);
+  });
 });
 
 describe('封面', (): void => {

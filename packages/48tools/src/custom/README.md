@@ -91,7 +91,7 @@
 
 ## 测试
 
-- 单元测试：`custom/` 下的 `*.spec.ts`（22 个文件，169 个测试），在 `packages/48tools` 目录运行 `node --run test`。
+- 单元测试：`custom/` 下的 `*.spec.ts`（22 个文件，170 个测试），在 `packages/48tools` 目录运行 `node --run test`。
   其中 `highlight/highlightPipeline.spec.ts` 最后一组测试是真的把录播切片跑一遍（下载、问 Gemini、合成；也可以只下载），平时跳过，
   要跑时按那个文件开头的说明设置环境变量。
   除了纯函数，房间消息的加载和同步（`room/roomStore.spec.ts`）、语音转文字的状态（`transcribe/transcribeStore.spec.ts`）

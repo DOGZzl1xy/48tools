@@ -399,7 +399,9 @@ export function renderFilter(segments: Array<Segment>, fonts: FontSet, assFile: 
   parts.push(`color=c=${ BACKGROUND }:s=${ W }x${ H }:r=30[bg]`);
   parts.push('[bg][vs]overlay=0:0:shortest=1[base]');
   parts.push(`[base]${ subtitlesFilter(assFile, fonts) }[vout]`);
-  parts.push('[ac]loudnorm=I=-16:TP=-1.5:LRA=11[aout]');
+  // 响度拉齐。loudnorm 开头两三秒输出的时间戳是乱的（ffmpeg 9 实测：前 0.6 秒里挤了 2.4 秒的声音，后面跟着 2.4 秒的空档），
+  // 播放时开头卡顿、之后音画不同步。它输出的采样本身是完整、连续的，所以在后面按采样数重新算一遍时间戳就对了
+  parts.push('[ac]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,asetpts=N/SR/TB[aout]');
 
   return parts.join(';');
 }
