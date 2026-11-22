@@ -115,8 +115,11 @@ function boldFlags(text: string, emphasis: Array<string>): Array<boolean> {
 
 /**
  * 一句字幕：重点词加粗变色；太长就在靠中间的标点处分成两行；字号按最宽的一行定
+ * @param { string } [emphasisColor] - 重点词的颜色（ASS 的写法）；不给用黄色。公演切片用队伍的颜色
  */
-export function captionText(line: Pick<CaptionLine, 'text' | 'emphasis'>, fonts: FontSet): { text: string; size: number } {
+export function captionText(
+  line: Pick<CaptionLine, 'text' | 'emphasis'>, fonts: FontSet, emphasisColor: string = YELLOW
+): { text: string; size: number } {
   const chars: Array<string> = Array.from(line.text);
   const bold: Array<boolean> = boldFlags(line.text, line.emphasis);
   let breakAt: number = -1;
@@ -154,7 +157,7 @@ export function captionText(line: Pick<CaptionLine, 'text' | 'emphasis'>, fonts:
 
     if (bold[index] !== on) {
       on = bold[index];
-      text += on ? `{${ heavyTag(fonts) }\\c${ YELLOW }}` : `{\\fn${ fonts.text }\\b0\\c${ WHITE }}`;
+      text += on ? `{${ heavyTag(fonts) }\\c${ emphasisColor }}` : `{\\fn${ fonts.text }\\b0\\c${ WHITE }}`;
     }
 
     text += assEscape(ch);

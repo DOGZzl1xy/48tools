@@ -9,8 +9,9 @@ import type { CaptionLine, Segment } from './highlightTypes';
  * 公演切片的排版（B 站公演直播是横屏的）。成片 1920×1080：
  *   左上：直播画面 1440×810
  *   左下：字幕（MC 时她们说的话，重点词变黄；唱歌的片段没有字幕，舞台上自己有歌词）
- *   右边一列（480 宽）：队伍标签、公演名和日期、标题，下面是当时的弹幕（新的从下面出现，旧的往上挪；只显示内容，不显示昵称）
- * 封面：画面里的一帧铺满、压暗、稍微模糊，左上角是队伍标签，中间两三行大字，【】里的词用色块突出。16:9 和 4:3 两个比例。
+ *   右边一列（480 宽）：队伍标签、公演名、日期、标题，分隔线下面是当时的弹幕（新的从下面出现，旧的往上挪；只显示内容，不显示昵称）
+ * 封面：画面里的一帧铺满、压暗、稍微模糊，左上角是队伍和公演名的标签、日期，中间两三行大字，【】里的词用色块突出。16:9 和 4:3 两个比例。
+ * 画面和封面上都不写「公演切片」（发布用的标题里有），标签里不用「·」（2026-11 用户定的）。
  * 颜色用团队色（custom/theme/accent 的 teamColors）。都是纯计算，真正跑 ffmpeg 的在 ./highlightPipeline。
  */
 export interface StageInfo {
@@ -34,8 +35,7 @@ const MUTED: string = '&HA6A09A&';       // #9aa0a6
 const BUBBLE: string = '&H332B26&';      // #262b33
 const DANMU_TEXT: string = '&HEDEAE8&';
 const DARK_TEXT: string = '&H29231F&';   // #1f2329
-const HIGHLIGHTS: Array<string> = ['#ffd400', '#ff6fa3'];
-const DANMU: { size: number; row: number; bottom: number; top: number; maxWidth: number } = { size: 30, row: 52, bottom: 1_036, top: 410, maxWidth: 400 };
+const DANMU: { size: number; row: number; bottom: number; top: number; maxWidth: number } = { size: 30, row: 52, bottom: 1_036, top: 372, maxWidth: 400 };
 
 /* #rrggbb → ASS 的 &HBBGGRR& */
 export function assColor(hex: string): string {
@@ -127,7 +127,7 @@ export function buildStageVideoAss(input: StageVideoAssInput): string {
   shape(2, team, roundRect(x, 40, Math.round(pixelWidth(badge, badgeSize, fonts) + 36), 50, 12));
   add(3, 0, total, 'Side', `{\\an7\\pos(${ x + 18 },${ 47 })\\fs${ badgeSize }\\b1\\c${ DARK_TEXT }}${ assEscape(badge) }`);
   add(3, 0, total, 'Side', `{\\an7\\pos(${ x },${ 108 })\\fs${ fontSize(30, fonts) }\\b1}${ assEscape(fitText(`${ stage.show } 公演`, fontSize(30, fonts), 400, fonts)) }`);
-  add(3, 0, total, 'Side', `{\\an7\\pos(${ x },${ 150 })\\fs${ fontSize(24, fonts) }\\c${ MUTED }}${ assEscape(`${ stage.date }  公演切片`) }`);
+  add(3, 0, total, 'Side', `{\\an7\\pos(${ x },${ 150 })\\fs${ fontSize(24, fonts) }\\c${ MUTED }}${ assEscape(stage.date) }`);
 
   const rows: Array<string> = stageTitleRows(title);
   const titleSize: number = Math.round(Math.min(fontSize(48, fonts), (400 * fonts.em) / Math.max(1, ...rows.map(textWidth))));
@@ -139,7 +139,6 @@ export function buildStageVideoAss(input: StageVideoAssInput): string {
     add(3, 0, total, 'Side', `{\\an7\\pos(${ x },${ 206 + (index * Math.round(titleSize * 1.25)) })\\fs${ titleSize }\\b1${ color }}${ assEscape(row) }`);
   });
   shape(2, '&H372F2A&', rect(x, 352, W - SIDE_PAD, 354));
-  add(3, 0, total, 'Side', `{\\an7\\pos(${ x },${ 368 })\\fs${ fontSize(24, fonts) }\\c${ MUTED }}弹幕`);
 
   // 字幕：左下居中
   const kept: Array<CaptionLine> = lines.filter((line: CaptionLine): boolean => line.keep);
@@ -156,7 +155,7 @@ export function buildStageVideoAss(input: StageVideoAssInput): string {
 
     if (nextStart !== null && nextStart > start) end = Math.min(Math.max(end, Math.min(nextStart, end + 0.8)), nextStart);
 
-    const caption: { text: string; size: number } = captionText(line, fonts);
+    const caption: { text: string; size: number } = captionText(line, fonts, team); // 重点词用队伍的颜色
 
     add(4, start, Math.min(end, total), 'Caption', `{\\an5\\pos(${ SIDE_X / 2 },${ STAGE_VIDEO.height + 135 })\\fs${
       Math.min(caption.size, fontSize(92, fonts)) }\\fad(80,0)}${ caption.text }`);
@@ -247,14 +246,14 @@ export function buildStageCoverAss(input: StageCoverInput): string {
   }
 
   // 左上角：队伍标签、日期
-  const badge: string = `SNH48 TEAM ${ stage.team } · ${ stage.show }`;
+  const badge: string = `SNH48 TEAM ${ stage.team }  ${ stage.show }`;
   const badgeSize: number = fontSize(40, fonts);
 
   add(1, 'Shape', `{\\an7\\pos(0,0)\\p1\\c${ team }}${ roundRect(left, 90, Math.round(pixelWidth(badge, badgeSize, fonts) + 48), 66, 14) }{\\p0}`);
   add(2, 'Text', `{\\an7\\pos(${ left + 24 },${ 99 })\\fs${ badgeSize }\\b1\\c${ DARK_TEXT }\\shad0}${ assEscape(badge) }`);
-  add(2, 'Text', `{\\an7\\pos(${ left },${ 176 })\\fs${ fontSize(36, fonts) }\\c&HD9D4D0&\\shad0}${ assEscape(`${ stage.date }  公演切片`) }`);
+  add(2, 'Text', `{\\an7\\pos(${ left },${ 176 })\\fs${ fontSize(36, fonts) }\\c&HD9D4D0&\\shad0}${ assEscape(stage.date) }`);
 
-  // 大字：每行按最宽的一行定字号；色块轮流用黄色、粉色
+  // 大字：每行按最宽的一行定字号
   const rows: Array<Array<{ text: string; mark: boolean }>> = input.lines.map(coverSegments).filter((row: Array<{ text: string; mark: boolean }>): boolean => row.length > 0).slice(0, 3);
   const units: (row: Array<{ text: string; mark: boolean }>) => number = (row: Array<{ text: string; mark: boolean }>): number =>
     row.reduce((sum: number, part: { text: string; mark: boolean }): number => sum + textWidth(part.text) + (part.mark ? 0.8 : 0.3), 0);
@@ -262,7 +261,6 @@ export function buildStageCoverAss(input: StageCoverInput): string {
   const size: number = Math.round(Math.min(fontSize(width >= W ? 118 : 104, fonts), (room * fonts.em) / Math.max(1, ...rows.map(units))));
   const gap: number = Math.round(size * 0.44);
   let y: number = Math.round((H - (rows.length * (size + gap))) / 2) + 60;
-  let colorIndex: number = 0;
 
   for (const row of rows) {
     let x: number = left;
@@ -271,10 +269,8 @@ export function buildStageCoverAss(input: StageCoverInput): string {
       const w: number = pixelWidth(part.text, size, fonts);
 
       if (part.mark) {
-        const color: string = assColor(HIGHLIGHTS[colorIndex % HIGHLIGHTS.length]);
-
-        colorIndex += 1;
-        add(3, 'Shape', `{\\an7\\pos(0,0)\\p1\\c${ color }}${ roundRect(Math.round(x - 14), y + 6, Math.round(w + 28), Math.round(size * 1.14), 16) }{\\p0}`);
+        // 色块用队伍的颜色（团队色都比较亮，上面用深色字最清楚）
+        add(3, 'Shape', `{\\an7\\pos(0,0)\\p1\\c${ team }}${ roundRect(Math.round(x - 14), y + 6, Math.round(w + 28), Math.round(size * 1.14), 16) }{\\p0}`);
         add(4, 'Text', `{\\an7\\pos(${ Math.round(x) },${ y })\\fs${ size }\\b1\\c${ DARK_TEXT }\\shad0}${ assEscape(part.text) }`);
         x += w + Math.round(size * 0.36);
       } else {

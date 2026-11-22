@@ -35,7 +35,7 @@ describe('公演排版：小工具', (): void => {
 });
 
 describe('公演排版：成片', (): void => {
-  test('右边有队伍标签、公演名、标题和弹幕（只有内容，没有昵称）；没有字幕时下面不出字', (): void => {
+  test('右边有队伍标签、公演名、日期、标题和弹幕（只有内容，没有昵称）；不写「公演切片」和「弹幕」两个字；没有字幕时下面不出字', (): void => {
     const danmu: Array<PlacedDanmu> = [
       { time: 0, at: 0, nickname: '路人甲', message: '哈哈哈' },
       { time: 2, at: 2, nickname: '路人乙', message: '心疼' }
@@ -47,7 +47,9 @@ describe('公演排版：成片', (): void => {
 
     expect(ass).toContain('SNH48 TEAM NII');
     expect(ass).toContain('《示例公演》 公演');
-    expect(ass).toContain('2026.11.21  公演切片');
+    expect(ass).toContain('2026.11.21');
+    expect(ass).not.toContain('公演切片');
+    expect(events.some((line: string): boolean => line.endsWith('}弹幕'))).toBe(false);
     expect(ass).toContain('忘词现场');
     expect(events.filter((line: string): boolean => line.includes(',Danmu,')).length).toBe(3); // 第一条出现后又被顶上去一次
     expect(ass).not.toContain('路人甲');
@@ -55,11 +57,11 @@ describe('公演排版：成片', (): void => {
     expect(ass).toContain(assColor(stage.teamColor));
   });
 
-  test('有字幕时字幕在直播画面下面', (): void => {
+  test('有字幕时字幕在直播画面下面，重点词用队伍的颜色', (): void => {
     const ass: string = buildStageVideoAss({
       stage,
       title: '题目',
-      lines: [{ start: 1, end: 3, text: '今天的话题是什么', keep: true, emphasis: [] }, { start: 4, end: 5, text: '剪掉的', keep: false, emphasis: [] }],
+      lines: [{ start: 1, end: 3, text: '今天的话题是什么', keep: true, emphasis: ['话题'] }, { start: 4, end: 5, text: '剪掉的', keep: false, emphasis: [] }],
       segments: [{ from: 0, to: -1, start: 0, end: 60, out: 0 }],
       total: 60,
       danmu: [],
@@ -69,7 +71,8 @@ describe('公演排版：成片', (): void => {
 
     expect(captions).toHaveLength(1);
     expect(captions[0]).toContain('\\pos(720,945)');
-    expect(captions[0]).toContain('今天的话题是什么');
+    expect(captions[0].replace(/\{[^}]*\}/g, '')).toMatch(/,,今天的话题是什么$/);
+    expect(captions[0]).toContain(`\\c${ assColor(stage.teamColor) }}话`); // 重点词用队伍的颜色
   });
 
   test('滤镜：画面缩到 1440×810 放左上，压字幕，统一响度', (): void => {
@@ -83,15 +86,23 @@ describe('公演排版：成片', (): void => {
 });
 
 describe('公演排版：封面', (): void => {
-  test('16:9 和 4:3：标签、日期、大字；色块轮流用两种颜色', (): void => {
+  test('16:9 和 4:3：标签（不用「·」）、日期（不写「公演切片」）、大字；色块用队伍的颜色', (): void => {
     for (const width of [1_920, 1_440]) {
       const ass: string = buildStageCoverAss({ stage, lines: ['甲【耳朵红了】', '【全员】笑场'], fonts, width });
 
       expect(ass).toContain(`PlayResX: ${ width }`);
-      expect(ass).toContain('SNH48 TEAM NII · 《示例公演》');
+      expect(ass).toContain('SNH48 TEAM NII  《示例公演》');
+      expect(ass).not.toContain('·');
+      expect(ass).toContain('2026.11.21');
+      expect(ass).not.toContain('公演切片');
       expect(ass).toContain('耳朵红了');
-      expect(ass).toContain(assColor('#ffd400'));
-      expect(ass).toContain(assColor('#ff6fa3'));
+
+      // 两个色块都是 NII 的紫色，不再用黄色、粉色
+      const boxes: Array<string> = dialogues(ass).filter((line: string): boolean => line.includes(',Shape,') && line.includes('\\p1'));
+
+      expect(boxes.filter((line: string): boolean => line.includes(`\\c${ assColor('#af83bb') }`))).toHaveLength(3); // 标签 + 两个色块
+      expect(ass).not.toContain(assColor('#ffd400'));
+      expect(ass).not.toContain(assColor('#ff6fa3'));
     }
   });
 
