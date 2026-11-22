@@ -50,6 +50,7 @@ export interface HighlightJob {
   ffmpeg: string;
   gemini: GeminiConfig;
   glossary?: string;    // 专有词汇（本机那个文件的原文，见 ./glossaryFile、./highlightGlossary）
+  members?: string;     // 成员名单那一段提示（./highlightMembers 的 membersPrompt）
 }
 
 export interface HighlightDeps {
@@ -502,7 +503,7 @@ export async function processHighlight(
   job: HighlightJob, deps: HighlightDeps, prepared: PreparedSource, onProgress: (progress: HighlightProgress) => void, signal?: AbortSignal
 ): Promise<HighlightResult> {
   const glossary: Glossary = parseGlossary(job.glossary);
-  const meta: LiveMeta = { member: job.member, title: job.title, glossary: glossaryPrompt(glossary) };
+  const meta: LiveMeta = { member: job.member, title: job.title, glossary: glossaryPrompt(glossary), members: job.members };
   const { source, danmu }: PreparedSource = prepared;
 
   checkStopped(signal);

@@ -22,6 +22,8 @@ import { recognizeAudio, isAlignerInstalled } from './alignerRun';
 import { readGlossaryFile } from './glossaryFile';
 import type { TimedToken } from './highlightTokens';
 import { safeFileName } from './highlightTime';
+import { membersPrompt } from './highlightMembers';
+import { getMemberDirectory, loadMemberDirectory } from '../room/memberDirectory';
 import type { HighlightCount } from './highlightTypes';
 
 /**
@@ -95,7 +97,8 @@ export function highlightJobOf(record: HighlightRecord, count: HighlightCount, b
     workDir: path.join(outDir, WORK_FOLDER),
     ffmpeg: getFFmpeg(),
     gemini: highlightGeminiConfig(),
-    glossary: readGlossaryFile()
+    glossary: readGlossaryFile(),
+    members: membersPrompt(getMemberDirectory().members, record.userInfo.nickname)
   };
 }
 
@@ -141,28 +144,41 @@ const deps: HighlightDeps = {
   recognize: (audioFile: string, signal?: AbortSignal): Promise<Array<TimedToken> | null> => recognizeAudio(getFFmpeg(), audioFile, signal)
 };
 
+/* 现在能不能做切片（保存位置、Gemini 的设置）；不能时返回原因 */
+export function highlightUnavailable(): string | undefined {
+  if (!highlightBaseDir()) return '还没有设置保存位置';
+
+  const gemini: GeminiConfig = highlightGeminiConfig();
+
+  if (gemini.via === 'agy') {
+    if (!isAlignerInstalled()) return '通过本机的 agy 做切片时，要先在「设置 → 录播切片」里安装「本地打轴模型」';
+  } else if (!gemini.apiKey.trim()) {
+    return '还没有填写 Gemini 的 API key（设置 → 语音转文字）';
+  }
+
+  return undefined;
+}
+
 /**
  * 开始给一场录播做切片（加到下载队列里，排队执行）
  * @param { HighlightRecord } record - 录播列表里的一行
  * @param { HighlightCount } count - 做几个，或者 'auto'
+ * @param { (outcome: QueueOutcome, text: string) => void } [whenEnded] - 做完、停止或失败后调用（「自动抓取并切片」用它在切完后删掉录像）；
+ *   在下载队列里点「重试」重新开始时也会带上
  * @return { string | undefined } 不能开始时返回原因
  */
-export function startHighlight(record: HighlightRecord, count: HighlightCount): string | undefined {
+export function startHighlight(
+  record: HighlightRecord, count: HighlightCount, whenEnded?: (outcome: QueueOutcome, text: string) => void
+): string | undefined {
   if (!canHighlight(record)) return '电台直播没有画面，不能做切片';
 
   if (queue.has(record.liveId)) return '这场录播已经在切片了，进度在下载队列里';
 
-  const baseDir: string | undefined = highlightBaseDir();
+  const unavailable: string | undefined = highlightUnavailable();
 
-  if (!baseDir) return '还没有设置保存位置';
+  if (unavailable) return unavailable;
 
-  const job: HighlightJob = highlightJobOf(record, count, baseDir);
-
-  if (job.gemini.via === 'agy') {
-    if (!isAlignerInstalled()) return '通过本机的 agy 做切片时，要先在「设置 → 录播切片」里安装「本地打轴模型」';
-  } else if (!job.gemini.apiKey.trim()) {
-    return '还没有填写 Gemini 的 API key（设置 → 语音转文字）';
-  }
+  const job: HighlightJob = highlightJobOf(record, count, highlightBaseDir()!);
 
   const id: string = highlightTaskId(record.liveId);
   let started: boolean = false; // 开始下载了没有（停止时的说明不一样）
@@ -181,12 +197,18 @@ export function startHighlight(record: HighlightRecord, count: HighlightCount): 
     detail: '排队中，等前面那场开始切片后就开始下载…',
     stop: (): void => queue.stop(record.liveId),
     retry(): void {
-      startHighlight(record, count);
+      startHighlight(record, count, whenEnded);
     }
   });
   queue.add({
     id: record.liveId,
-    prepare: (signal: AbortSignal): Promise<PreparedSource> => prepareHighlight(job, deps, report, signal),
+    async prepare(signal: AbortSignal): Promise<PreparedSource> {
+      // 成员名单一天更新一次：开始下载前确认是新的（取不到时用本机存的那份）
+      await loadMemberDirectory();
+      job.members = membersPrompt(getMemberDirectory().members, record.userInfo.nickname) || job.members;
+
+      return prepareHighlight(job, deps, report, signal);
+    },
     async process(prepared: PreparedSource, signal: AbortSignal): Promise<void> {
       text = doneText(await processHighlight(job, deps, prepared, report, signal));
     },
@@ -207,6 +229,8 @@ export function startHighlight(record: HighlightRecord, count: HighlightCount): 
         console.error('自动切片失败', err);
         queueTaskEnd(id, 'error', err instanceof Error ? err.message : String(err));
       }
+
+      whenEnded?.(outcome, text);
     }
   });
 

@@ -35,7 +35,7 @@ function defaultWait(ms: number): Promise<void> {
   });
 }
 
-function isM3u8(url: string): boolean {
+export function isM3u8(url: string): boolean {
   try {
     return /\.m3u8$/i.test(new URL(url).pathname);
   } catch {

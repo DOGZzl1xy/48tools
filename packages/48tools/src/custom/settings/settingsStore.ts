@@ -36,7 +36,7 @@ export interface CustomSettings {
   highlightCount?: number;            // 录播切片：上次选的数量（没选过或选了「自动」时不保存）
 }
 
-export type AutoGrabMode = 'flv' | 'ts' | 'backup';
+export type AutoGrabMode = 'flv' | 'ts' | 'backup' | 'clip'; // clip：录 flv，录完自动切片、切完删掉录像（custom/live/autoClip）
 
 /* 需要加密保存的选项 */
 const SECRET_KEYS: Array<keyof CustomSettings> = ['sttGeminiKey', 'sttOpenaiKey'];

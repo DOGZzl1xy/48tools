@@ -89,6 +89,10 @@ try {
     check('房间：查找面板', (await win.locator('.room-find').count()) === 1);
     await win.screenshot({ path: path.join(SHOTS, 'room-find.png') });
     await win.locator('.ant-drawer-close').last().click();
+    // 面板还在动画中时点关闭偶尔没关上，遮罩会挡住后面所有的点击：等它真的关上，关不上就按 Esc
+    if (!(await win.locator('.ant-drawer-open').waitFor({ state: 'detached', timeout: 3000 }).then(() => true, () => false))) {
+      await win.keyboard.press('Escape');
+    }
     await sleep(400);
   }
 

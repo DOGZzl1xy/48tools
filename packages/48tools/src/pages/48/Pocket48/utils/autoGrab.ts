@@ -26,11 +26,12 @@ interface DownloadArgs {
   item: LiveInfo;
   resInfo: LiveRoomInfo;
   filePath: string;
+  clip?: boolean; // 「自动抓取并切片」：录完等录播出来自动切片，切完删掉录像（custom/live/autoClip）
 }
 
-function downloadBackup(args: Pick<DownloadArgs, 'item' | 'resInfo' | 'filePath'>): void {
+function downloadBackup(args: Pick<DownloadArgs, 'item' | 'resInfo' | 'filePath' | 'clip'>): void {
   const { dispatch }: Store = store;
-  const { item, resInfo, filePath }: Pick<DownloadArgs, 'item' | 'resInfo' | 'filePath'> = args;
+  const { item, resInfo, filePath, clip }: Pick<DownloadArgs, 'item' | 'resInfo' | 'filePath' | 'clip'> = args;
   const worker: Pocket48LiveRender = new Pocket48LiveRender({
     id: randomUUID(),
     liveId: item.liveId,
@@ -52,13 +53,14 @@ function downloadBackup(args: Pick<DownloadArgs, 'item' | 'resInfo' | 'filePath'
     liveId: item.liveId,
     title: `${ item.userInfo.nickname } ${ item.title }`,
     filePath,
+    autoClip: clip ? item : undefined,
     stop: (): void => worker.kill()
   });
 }
 
 function download(args: DownloadArgs): void {
   const { dispatch }: Store = store;
-  const { messageApi, transcoding, item, resInfo, filePath }: DownloadArgs = args;
+  const { messageApi, transcoding, item, resInfo, filePath, clip }: DownloadArgs = args;
   const worker: Worker = transcoding ? getDownloadAndTranscodingWorker() : getPocket48LiveDownloadWorker();
 
   worker.addEventListener('message', function(event: MessageEvent<MessageEventData | LiveStatusEventData>): void {
@@ -78,6 +80,7 @@ function download(args: DownloadArgs): void {
     liveId: item.liveId,
     title: `${ item.userInfo.nickname } ${ item.title }`,
     filePath,
+    autoClip: clip ? item : undefined,
     stop: (): void => worker.postMessage({ type: 'stop' })
   });
 
@@ -104,6 +107,7 @@ function download(args: DownloadArgs): void {
  * @param { Array<string> } usersArr - 监听的小偶像
  * @param { boolean | undefined } transcoding - 自动转码
  * @param { boolean | undefined } backup - 备用下载
+ * @param { boolean | undefined } clip - 录完自动切片，切完删掉录像
  */
 /* 轮询出错时提示（同样的错误 10 分钟内只提示一次） */
 let notifyAutoGrabError: ((text: string) => void) | undefined;
@@ -113,7 +117,8 @@ async function autoGrab(
   configDir: string,
   usersArr: string[],
   transcoding: boolean | undefined,
-  backup: boolean | undefined
+  backup: boolean | undefined,
+  clip?: boolean
 ): Promise<void> {
   const { dispatch, getState }: Store = store;
   const dir: string = getLiveRecordDir(configDir); // local/pocket48.json 里配置的目录优先
@@ -192,9 +197,9 @@ async function autoGrab(
       const filePath: string = path.join(dir, filename);
 
       if (backup) {
-        downloadBackup({ item, resInfo, filePath });
+        downloadBackup({ item, resInfo, filePath, clip });
       } else {
-        download({ messageApi, transcoding, item, resInfo, filePath });
+        download({ messageApi, transcoding, item, resInfo, filePath, clip });
       }
     }
   }

@@ -45,6 +45,7 @@ import { getFFmpeg, getFileTime, getFilePath } from '../../../../utils/utils';
 import { getPocket48Proxy } from '../../../../custom/pocket48Proxy/pocket48Proxy';
 import { liveRecordingStart, liveRecordingEnd } from '../../../../custom/live/liveRecording';
 import { rememberAutoGrabMode } from '../../../../custom/live/autoGrabRunner';
+import { highlightUnavailable } from '../../../../custom/highlight/highlightTask';
 import RowActions from '../../../../custom/table/RowActions';
 import MediaTitleCell from '../../../../custom/table/MediaTitleCell';
 import {
@@ -106,7 +107,7 @@ function Pocket48Live(props: {}): ReactElement {
   // 开始自动抓取
   async function handleStartAutoGrabClick(event: MouseEvent): Promise<void> {
     type LiveOptionsResult = { name: string; value: Pocket48LiveAutoGrabOptions };
-    type OnionContext = { result: LiveOptionsResult; transcoding?: boolean; backup?: boolean };
+    type OnionContext = { result: LiveOptionsResult; transcoding?: boolean; backup?: boolean; clip?: boolean };
 
     // 获取配置
     const result: { query: string; result?: LiveOptionsResult }
@@ -154,14 +155,32 @@ function Pocket48Live(props: {}): ReactElement {
         m.destroy();
       }
 
+      // 录完等录播出来自动切片，切完删掉录像，只留切片（custom/live/autoClip）
+      function handleClipClick(e: MouseEvent): void {
+        const unavailable: string | undefined = highlightUnavailable();
+
+        if (unavailable) messageApi.warning(`现在还做不了切片：${ unavailable }。录像会照常保留`, 8);
+
+        ctx.clip = true;
+        next();
+        // eslint-disable-next-line @typescript-eslint/no-use-before-define
+        m.destroy();
+      }
+
       const m: ModuleFuncReturn = modalApi.confirm({
         title: '选择要录制的视频方法',
         content: (
-          <Space.Compact className="mb-[16px]">
-            <Button onClick={ handleFlvVideoClick }>录制(*.flv)</Button>
-            <Button onClick={ handleTsVideoClick }>录制(*.ts)</Button>
-            <Button onClick={ handleFlvVideoBackupClick }>备用录制(*.flv)</Button>
-          </Space.Compact>
+          <div>
+            <Space.Compact className="mb-[16px]">
+              <Button onClick={ handleFlvVideoClick }>录制(*.flv)</Button>
+              <Button onClick={ handleTsVideoClick }>录制(*.ts)</Button>
+              <Button onClick={ handleFlvVideoBackupClick }>备用录制(*.flv)</Button>
+            </Space.Compact>
+            <div className="mb-[8px]">
+              <Button type="primary" onClick={ handleClipClick }>录制并自动切片（只留切片）</Button>
+            </div>
+            <p className="m-0 text-[12px] opacity-70">直播结束后等录播出来，自动做切片（数量「自动」），切完删掉录像；电台照常录。</p>
+          </div>
         ),
         closable: false,
         keyboard: false,
@@ -178,11 +197,11 @@ function Pocket48Live(props: {}): ReactElement {
 
     // 自动抓取
     onion.use(function(ctx: OnionContext, next: Function): void {
-      const { result: r, transcoding = false, backup = false }: OnionContext = ctx;
-      const args: [MessageInstance, string, string[], boolean, boolean] = [messageApi, r.value.dir, usersArr, transcoding, backup];
+      const { result: r, transcoding = false, backup = false, clip = false }: OnionContext = ctx;
+      const args: [MessageInstance, string, string[], boolean, boolean, boolean] = [messageApi, r.value.dir, usersArr, transcoding, backup, clip];
 
-      rememberAutoGrabMode(transcoding ? 'ts' : (backup ? 'backup' : 'flv')); // 下次程序启动自动开始时用同样的方式
-      messageApi.info('开始自动抓取。');
+      rememberAutoGrabMode(clip ? 'clip' : (transcoding ? 'ts' : (backup ? 'backup' : 'flv'))); // 下次程序启动自动开始时用同样的方式
+      messageApi.info(clip ? '开始自动抓取：录完自动切片，只留切片。' : '开始自动抓取。');
       autoGrab(...args);
       dispatch(setAutoGrab(
         window.setInterval(autoGrab, r.value.time * 60_000, ...args)

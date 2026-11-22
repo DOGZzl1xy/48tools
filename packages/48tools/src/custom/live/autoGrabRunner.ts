@@ -9,7 +9,7 @@ import { getLiveRecordDir } from './liveRecording';
 /**
  * 自动抓取（监听指定成员，开播就录）的启动和停止，从「直播抓取」页面里抽出来，这样不打开那个页面也能启动：
  *   - 程序启动后自动开始（custom/shell/AppShell 调用 autoStartAutoGrab；设置里可以关：autoGrabAutoStart）
- *   - 录制方式（flv / ts / 备用 flv）用上次在页面上手动开始时选的（rememberAutoGrabMode），没选过用 flv
+ *   - 录制方式（flv / ts / 备用 flv / 录制并切片）用上次在页面上手动开始时选的（rememberAutoGrabMode），没选过用 flv
  * 真正干活的还是原版的 pages/48/Pocket48/utils/autoGrab（每隔几分钟查一次直播列表），定时器的编号也还是放在
  * 原版的 redux 里（pocket48.autoGrabTimer），所以页面上的「开始 / 停止自动抓取」按钮和这里是同一个状态。
  * 配置（间隔、成员、目录）存在原版的 IndexedDB 里，由 ./AutoGrabOptionsPage 编辑。
@@ -61,7 +61,9 @@ export async function startAutoGrab(messageApi: MessageInstance, mode?: AutoGrab
   if (isAutoGrabRunning()) return 'running'; // 读配置期间已经在页面上手动开始了
 
   const used: AutoGrabMode = mode ?? getSetting('autoGrabMode') ?? 'flv';
-  const args: [MessageInstance, string, Array<string>, boolean, boolean] = [messageApi, options.dir ?? '', users, used === 'ts', used === 'backup'];
+  const args: [MessageInstance, string, Array<string>, boolean, boolean, boolean] = [
+    messageApi, options.dir ?? '', users, used === 'ts', used === 'backup', used === 'clip'
+  ];
   const minutes: number = Math.max(1, Number(options.time) || 1);
 
   autoGrab(...args);
