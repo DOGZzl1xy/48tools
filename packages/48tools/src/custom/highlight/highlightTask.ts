@@ -159,6 +159,71 @@ export function highlightUnavailable(): string | undefined {
   return undefined;
 }
 
+export interface QueuedHighlight {
+  key: string;     // 排队用的 id（同一个 key 同时只能有一个）
+  title: string;   // 下载队列里显示的
+  job: HighlightJob;
+  // 第 1 步：准备好整场的视频和弹幕（下载录播，或者把录下来的几段接起来）
+  prepare(signal: AbortSignal, report: (progress: HighlightProgress) => void): Promise<PreparedSource>;
+  retry(): unknown;
+  whenEnded?(outcome: QueueOutcome, text: string): void;
+}
+
+/* 加到切片的队列里（同一时间只切一场，前一场开始切的时候后一场就开始准备），进度在下载队列里 */
+export function enqueueHighlight(item: QueuedHighlight): void {
+  const { key, job }: QueuedHighlight = item;
+  const id: string = highlightTaskId(key);
+  let started: boolean = false; // 开始下载了没有（停止时的说明不一样）
+  let text: string = '';        // 做完后显示的说明
+
+  function report(progress: HighlightProgress): void {
+    queueTaskProgress(id, progress.percent, progress.detail);
+  }
+
+  queueTaskStart({
+    id,
+    title: item.title,
+    kind: '切片',
+    filePath: job.outDir,
+    percent: 0,
+    detail: '排队中，等前面那场开始切片后就开始准备…',
+    stop: (): void => queue.stop(key),
+    retry: item.retry
+  });
+  queue.add({
+    id: key,
+    prepare: (signal: AbortSignal): Promise<PreparedSource> => item.prepare(signal, report),
+    async process(prepared: PreparedSource, signal: AbortSignal): Promise<void> {
+      text = doneText(await processHighlight(job, deps, prepared, report, signal));
+    },
+    onStage(stage: QueueStage): void {
+      if (stage === 'preparing') started = true;
+
+      if (stage === 'ready') queueTaskProgress(id, DOWNLOAD_END, '准备好了，等前面那场切完就开始…');
+    },
+    onEnd(outcome: QueueOutcome, err?: unknown): void {
+      if (outcome === 'done') {
+        queueTaskEnd(id, 'done', undefined, text);
+        notify(`切片完成：${ job.member } ${ job.title }`, text);
+      } else if (outcome === 'stopped') {
+        queueTaskEnd(id, 'stopped', undefined, started
+          ? '已停止。再点「重试」会接着做，已经准备好的部分不用重来'
+          : '已取消，还没有开始');
+      } else {
+        console.error('自动切片失败', err);
+        queueTaskEnd(id, 'error', err instanceof Error ? err.message : String(err));
+      }
+
+      item.whenEnded?.(outcome, text);
+    }
+  });
+}
+
+/* 这个 key 是不是正在排队或者切片 */
+export function isHighlightQueued(key: string): boolean {
+  return queue.has(key);
+}
+
 /**
  * 开始给一场录播做切片（加到下载队列里，排队执行）
  * @param { HighlightRecord } record - 录播列表里的一行
@@ -180,58 +245,19 @@ export function startHighlight(
 
   const job: HighlightJob = highlightJobOf(record, count, highlightBaseDir()!);
 
-  const id: string = highlightTaskId(record.liveId);
-  let started: boolean = false; // 开始下载了没有（停止时的说明不一样）
-  let text: string = '';        // 做完后显示的说明
-
-  function report(progress: HighlightProgress): void {
-    queueTaskProgress(id, progress.percent, progress.detail);
-  }
-
-  queueTaskStart({
-    id,
+  enqueueHighlight({
+    key: record.liveId,
     title: `${ record.userInfo.nickname } ${ record.title }`,
-    kind: '切片',
-    filePath: job.outDir,
-    percent: 0,
-    detail: '排队中，等前面那场开始切片后就开始下载…',
-    stop: (): void => queue.stop(record.liveId),
-    retry(): void {
-      startHighlight(record, count, whenEnded);
-    }
-  });
-  queue.add({
-    id: record.liveId,
-    async prepare(signal: AbortSignal): Promise<PreparedSource> {
+    job,
+    async prepare(signal: AbortSignal, report: (progress: HighlightProgress) => void): Promise<PreparedSource> {
       // 成员名单一天更新一次：开始下载前确认是新的（取不到时用本机存的那份）
       await loadMemberDirectory();
       job.members = membersPrompt(getMemberDirectory().members, record.userInfo.nickname) || job.members;
 
       return prepareHighlight(job, deps, report, signal);
     },
-    async process(prepared: PreparedSource, signal: AbortSignal): Promise<void> {
-      text = doneText(await processHighlight(job, deps, prepared, report, signal));
-    },
-    onStage(stage: QueueStage): void {
-      if (stage === 'preparing') started = true;
-
-      if (stage === 'ready') queueTaskProgress(id, DOWNLOAD_END, '录播下载好了，等前面那场切完就开始…');
-    },
-    onEnd(outcome: QueueOutcome, err?: unknown): void {
-      if (outcome === 'done') {
-        queueTaskEnd(id, 'done', undefined, text);
-        notify(`切片完成：${ job.member } ${ job.title }`, text);
-      } else if (outcome === 'stopped') {
-        queueTaskEnd(id, 'stopped', undefined, started
-          ? '已停止。再点「重试」会接着做，已经下载的部分不用重新下载'
-          : '已取消，还没有开始下载');
-      } else {
-        console.error('自动切片失败', err);
-        queueTaskEnd(id, 'error', err instanceof Error ? err.message : String(err));
-      }
-
-      whenEnded?.(outcome, text);
-    }
+    retry: (): unknown => startHighlight(record, count, whenEnded),
+    whenEnded
   });
 
   return undefined;

@@ -18,6 +18,7 @@
 | 自动录制保存到 `local/pocket48.json` 的 `liveRecordDir`（没有就用 `downloadDir`）；录完按 `liveRecordFormat` 转成 mp4（无损封装或压缩） | `live/liveRecording.ts`、`live/convertRecording.ts`、`live/LiveRecordDirHint.tsx` | `utils/autoGrab.ts`、`Pocket48Live.tsx`（录制开始 / 结束）、`LiveOptions.tsx`（提示） |
 | 自动抓取并切片：开始自动抓取时选「录制并自动切片（只留切片）」，照常录（录像只是备份），这场直播的录制都结束后每 3 分钟查一次录播出来没有（直播地址变成录播的 m3u8），出来了就用官方录播做切片（数量「自动」，和「录播下载 → 自动切片」一样），切完删掉这场的录像（连同断线重连的分段），只留切片；切片失败、停止、6 小时内录播没出来、没设置好 Gemini 时保留录像；在下载队列里重试切片成功后也会删。电台不能切，照常录。还没做完的存在本机，程序重启后接着等、接着切。选了这种方式后，程序启动时自动开始的自动抓取也用它 | `live/autoClip.ts`、`live/autoClipCore.ts` | `live/liveRecording.ts`（录制开始 / 结束）、`utils/autoGrab.ts`（带上直播信息）、`Pocket48Live.tsx`（选项）、`live/autoGrabRunner.ts` 和 `settings/settingsStore.ts`（`autoGrabMode: clip`）、`highlight/highlightTask.ts`（`startHighlight` 的结束回调、`highlightUnavailable`）、`shell/AppShell.tsx`（启动后 `resumeAutoClips`） |
 | 切片时给 Gemini 的常识：成员名单（SNH48、GNZ48、BEJ48、CKG48、CGT48 各队现在的成员和预备生，不要荣誉毕业生，约 1800 字，来自原版就在用的公开名单，开始下载录播前更新），说明主播是哪个队的，要求转写、标题、people 里的名字以名单为准、不写名单里没有的名字，不好判断是谁时结合弹幕判断；和专有词汇一起附在找爆点、写字幕两步的提示后面。（录播查不到有没有连麦：录播列表的 `inMicrophoneConnection` 只表示「现在是不是在连麦」，直播结束后一直是 false，录播详情的 `mergeStreamUrl` 也是空的，2026-11 查过一百多场；所以不做连麦的标记） | `highlight/highlightMembers.ts` | `highlight/highlightTask.ts`（生成）、`highlight/highlightGemini.ts`（`LiveMeta.members`）、`highlight/highlightPipeline.ts` |
+| B 站公演自动录制并切片（设置页「直播抓取」里的开关，默认开）：程序开着时，北京时间 13:00～14:30、18:00～20:15 每分钟看一次口袋48的公演列表，SNH48 HII、NII、X 的公演开播了、B 站 SNH48 直播间（短号 48）也在直播，就录 B 站的视频（ffmpeg 拷贝着存成 ts：断线、停止时结尾是写了一半的，flv 写坏的结尾会让后面只接上第一段；断线后房间还在播就接着录下一段；在「B 站下载」里登录了才有原画）和弹幕（浏览器自带的 WebSocket 连弹幕服务器，取地址的接口要 WBI 签名，包是 brotli 压缩的；没登录收得到内容但看不到昵称），录过的场次记在本机不重录。录完把几段接成一个 mp4（每段整个读一遍量长度；几段的画质不一样就重新编码；接完比录到的短就每段先整理一遍再接），弹幕按每段画面实际开始的时间对上去（连上时 B 站会先发几秒缓存，画面比开始录的时间早），再用公演版的提示找三类片段：MC 爆点（和直播切片一样写字幕、剪掉无关的话，45 秒～5 分钟）、失误（结合弹幕：粉丝的反应晚 10 秒左右，从刷屏前 15 秒左右开切，12 秒～2 分钟）、组合有特色的整首歌（不写字幕，舞台上有歌词，1～8 分钟）；提示里讲了公演的流程和歌与歌之间的间隔。成片左边是直播画面、下面字幕、右边弹幕（只显示内容）；封面是压暗、模糊的直播画面上写 2～3 行大字，【】里的词用黄色 / 粉色色块突出，16:9 和 4:3 各一张；队伍色用主题色里的团队色。录像放在直播录制文件夹的「B站公演 / 日期 队伍 公演名」里，切片在它下面的「切片」里，录像保留。进度在下载队列里。用 `TEST=true` 启动时有 `globalThis.__gongyanTest`，检查脚本可以直接录一个直播间 | `bilibili/gongyanWatcher.ts`（什么时候录）、`bilibili/gongyanSchedule.ts`、`bilibili/gongyanRecorder.ts`（录视频）、`bilibili/biliDanmuRecorder.ts` 和 `bilibili/biliDanmuProtocol.ts`（录弹幕）、`bilibili/biliApi.ts` 和 `bilibili/biliWbi.ts`（B 站接口）、`bilibili/gongyanSource.ts`（接起来、对弹幕）、`bilibili/gongyanHighlight.ts`（交给切片队列）、`highlight/highlightStage.ts`（公演版的提示和规则）、`highlight/highlightStageAss.ts`（公演的排版和封面） | `shell/AppShell.tsx`（启动后 `startGongyanWatcher`）、`settings/SettingsPage.tsx`、`settings/settingsStore.ts`（`gongyanAuto`）、`highlight/highlightTask.ts`（`enqueueHighlight`：和录播切片共用一个队列）、`highlight/highlightPipeline.ts`（`job.stage`）、`sweet.config.ts`（界面代码的 externals 加了 `zlib`） |
 | 应用外壳：常驻侧边栏（功能列表、下载队列、代理状态）、页面切换动效、Ctrl+K 搜索功能、Ctrl+B 收起侧边栏 | `shell/AppShell.tsx`、`shell/navConfig.tsx`、`shell/shellStore.ts`、`shell/CommandPalette.tsx`、`shell/shell.global.sass` | `src/index.tsx`（包住 `<Routers />`） |
 | 自绘标题栏（Windows）：系统标题栏隐藏，标题由界面显示，右上角仍是系统的最小化 / 最大化 / 关闭按钮。从左右滑出的面板（下载队列等）从标题栏下面开始，否则它的关闭按钮落在拖动窗口的区域里点不动 | `shell/AppShell.tsx`、`packages/main/src/custom/windowTuning.mts` | `packages/main/src/ProcessWindow.mts` |
 | 设置页面：账号、保存位置、直播录制格式、代理、明暗主题、主题色、工具路径（界面上的设置 > `local/pocket48.json` > 默认值） | `settings/SettingsPage.tsx`、`settings/settingsStore.ts`、`settings/settings.global.sass` | `router/Routers.tsx`（`Settings` 路由）、`components/basic/AntdConfig/AntdConfig.tsx`（主题色） |
@@ -94,9 +95,11 @@
 
 ## 测试
 
-- 单元测试：`custom/` 下的 `*.spec.ts`（34 个文件，272 个测试），在 `packages/48tools` 目录运行 `node --run test`。
+- 单元测试：`custom/` 下的 `*.spec.ts`（40 个文件，309 个测试），在 `packages/48tools` 目录运行 `node --run test`。
   其中 `highlight/highlightPipeline.spec.ts` 最后一组测试是真的把录播切片跑一遍（下载、问 Gemini、合成；也可以只下载），平时跳过，
   要跑时按那个文件开头的说明设置环境变量。
+  `bilibili/gongyanSource.spec.ts`（把几段录像接起来）和 `highlight/highlightStagePipeline.spec.ts`（公演切片完整走一遍：假的 Gemini、
+  真的剪和合成，约 40 秒；`STAGE_KEEP=<文件夹>` 可以把成片和封面留下来看）要用本机的 ffmpeg，没有时跳过。
   除了纯函数，房间消息的加载和同步（`room/roomStore.spec.ts`）、语音转文字的状态（`transcribe/transcribeStore.spec.ts`）
   也有测试，接口和缓存用假的代替。
 - 界面检查：`node scripts/custom/uiCheck.mjs`（仓库根目录）。启动一个测试窗口把自定义的几个页面走一遍，

@@ -19,7 +19,15 @@ export interface Highlight {
   score: number; // 1 ~ 10
   first?: string; // 开头、结尾的原话：只有走 agy 时才要（它说的时间不准，用原话到本地识别的结果里找时间，见 ./highlightQuotes）
   last?: string;
+  // 下面这些只有公演切片有（见 ./highlightStage）
+  kind?: StageKind;
+  song?: string;               // 歌名（kind 是 song 时）
+  singers?: Array<string>;     // 演唱的成员
+  coverLines?: Array<string>;  // 封面上的 2 ~ 3 行大字，【】里的词用色块突出
 }
+
+/* 公演切片的三类：MC 环节的爆点、表演中的失误、组合有特色的一整首歌 */
+export type StageKind = 'mc' | 'mistake' | 'song';
 
 /* 片段里的一句话：start、end 是在这个片段的音频里的时间（秒） */
 export interface CaptionLine {

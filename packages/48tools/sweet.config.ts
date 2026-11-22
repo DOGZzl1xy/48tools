@@ -81,7 +81,8 @@ const externalsName: Array<string> = nodeModules([
   'timers',
   'timers/promises',
   'url',
-  'util'
+  'util',
+  'zlib' // custom/bilibili：B 站弹幕包是 brotli 压缩的
 ]).concat([
   'electron',
   'fluent-ffmpeg',

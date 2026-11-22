@@ -34,6 +34,7 @@ export interface CustomSettings {
   highlightAgyModel?: string;         // 录播切片：走 agy 时用的模型名（不填用 gemini-4-hydrogen-medium）
   highlightAutoScore?: number;        // 录播切片：选「自动」时，爆点分不低于它的才做（不设置用默认的 8.5）
   highlightCount?: number;            // 录播切片：上次选的数量（没选过或选了「自动」时不保存）
+  gongyanAuto?: boolean;              // B 站公演自动录制并切片（SNH48 HII、NII、X；默认开，只有关掉时才保存成 false）
 }
 
 export type AutoGrabMode = 'flv' | 'ts' | 'backup' | 'clip'; // clip：录 flv，录完自动切片、切完删掉录像（custom/live/autoClip）

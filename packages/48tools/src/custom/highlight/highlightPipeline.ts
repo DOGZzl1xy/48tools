@@ -19,7 +19,13 @@ import { parseGlossary, glossaryPrompt, applyGlossary, type Glossary } from './h
 import {
   placeDanmu, buildVideoAss, renderFilter, buildCoverAss, coverFilter, LEFT_WIDTH, COVER_WIDTHS, type FontSet, type PlacedDanmu
 } from './highlightAss';
-import type { AudioWindow, CaptionLine, ClipScript, DanmuLine, Highlight, HighlightCount, Segment, Silence } from './highlightTypes';
+import type { AudioWindow, CaptionLine, ClipScript, DanmuLine, Highlight, HighlightCount, Segment, Silence, StageKind } from './highlightTypes';
+import {
+  stageFindRequest, stageKindOf, stageClipWindow, stageLengthProblem, stageScript, stageCoverLines, stagePostTitle
+} from './highlightStage';
+import {
+  buildStageVideoAss, stageRenderFilter, buildStageCoverAss, stageCoverFilter, STAGE_VIDEO, type StageInfo
+} from './highlightStageAss';
 
 /**
  * 录播自动切片：给一场直播的录播，自动剪出几个横屏短视频（左边直播画面，右上她说的话，右下弹幕），
@@ -51,6 +57,7 @@ export interface HighlightJob {
   gemini: GeminiConfig;
   glossary?: string;    // 专有词汇（本机那个文件的原文，见 ./glossaryFile、./highlightGlossary）
   members?: string;     // 成员名单那一段提示（./highlightMembers 的 membersPrompt）
+  stage?: StageInfo;    // 公演切片（B 站公演录像）：用公演版的提示、规则和排版（./highlightStage、./highlightStageAss）
 }
 
 export interface HighlightDeps {
@@ -150,7 +157,12 @@ export function coverTimes(lines: Array<CaptionLine>, segments: Array<Segment>, 
     })
     .filter((time: number | null): time is number => time !== null && time >= 0);
 
-  if (pool.length === 0) return [Math.max(0, total / 2)];
+  // 没有字幕（公演里唱歌、失误的片段）：均匀取几帧
+  if (pool.length === 0) {
+    return total > 20
+      ? Array.from({ length: COVER_CANDIDATES }, (item: unknown, index: number): number => total * (0.12 + ((0.76 * index) / (COVER_CANDIDATES - 1))))
+      : [Math.max(0, total / 2)];
+  }
 
   const count: number = Math.min(COVER_CANDIDATES, pool.length);
 
@@ -307,17 +319,38 @@ async function makeClip(
 
   await fsP.mkdir(clipDir, { recursive: true });
 
-  let cut: ClipCut = await scriptAndCut(context, highlight, clipDir, clipWindow(highlight, duration), undefined, report);
-  const problem: 'short' | 'long' | null = clipLengthProblem(cut.total);
+  const kind: StageKind = job.stage ? stageKindOf(highlight) : 'mc';
+  let cut: ClipCut;
 
-  // 剪完不到 45 秒或者超过 5 分钟：告诉模型实际剪出来多长，再做一次；太短时前后多给一些音频，好把铺垫和后续留下
-  if (problem) {
-    cut = await scriptAndCut(context, highlight, clipDir,
-      problem === 'short' ? clipWindow(highlight, duration, RETRY_EXTRA_CONTEXT) : cut.window, clipLengthNote(problem, cut.total), report);
-  }
+  if (kind !== 'mc') {
+    // 公演里唱歌、失误的片段：不写字幕，按模型给的起止整段保留（舞台上自己有歌词）
+    const window: ClipWindow = stageClipWindow(highlight, duration);
+    const problem: string | undefined = stageLengthProblem(kind, window.length);
 
-  if (cut.segments.length === 0 || clipLengthProblem(cut.total)) {
-    return `「${ highlight.title }」剪完是 ${ Math.round(cut.total) } 秒（要在 ${ CLIP_MIN_SECONDS } 秒到 ${ CLIP_MAX_SECONDS / 60 } 分钟之间），跳过`;
+    if (problem) return `「${ highlight.title }」${ problem }，跳过`;
+
+    cut = {
+      window,
+      script: stageScript(highlight),
+      lines: [],
+      timing: kind === 'song' ? '整首歌，没有字幕（舞台上有歌词）' : '失误的片段，没有字幕',
+      segments: [{ from: 0, to: -1, start: 0, end: window.length, out: 0 }],
+      total: window.length
+    };
+  } else {
+    cut = await scriptAndCut(context, highlight, clipDir, clipWindow(highlight, duration), undefined, report);
+
+    const problem: 'short' | 'long' | null = clipLengthProblem(cut.total);
+
+    // 剪完不到 45 秒或者超过 5 分钟：告诉模型实际剪出来多长，再做一次；太短时前后多给一些音频，好把铺垫和后续留下
+    if (problem) {
+      cut = await scriptAndCut(context, highlight, clipDir,
+        problem === 'short' ? clipWindow(highlight, duration, RETRY_EXTRA_CONTEXT) : cut.window, clipLengthNote(problem, cut.total), report);
+    }
+
+    if (cut.segments.length === 0 || clipLengthProblem(cut.total)) {
+      return `「${ highlight.title }」剪完是 ${ Math.round(cut.total) } 秒（要在 ${ CLIP_MIN_SECONDS } 秒到 ${ CLIP_MAX_SECONDS / 60 } 分钟之间），跳过`;
+    }
   }
 
   const { script, lines, timing, segments, total }: ClipCut = cut;
@@ -327,20 +360,22 @@ async function makeClip(
   // 合成
   const placed: Array<PlacedDanmu> = placeDanmu(danmu, clipStart, segments, total);
 
-  await fsP.writeFile(path.join(clipDir, 'overlay.ass'), buildVideoAss({
-    title: script.title,
-    tag: `${ job.member }  ${ job.date }`.trim(),
-    lines,
-    segments,
-    total,
-    danmu: placed,
-    fonts
-  }));
+  await fsP.writeFile(path.join(clipDir, 'overlay.ass'), job.stage
+    ? buildStageVideoAss({ stage: job.stage, title: script.title, lines, segments, total, danmu: placed, fonts })
+    : buildVideoAss({
+      title: script.title,
+      tag: `${ job.member }  ${ job.date }`.trim(),
+      lines,
+      segments,
+      total,
+      danmu: placed,
+      fonts
+    }));
   report('合成', 0.35);
   await runFfmpeg(job.ffmpeg, [
     '-y', '-v', 'error', '-nostats', '-progress', 'pipe:1',
     '-ss', clipStart.toFixed(3), '-t', clipLength.toFixed(3), '-i', source,
-    '-filter_complex', renderFilter(segments, fonts),
+    '-filter_complex', job.stage ? stageRenderFilter(segments, fonts) : renderFilter(segments, fonts),
     '-map', '[vout]', '-map', '[aout]',
     '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-movflags', '+faststart', 'out.mp4'
@@ -361,7 +396,7 @@ async function makeClip(
 
     await runFfmpeg(job.ffmpeg, [
       '-y', '-v', 'error', '-ss', time.toFixed(2), '-i', 'out.mp4', '-frames:v', '1',
-      '-vf', `crop=${ LEFT_WIDTH }:1080:0:0,scale=304:540`, '-q:v', '4', file
+      '-vf', job.stage ? `crop=${ STAGE_VIDEO.width }:${ STAGE_VIDEO.height }:0:0,scale=480:270` : `crop=${ LEFT_WIDTH }:1080:0:0,scale=304:540`, '-q:v', '4', file
     ], { cwd: clipDir, signal });
     candidates.push(await base64Of(file));
   }
@@ -382,16 +417,18 @@ async function makeClip(
 
   // 两个比例各做一张：wide 是 16:9，standard 是 4:3
   for (const [shape, width] of Object.entries(COVER_WIDTHS)) {
-    await fsP.writeFile(path.join(clipDir, `cover-${ shape }.ass`), buildCoverAss({
-      title: script.title,
-      tag: `${ job.member }  直播切片  ${ job.date }`.trim(),
-      points: script.points,
-      fonts,
-      width
-    }));
+    await fsP.writeFile(path.join(clipDir, `cover-${ shape }.ass`), job.stage
+      ? buildStageCoverAss({ stage: job.stage, lines: stageCoverLines(highlight, script.title), fonts, width })
+      : buildCoverAss({
+        title: script.title,
+        tag: `${ job.member }  直播切片  ${ job.date }`.trim(),
+        points: script.points,
+        fonts,
+        width
+      }));
     await runFfmpeg(job.ffmpeg, [
       '-y', '-v', 'error', '-ss', times[best - 1].toFixed(2), '-i', 'out.mp4',
-      '-filter_complex', coverFilter(fonts, `cover-${ shape }.ass`, width),
+      '-filter_complex', job.stage ? stageCoverFilter(fonts, `cover-${ shape }.ass`, width) : coverFilter(fonts, `cover-${ shape }.ass`, width),
       '-map', '[out]', '-frames:v', '1', '-q:v', '2', `cover-${ shape }.jpg`
     ], { cwd: clipDir, signal });
   }
@@ -401,9 +438,11 @@ async function makeClip(
   const info: ClipInfo = {
     index,
     title: script.title,
-    postTitle: postTitle(job.member, job.date, script.title, script.people, script.more),
+    postTitle: job.stage ? stagePostTitle(job.stage, script.title, script.people) : postTitle(job.member, job.date, script.title, script.people, script.more),
     otherTitles: (script.titles ?? []).filter((title: string): boolean => title !== script.title)
-      .map((title: string): string => postTitle(job.member, job.date, title, script.people, script.more)),
+      .map((title: string): string => (job.stage
+        ? stagePostTitle(job.stage, title, script.people)
+        : postTitle(job.member, job.date, title, script.people, script.more))),
     people: script.people ?? [],
     description: script.description,
     points: script.points,
@@ -535,12 +574,15 @@ export async function processHighlight(
         '-vn', '-ac', '1', '-ar', '16000', '-b:a', '32k', audio
       ], { signal });
       found = readFound(await geminiJson<unknown>(
-        job.gemini, findRequest(meta, window, await base64Of(audio), danmu, viaAgy), signal, deps.fetchImpl), window);
+        job.gemini, job.stage
+          ? stageFindRequest(meta, window, await base64Of(audio), danmu, viaAgy, job.stage)
+          : findRequest(meta, window, await base64Of(audio), danmu, viaAgy), signal, deps.fetchImpl), window);
       // 原话（quote、first、last）不换：要拿它们去本地识别的结果里找
       found = {
         summary: applyGlossary(found.summary, glossary),
         highlights: found.highlights.map((item: Highlight): Highlight => ({
-          ...item, title: applyGlossary(item.title, glossary), cover: applyGlossary(item.cover, glossary), reason: applyGlossary(item.reason, glossary)
+          ...item, title: applyGlossary(item.title, glossary), cover: applyGlossary(item.cover, glossary), reason: applyGlossary(item.reason, glossary),
+          ...(item.coverLines ? { coverLines: item.coverLines.map((line: string): string => applyGlossary(line, glossary)) } : {})
         }))
       };
 

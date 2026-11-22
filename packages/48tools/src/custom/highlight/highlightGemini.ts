@@ -37,7 +37,9 @@ export const highlightDefaults: { model: string; baseUrl: string } = {
 
 const REQUEST_TIMEOUT: number = 600_000;
 const RETRY_DELAY: number = 6_000;
-const DANMU_TEXT_LENGTH: number = 60;
+
+export const DANMU_TEXT_LENGTH: number = 60;
+
 const MAX_TITLES: number = 3;
 const MAX_MORE: number = 2;
 
@@ -171,14 +173,14 @@ export interface LiveMeta {
 }
 
 /* 每个提示最后都附上的常识：专有词汇、成员名单 */
-function knowledge(meta: LiveMeta): string {
+export function knowledge(meta: LiveMeta): string {
   return [meta.glossary, meta.members]
     .filter((text: string | undefined): text is string => Boolean(text))
     .map((text: string): string => `\n${ text }`)
     .join('');
 }
 
-function audioPart(base64: string): GeminiPart {
+export function audioPart(base64: string): GeminiPart {
   return { inlineData: { mimeType: 'audio/mp3', data: base64 } };
 }
 
@@ -277,7 +279,12 @@ export function readFound(data: any, window: AudioWindow): { summary: string; hi
       reason: String(item?.reason ?? '').trim(),
       score: Number(item?.score) || 0,
       ...(item?.first ? { first: String(item.first).trim() } : {}),
-      ...(item?.last ? { last: String(item.last).trim() } : {})
+      ...(item?.last ? { last: String(item.last).trim() } : {}),
+      // 公演切片才有（./highlightStage 的 stageFindRequest）
+      ...(['mc', 'mistake', 'song'].includes(item?.kind) ? { kind: item.kind } : {}),
+      ...(item?.song ? { song: String(item.song).trim() } : {}),
+      ...(Array.isArray(item?.singers) ? { singers: item.singers.map((name: unknown): string => String(name).trim()).filter(Boolean) } : {}),
+      ...(Array.isArray(item?.cover_lines) ? { coverLines: item.cover_lines.map((line: unknown): string => String(line).trim()).filter(Boolean).slice(0, 3) } : {})
     }))
     .filter((item: Highlight): boolean => Number.isFinite(item.start) && Number.isFinite(item.end)
       && item.start >= window.start && item.end - item.start >= 5 && item.title !== '');

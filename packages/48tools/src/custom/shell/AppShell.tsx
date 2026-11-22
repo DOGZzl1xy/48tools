@@ -36,6 +36,7 @@ import { startUnreadWatcher } from '../room/unreadWatcher';
 import { startAngelWatcher } from '../angel/angelStore'; // 临时功能：守护天使推理
 import { autoStartAutoGrab } from '../live/autoGrabRunner';
 import { resumeAutoClips } from '../live/autoClip';
+import { startGongyanWatcher } from '../bilibili/gongyanWatcher';
 import { purgeOldAudio } from '../transcribe/transcriptCache';
 
 /**
@@ -170,6 +171,7 @@ function AppShell(props: Required<PropsWithChildren>): ReactElement {
     startupDone = true;
     window.setTimeout((): unknown => autoStartAutoGrab(messageApi), AUTO_GRAB_DELAY);
     window.setTimeout(resumeAutoClips, AUTO_GRAB_DELAY); // 「自动抓取并切片」上次没做完的接着做
+    window.setTimeout(startGongyanWatcher, AUTO_GRAB_DELAY); // B 站公演自动录制并切片（custom/bilibili）
     window.setTimeout(purgeOldAudio, AUDIO_PURGE_DELAY);
   }, []);
 

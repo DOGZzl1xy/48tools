@@ -49,7 +49,9 @@ const app = await _electron.launch({
 });
 const win = await app.firstWindow();
 
-win.on('console', (message) => message.type() === 'error' && errors.push(message.text().slice(0, 300)));
+// 资源加载失败时，报错里只有原因没有地址：把地址也带上，方便看是哪个文件
+win.on('console', (message) => message.type() === 'error'
+  && errors.push(`${ message.text() }${ message.location()?.url ? ` (${ message.location().url })` : '' }`.slice(0, 300)));
 win.on('pageerror', (error) => errors.push(`页面报错：${ String(error).slice(0, 300) }`));
 
 async function go(hash, name, wait = 1500) {
@@ -111,6 +113,7 @@ try {
   check('设置：分区导航', (await win.locator('.settings-nav button').count()) >= 8);
   check('设置：明暗主题可以直接选', (await win.locator('#settings-look .ant-segmented-item').count()) >= 3);
   check('设置：录播切片', (await win.locator('#settings-highlight .settings-row').count()) === 6);
+  check('设置：B 站公演自动录制并切片的开关', (await win.locator('#settings-live .settings-row', { hasText: 'B 站公演自动录制并切片' }).locator('.ant-switch').count()) === 1);
   check('设置：主题色里有四个团队色', (await win.locator('#settings-look .settings-color').count()) === 11
     && (await Promise.all(['SII 蓝', 'NII 紫', 'HII 橙', 'X 绿'].map((name) => win.locator(`.settings-color[aria-label="主题色：${ name }"]`).count())))
       .every((count) => count === 1));

@@ -63,7 +63,7 @@ export function assEscape(text: string): string {
 }
 
 /* 一个字占多宽：英文数字算半个多一点，其余算一个 */
-function charWidth(ch: string): number {
+export function charWidth(ch: string): number {
   return /[\x20-\x7e]/.test(ch) ? 0.56 : 1;
 }
 
@@ -71,16 +71,16 @@ export function textWidth(text: string): number {
   return Array.from(text).reduce((sum: number, ch: string): number => sum + charWidth(ch), 0);
 }
 
-function fontSize(size: number, fonts: FontSet): number {
+export function fontSize(size: number, fonts: FontSet): number {
   return Math.round((size * fonts.em) / BASE_EM);
 }
 
-function rect(x1: number, y1: number, x2: number, y2: number): string {
+export function rect(x1: number, y1: number, x2: number, y2: number): string {
   return `m ${ x1 } ${ y1 } l ${ x2 } ${ y1 } ${ x2 } ${ y2 } ${ x1 } ${ y2 }`;
 }
 
 /* 圆角矩形的 ASS 路径 */
-function roundRect(x: number, y: number, w: number, h: number, r: number): string {
+export function roundRect(x: number, y: number, w: number, h: number, r: number): string {
   const k: number = Math.round(r * 0.5523);
   const x2: number = x + w;
   const y2: number = y + h;
@@ -253,7 +253,7 @@ function danmuRows(item: DanmuLine): { text: string; height: number } {
   return { text, height: (rows.length * DANMU.lineHeight) + DANMU.gap };
 }
 
-function assDocument(styles: Array<string>, events: Array<string>, width: number = W): string {
+export function assDocument(styles: Array<string>, events: Array<string>, width: number = W): string {
   return `[Script Info]
 ScriptType: v4.00+
 PlayResX: ${ width }
@@ -272,7 +272,7 @@ ${ events.join('\n') }
 }
 
 /* 一个样式：名字、字体、字号、颜色、阴影的颜色、是否加粗、字距、阴影大小、对齐 */
-function style(
+export function style(
   name: string, font: string, size: number, color: string, back: string, bold: boolean, spacing: number, shadow: number, align: number
 ): string {
   return `Style: ${ name },${ font },${ size },${ color },&H00FFFFFF,&H00301A0A,${ back },${ bold ? -1 : 0 },0,0,0,100,100,${
@@ -375,7 +375,7 @@ export function buildVideoAss(input: VideoAssInput): string {
   ], events);
 }
 
-function subtitlesFilter(file: string, fonts: FontSet): string {
+export function subtitlesFilter(file: string, fonts: FontSet): string {
   return `subtitles=${ file }${ fonts.dir ? `:fontsdir=${ fonts.dir }` : '' }`;
 }
 
@@ -383,7 +383,8 @@ function subtitlesFilter(file: string, fonts: FontSet): string {
  * 合成成片的 ffmpeg 滤镜：按 segments 剪出几段拼起来，缩放后放到左边，压上字幕；声音统一响度。
  * 输入是已经定位到片段开头的原片，输出是 [vout] 和 [aout]
  */
-export function renderFilter(segments: Array<Segment>, fonts: FontSet, assFile: string = 'overlay.ass'): string {
+/* 按 segments 剪出几段拼起来：输出 [vc] 和 [ac]（两种排版共用） */
+export function segmentFilters(segments: Array<Segment>): Array<string> {
   const parts: Array<string> = [];
 
   segments.forEach((segment: Segment, index: number): void => {
@@ -396,15 +397,24 @@ export function renderFilter(segments: Array<Segment>, fonts: FontSet, assFile: 
 
   parts.push(`${ segments.map((segment: Segment, index: number): string => `[v${ index }][a${ index }]`).join('')
   }concat=n=${ segments.length }:v=1:a=1[vc][ac]`);
+
+  return parts;
+}
+
+/* 响度拉齐（两种排版共用）。loudnorm 开头两三秒输出的时间戳是乱的（ffmpeg 9 实测：前 0.6 秒里挤了 2.4 秒的声音，后面跟着 2.4 秒的空档），
+   播放时开头卡顿、之后音画不同步。它输出的采样本身是完整、连续的，所以在后面按采样数重新算一遍时间戳就对了 */
+export const LOUDNESS_FILTER: string = '[ac]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,asetpts=N/SR/TB[aout]';
+
+export function renderFilter(segments: Array<Segment>, fonts: FontSet, assFile: string = 'overlay.ass'): string {
+  const parts: Array<string> = segmentFilters(segments);
+
   // 横屏的录屏直播也放得下：按比例缩进 608×1080，空的地方填深色
   parts.push(`[vc]fps=30,scale=${ LEFT_WIDTH }:${ H }:force_original_aspect_ratio=decrease:flags=lanczos,`
     + `pad=${ LEFT_WIDTH }:${ H }:(ow-iw)/2:(oh-ih)/2:color=0x1B2030,setsar=1[vs]`);
   parts.push(`color=c=${ BACKGROUND }:s=${ W }x${ H }:r=30[bg]`);
   parts.push('[bg][vs]overlay=0:0:shortest=1[base]');
   parts.push(`[base]${ subtitlesFilter(assFile, fonts) }[vout]`);
-  // 响度拉齐。loudnorm 开头两三秒输出的时间戳是乱的（ffmpeg 9 实测：前 0.6 秒里挤了 2.4 秒的声音，后面跟着 2.4 秒的空档），
-  // 播放时开头卡顿、之后音画不同步。它输出的采样本身是完整、连续的，所以在后面按采样数重新算一遍时间戳就对了
-  parts.push('[ac]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,asetpts=N/SR/TB[aout]');
+  parts.push(LOUDNESS_FILTER);
 
   return parts.join(';');
 }
