@@ -33,6 +33,14 @@ export function roomClock(ms: number, beijing: boolean): RoomClock {
   };
 }
 
+/**
+ * 北京时间的日期 YYYY-MM-DD（和电脑的时区无关）；时间不对时返回空字符串。
+ * 切片、音频信息里写的日期都用它：成员在国内，日期按北京时间算（电脑在美国时，北京上午的直播按电脑时区会算成前一天）
+ */
+export function beijingDate(ms: number): string {
+  return Number.isFinite(ms) && ms > 0 ? roomClock(ms, true).date : '';
+}
+
 /* 某一天（YYYY-MM-DD）从几点开始算（毫秒）。beijing 的含义同上 */
 export function dayStart(dateText: string, beijing: boolean): number {
   const [year, month, date]: Array<number> = dateText.split('-').map(Number);

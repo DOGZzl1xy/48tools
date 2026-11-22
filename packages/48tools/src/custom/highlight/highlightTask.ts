@@ -2,7 +2,6 @@ import * as fs from 'node:fs';
 import { promises as fsP } from 'node:fs';
 import * as path from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import * as dayjs from 'dayjs';
 // @ts-expect-error
 import got from 'got';
 import { requestLiveRoomInfo, requestDownloadFile, type LiveRoomInfo } from '@48tools-api/48';
@@ -24,6 +23,7 @@ import type { TimedToken } from './highlightTokens';
 import { safeFileName } from './highlightTime';
 import { membersPrompt } from './highlightMembers';
 import { getMemberDirectory, loadMemberDirectory } from '../room/memberDirectory';
+import { beijingDate } from '../room/roomTime';
 import type { HighlightCount } from './highlightTypes';
 
 /**
@@ -81,16 +81,15 @@ function memberName(nickname: string): string {
 }
 
 export function highlightJobOf(record: HighlightRecord, count: HighlightCount, baseDir: string): HighlightJob {
-  const time: dayjs.Dayjs = dayjs(Number(record.ctime));
-  const folder: string = safeFileName(
-    `${ record.userInfo.nickname }_${ record.title }_${ time.isValid() ? time.format('YYYY-MM-DD') : '' }_${ record.liveId }`, 90);
+  const day: string = beijingDate(Number(record.ctime)); // 文件夹名、画面和发布标题上的日期都按北京时间
+  const folder: string = safeFileName(`${ record.userInfo.nickname }_${ record.title }_${ day }_${ record.liveId }`, 90);
   const outDir: string = path.join(baseDir, folder);
 
   return {
     liveId: record.liveId,
     member: memberName(record.userInfo.nickname),
     title: record.title,
-    date: time.isValid() ? time.format('YYYY.MM.DD') : '',
+    date: day.replace(/-/g, '.'),
     count,
     autoScore: getSetting('highlightAutoScore'),
     outDir,

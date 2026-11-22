@@ -1,6 +1,6 @@
 import type { CustomMessageV2 } from '@48tools-api/48';
 import { emojiText } from './emojiText';
-import { roomClock, dayStart } from './roomTime';
+import { roomClock, dayStart, beijingDate } from './roomTime';
 import { searchDirectory, teamLabel, type DirectoryMember } from './memberSearch';
 import { messageText, matchMessage, senderName, snippet } from './roomSearchText';
 
@@ -38,6 +38,15 @@ describe('roomTime', function(): void {
     // 北京时间过了零点：日期也跟着变
     expect(roomClock(Date.UTC(2026, 10, 19, 17, 0, 0), true).date).toBe('2026-11-20');
     expect(roomClock(Date.UTC(2026, 10, 19, 17, 0, 0), true).day).toBe('2026年11月20日 星期五');
+  });
+
+  test('beijingDate: 切片、音频信息里的日期按北京时间，和电脑的时区无关；时间不对时是空的', function(): void {
+    // 北京时间 2026-11-22 上午 10 点的直播：电脑在美国东部时是 11-21 晚上，日期也要写 11-22
+    expect(beijingDate(Date.UTC(2026, 10, 22, 2, 0, 0))).toBe('2026-11-22');
+    expect(beijingDate(Date.UTC(2026, 10, 21, 15, 59, 59))).toBe('2026-11-21'); // 北京时间 23:59:59
+    expect(beijingDate(Date.UTC(2026, 10, 21, 16, 0, 0))).toBe('2026-11-22');   // 北京时间 0 点
+    expect(beijingDate(Number('abc'))).toBe('');
+    expect(beijingDate(0)).toBe('');
   });
 
   test('local time uses the computer time zone', function(): void {

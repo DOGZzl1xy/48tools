@@ -4,7 +4,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { recordTaskStart, recordTaskEnd, recordTaskStopping, stoppedDetail } from './recordTasks';
+import { recordTaskStart, recordTaskEnd, recordTaskStopping, stoppedDetail, audioMetaOf } from './recordTasks';
 import { getQueueTasks, resetQueueForTest, type QueueTask } from './downloadQueue';
 
 const record: { liveId: string; title: string; ctime: string; userInfo: { nickname: string } } = {
@@ -73,5 +73,16 @@ describe('recordTasks', (): void => {
     expect(stoppedDetail(audio)).toBe('已停止。已下载的部分保留着，再下载这场的音频时可以接着下');
     expect(stoppedDetail(video)).toBe('已停止。已下载的分片留在「录播2.ts.cache」文件夹里');
     expect(stoppedDetail(path.join(dir, '什么都没有.ts'))).toBe('已停止');
+  });
+});
+
+describe('audioMetaOf', (): void => {
+  test('日期按北京时间（北京上午的直播，电脑在美国时也不会算成前一天）', (): void => {
+    const meta: Record<string, string> = audioMetaOf({
+      liveId: '1', title: '测试直播', ctime: String(Date.UTC(2026, 10, 22, 2, 0, 0)), userInfo: { nickname: '测试成员' }
+    });
+
+    expect(meta.date).toBe('2026-11-22');
+    expect(meta.comment).toBe('liveId: 1');
   });
 });
