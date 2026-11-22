@@ -1,5 +1,5 @@
 import { normalizeBaseUrl, httpErrorText } from '../transcribe/transcribeApi';
-import { clock, toSeconds, cleanPeople, danmuHeat, isGiftDanmu } from './highlightTime';
+import { clock, toSeconds, cleanPeople, danmuHeat, isGiftDanmu, CLIP_MIN_SECONDS, CLIP_MAX_SECONDS } from './highlightTime';
 import { agyJson, agyDefaults, AgyStopped } from './highlightAgy';
 import type { AudioWindow, CaptionLine, ClipScript, DanmuLine, Highlight } from './highlightTypes';
 
@@ -191,16 +191,18 @@ export function findRequest(
     .join('\n');
   const prompt: string = `你是偶像直播的剪辑师。这段音频是 ${ meta.member } 在口袋48的直播「${ meta.title }」的录播里的一段`
     + `（整场的第 ${ clock(window.start) } 到 ${ clock(window.start + window.length) }）。主播对着手机和粉丝聊天，偶尔念弹幕，有时会和别的成员连麦。
-请完整听完，找出最适合单独剪出来发短视频的「爆点」片段。
+请完整听完，找出最适合单独剪出来发到 B 站的「爆点」片段（直播切片）。
 
 什么算爆点：好笑的话或口误、让人意外的爆料、金句、和其他成员有关的故事、和粉丝的有趣互动、撒娇或真情流露、有反转的小故事。
 普通的打招呼、念礼物感谢、长时间沉默、放歌、没有内容的闲聊都不算。
 
 要求：
-1. 每个片段要能独立看懂：从这件事开始讲的那句话开始，到包袱或结论说完为止。长度 30 秒到 5 分钟，以把事情讲完整为准，宁可稍长也不要截断。
+1. 每个片段讲一件完整的事，要能独立看懂：从怎么聊到这件事的铺垫开始，到包袱、结论和她自己的反应说完为止。
+   这是 B 站的切片，不是抖音那种二三十秒的短视频：观众愿意看完整的故事，宁可长一点也不要截断；一件事里有好几个笑点时算一个片段，不要拆成几段。
+   剪掉停顿和无关的话以后，成片要在 ${ CLIP_MIN_SECONDS } 秒到 ${ CLIP_MAX_SECONDS / 60 } 分钟之间（剪的时候一般会短两成左右，所以片段本身最好在 1 分钟到 5 分钟之间）。撑不满 ${ CLIP_MIN_SECONDS } 秒的小插曲不要单独选。
 2. start、end 用这段音频里的时间，格式 MM:SS。必须是你真的听到那段话的时间，不要估计。
 3. quote 写这段里最有传播力的一句原话（逐字，简体中文）。
-4. title 是给短视频用的标题，12 个字以内，口语化，可以带一点悬念，不要标题党到和内容不符。不要标点符号，不用写主播自己的名字。
+4. title 是给切片用的标题，12 个字以内，口语化，可以带一点悬念，不要标题党到和内容不符。不要标点符号，不用写主播自己的名字。
 5. cover 是写在封面上的一句话，10 个字以内。
 6. score 是 1 到 10 的爆点分，可以用半分（例如 8.5）。打分要严格、要拉开差距，不要因为选出来了就都给高分，也不要都给同一个分：
    9 分以上：不认识她的人刷到也会笑出来或者想转发，包袱完整、有记忆点。这样一段（${ Math.round(window.length / 60) } 分钟）里通常最多一两个，没有就不要给。
@@ -276,13 +278,13 @@ export function readFound(data: any, window: AudioWindow): { summary: string; hi
 
 /* 第 2 步：一个片段的逐句字幕、留不留、标题、简介、看点 */
 export function scriptRequest(
-  meta: LiveMeta, highlight: Highlight, clipLength: number, audioBase64: string, danmu: Array<DanmuLine>
+  meta: LiveMeta, highlight: Highlight, clipLength: number, audioBase64: string, danmu: Array<DanmuLine>, note?: string
 ): GeminiAsk {
   const prompt: string = `你是偶像直播的剪辑师。这段音频（${ Math.round(clipLength) } 秒）来自 ${ meta.member } 在口袋48的直播「${ meta.title }」。
-我们要从里面剪出一个短视频，主题是：「${ highlight.title }」。
+我们要从里面剪出一个发到 B 站的直播切片，主题是：「${ highlight.title }」。
 这段里最关键的一句话是：「${ highlight.quote }」。
-音频的开头和结尾各多留了十几秒，里面可能有和这个主题无关的话。
-
+音频比这件事前后多留了一些，里面可能有和这个主题无关的话，也可能有这件事的铺垫和后续。
+${ note ? `\n注意：${ note }\n` : '' }
 请做四件事：
 
 一、逐句转写整段音频（简体中文，按原话写，不要润色；有连麦时所有人说的话都要写）。
@@ -290,14 +292,15 @@ export function scriptRequest(
 - start、end 是这一句在这段音频里开始和结束的时间，单位秒，保留一位小数。必须按你听到的实际时间写；相邻两句不要重叠；end 不要晚于下一句的 start。
 - 笑声、唱歌、明显的停顿不用写成 line，直接空着时间就行。
 
-二、决定每一句要不要留在短视频里（keep）。
-- 短视频从这件事开始讲的那句话开始，到包袱或结论说完结束。在这之前和之后的句子 keep=false。
+二、决定每一句要不要留在切片里（keep）。
+- 切片从怎么聊到这件事的铺垫开始，到包袱、结论和她自己的反应说完结束。在这之前和之后跟这件事无关的句子 keep=false。
 - 中间如果插了和主题无关的话（感谢礼物、念无关的弹幕、跑题），keep=false；但如果去掉之后前后接不上，就留着。
-- 留下来的部分总长度要在 30 秒到 5 分钟之间；不够 30 秒就把相关的铺垫也留下。
+- 留下来的部分总长度必须在 ${ CLIP_MIN_SECONDS } 秒到 ${ CLIP_MAX_SECONDS / 60 } 分钟之间（程序会检查，不合要求的会让你重做）。
+  这是 B 站的切片，要把这件事讲完整，不是抖音那种二三十秒的短视频：不够 ${ CLIP_MIN_SECONDS } 秒就把前面的铺垫、后面的结论和反应也留下；超过 ${ CLIP_MAX_SECONDS / 60 } 分钟就去掉离题和重复的部分。
 
 三、标出重点（emphasis）：这一句里最有梗、最关键的词或短语，原样抄写（必须是这一句里连续出现的字）。大部分句子没有重点，留空数组；整段里有重点的句子不要超过三分之一。
 
-四、给这个短视频写：
+四、给这个切片写：
 - titles：三个标题，让发视频的人挑。第一个放你最满意的（画面和封面上用它）。
   你是这个成员的老粉，也是很会起标题的切片手。标题要像粉丝自己发视频时随手起的：有梗、有态度、让人想点进来，而不是把事情概括一遍。放开写，不要套公式。
   · 可以怎么写（只是举例，想到更好的写法就用你自己的，三个标题的写法必须互不相同）：

@@ -8,7 +8,8 @@ import {
   type GeminiConfig, type LiveMeta
 } from './highlightGemini';
 import {
-  parseLrc, planWindows, mergeHighlights, targetCount, safeFileName, postTitle, clock, AGY_WINDOW_LENGTH, AGY_WINDOW_OVERLAP
+  parseLrc, planWindows, mergeHighlights, targetCount, safeFileName, postTitle, clock, AGY_WINDOW_LENGTH, AGY_WINDOW_OVERLAP,
+  clipWindow, clipLengthProblem, clipLengthNote, CLIP_MIN_SECONDS, CLIP_MAX_SECONDS, RETRY_EXTRA_CONTEXT, type ClipWindow
 } from './highlightTime';
 import { tidyLines, buildSegments } from './highlightCut';
 import { alignLines, envelopeOf, syllablePeaks } from './highlightAlign';
@@ -103,9 +104,6 @@ export interface HighlightResult {
   infoFile?: string;           // 汇总说明
 }
 
-const CLIP_PAD_BEFORE: number = 15; // 第 1 步的时间可能差几秒，前后多留一点让模型自己找边界
-const CLIP_PAD_AFTER: number = 12;
-const MIN_CLIP_SECONDS: number = 20; // 剪完不到这么长的不要
 const COVER_CANDIDATES: number = 6;
 const NEED_ALIGNER: string = '通过本机的 agy 做切片时，要先在「设置 → 录播切片」里安装「本地打轴模型」（agy 说的时间不准，要靠它定时间）';
 
@@ -206,44 +204,53 @@ interface ClipContext {
   meta: LiveMeta;
 }
 
+/* 一次「写字幕、对时间、定剪辑点」的结果 */
+interface ClipCut {
+  window: ClipWindow;          // 交给模型的是录播里的哪一段
+  script: ClipScript;
+  lines: Array<CaptionLine>;
+  timing: string;              // 字幕的时间是怎么定的（写进说明）
+  segments: Array<Segment>;
+  total: number;               // 剪完多长（秒）
+}
+
 /**
- * 做一个切片。剪完太短或者没有留下任何句子时返回原因（字符串），换下一个爆点
+ * 取一段音频，让模型逐句写字幕、决定留哪些句子，再把时间对准、定剪辑点
  * @param { ClipContext } context
  * @param { Highlight } highlight
- * @param { number } index - 第几个成片（从 1 开始，用在文件名里）
- * @param { number } slot - 第几个候选（工作文件夹的名字）
- * @param { (stage: string, part: number) => void } report - 做到哪一步了；part 是这个切片完成了多少（0 ~ 1）
+ * @param { string } clipDir - 这个切片的工作文件夹
+ * @param { ClipWindow } window - 录播里的哪一段
+ * @param { string | undefined } note - 重做时告诉模型上次哪里不行（见 ./highlightTime 的 clipLengthNote）
+ * @param { (stage: string, part: number) => void } report
  */
-async function makeClip(
-  context: ClipContext, highlight: Highlight, index: number, slot: number, report: (stage: string, part: number) => void
-): Promise<ClipResult | string> {
-  const { job, deps, signal, source, duration, danmu, fonts, meta }: ClipContext = context;
-  const clipDir: string = path.join(job.workDir, `clip-${ slot }`);
-  const clipStart: number = Math.max(0, highlight.start - CLIP_PAD_BEFORE);
-  const clipLength: number = Math.min(duration, highlight.end + CLIP_PAD_AFTER) - clipStart;
-  const audio: string = path.join(clipDir, 'audio.mp3');
-  const scriptFile: string = path.join(clipDir, 'script.json');
-
-  await fsP.mkdir(clipDir, { recursive: true });
+async function scriptAndCut(
+  context: ClipContext, highlight: Highlight, clipDir: string, window: ClipWindow, note: string | undefined,
+  report: (stage: string, part: number) => void
+): Promise<ClipCut> {
+  const { job, deps, signal, source, danmu, meta }: ClipContext = context;
+  // 文件名带上这一段的位置：重做时换了范围，不会用到上一次的结果
+  const key: string = `${ Math.round(window.start * 10) }-${ Math.round(window.length * 10) }${ note ? '-retry' : '' }`;
+  const audio: string = path.join(clipDir, `audio-${ key }.mp3`);
+  const scriptFile: string = path.join(clipDir, `script-${ key }.json`);
 
   // 这个片段的音频
   report('取音频', 0);
   await runFfmpeg(job.ffmpeg, [
-    '-y', '-v', 'error', '-ss', clipStart.toFixed(3), '-t', clipLength.toFixed(3), '-i', source,
+    '-y', '-v', 'error', '-ss', window.start.toFixed(3), '-t', window.length.toFixed(3), '-i', source,
     '-vn', '-ac', '1', '-ar', '16000', '-b:a', '48k', audio
   ], { signal });
 
   // 逐句字幕、留不留、标题、简介、看点
-  report('写字幕', 0.05);
+  report(note ? '重写字幕（长度不合要求）' : '写字幕', 0.05);
 
   let script: ClipScript | undefined = await readJsonFile<ClipScript>(scriptFile);
 
   if (!script) {
     const clipDanmu: Array<DanmuLine> = danmu.filter(
-      (item: DanmuLine): boolean => item.time >= clipStart && item.time < clipStart + clipLength);
+      (item: DanmuLine): boolean => item.time >= window.start && item.time < window.start + window.length);
 
     script = readScript(await geminiJson<unknown>(
-      job.gemini, scriptRequest(meta, highlight, clipLength, await base64Of(audio), clipDanmu), signal, deps.fetchImpl), highlight, job.member);
+      job.gemini, scriptRequest(meta, highlight, window.length, await base64Of(audio), clipDanmu, note), signal, deps.fetchImpl), highlight, job.member);
     await fsP.writeFile(scriptFile, JSON.stringify(script, null, 2));
   }
 
@@ -253,7 +260,7 @@ async function makeClip(
   // 模型标的时间不稳（偶尔整段早一两秒），用声音里的停顿和音节把每句话对回去，再定剪辑点
   const silences: Array<Silence> = await detectSilences(job.ffmpeg, audio, signal);
   const peaks: Array<number> = syllablePeaks(envelopeOf(await readPcm(job.ffmpeg, audio, signal), PCM_RATE));
-  let lines: Array<CaptionLine> = alignLines(tidyLines(script.lines, clipLength), silences, peaks, clipLength);
+  let lines: Array<CaptionLine> = alignLines(tidyLines(script.lines, window.length), silences, peaks, window.length);
   let timing: string = 'Gemini 标的时间，用声音里的停顿和音节对过';
 
   // 装了本地打轴模型：用它认出来的每个字的时间。认不出来、对上的字太少、出错时保持上面的时间
@@ -262,7 +269,7 @@ async function makeClip(
 
     try {
       const tokens: Array<TimedToken> | null = await deps.recognize(audio, signal);
-      const byTokens: TokenTiming | null = tokens && tokens.length > 0 ? timeLinesByTokens(lines, tokens, clipLength) : null;
+      const byTokens: TokenTiming | null = tokens && tokens.length > 0 ? timeLinesByTokens(lines, tokens, window.length) : null;
 
       if (byTokens?.used) {
         lines = byTokens.lines;
@@ -277,11 +284,44 @@ async function makeClip(
       timing += '（本地打轴出错，没有用）';
     }
   }
-  const { segments, total }: { segments: Array<Segment>; total: number } = buildSegments(lines, clipLength);
 
-  if (segments.length === 0 || total < MIN_CLIP_SECONDS) {
-    return `「${ highlight.title }」剪完只有 ${ Math.round(total) } 秒，跳过`;
+  const { segments, total }: { segments: Array<Segment>; total: number } = buildSegments(lines, window.length);
+
+  return { window, script, lines, timing, segments, total };
+}
+
+/**
+ * 做一个切片。剪完的长度不在 45 秒到 5 分钟之间（重做一次也不行）时返回原因（字符串），换下一个爆点
+ * @param { ClipContext } context
+ * @param { Highlight } highlight
+ * @param { number } index - 第几个成片（从 1 开始，用在文件名里）
+ * @param { number } slot - 第几个候选（工作文件夹的名字）
+ * @param { (stage: string, part: number) => void } report - 做到哪一步了；part 是这个切片完成了多少（0 ~ 1）
+ */
+async function makeClip(
+  context: ClipContext, highlight: Highlight, index: number, slot: number, report: (stage: string, part: number) => void
+): Promise<ClipResult | string> {
+  const { job, signal, source, duration, danmu, fonts, deps }: ClipContext = context;
+  const clipDir: string = path.join(job.workDir, `clip-${ slot }`);
+
+  await fsP.mkdir(clipDir, { recursive: true });
+
+  let cut: ClipCut = await scriptAndCut(context, highlight, clipDir, clipWindow(highlight, duration), undefined, report);
+  const problem: 'short' | 'long' | null = clipLengthProblem(cut.total);
+
+  // 剪完不到 45 秒或者超过 5 分钟：告诉模型实际剪出来多长，再做一次；太短时前后多给一些音频，好把铺垫和后续留下
+  if (problem) {
+    cut = await scriptAndCut(context, highlight, clipDir,
+      problem === 'short' ? clipWindow(highlight, duration, RETRY_EXTRA_CONTEXT) : cut.window, clipLengthNote(problem, cut.total), report);
   }
+
+  if (cut.segments.length === 0 || clipLengthProblem(cut.total)) {
+    return `「${ highlight.title }」剪完是 ${ Math.round(cut.total) } 秒（要在 ${ CLIP_MIN_SECONDS } 秒到 ${ CLIP_MAX_SECONDS / 60 } 分钟之间），跳过`;
+  }
+
+  const { script, lines, timing, segments, total }: ClipCut = cut;
+  const clipStart: number = cut.window.start;
+  const clipLength: number = cut.window.length;
 
   // 合成
   const placed: Array<PlacedDanmu> = placeDanmu(danmu, clipStart, segments, total);

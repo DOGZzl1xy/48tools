@@ -197,6 +197,74 @@ export function targetCount(sorted: Array<Highlight>, count: HighlightCount, dur
   return sorted.length > 0 && sorted[0].score >= AUTO_MIN_SCORE ? 1 : 0;
 }
 
+/*
+ * 成片（剪掉停顿和无关的话以后）的长度：45 秒到 5 分钟。切片是发 B 站的，要把一件事讲完整，
+ * 不要像抖音那样切成二三十秒、故事没讲完的短视频（2026-11 和用户商量定的）。
+ */
+export const CLIP_MIN_SECONDS: number = 45;
+export const CLIP_MAX_SECONDS: number = 300;
+const CLIP_PAD_BEFORE: number = 15;        // 第 1 步的时间可能差几秒，前后多留一点让模型自己找边界
+const CLIP_PAD_AFTER: number = 12;
+const MIN_SCRIPT_WINDOW: number = 90;      // 交给模型写字幕的音频至少这么长：爆点本身很短时前后多给一些，才有铺垫和后续可以留
+
+export const RETRY_EXTRA_CONTEXT: number = 30; // 剪完太短、重做一次时，前后各再多给这么多
+
+export interface ClipWindow {
+  start: number;  // 在录播里的时间（秒）
+  length: number;
+}
+
+/**
+ * 做一个切片时取哪一段音频交给模型写字幕、定剪辑点
+ * @param { { start: number; end: number } } highlight - 第 1 步找到的爆点
+ * @param { number } duration - 录播的长度（秒）
+ * @param { number } [extra] - 前后各再多给多少秒（剪完太短重做时用）
+ */
+export function clipWindow(highlight: { start: number; end: number }, duration: number, extra: number = 0): ClipWindow {
+  let start: number = highlight.start - CLIP_PAD_BEFORE - extra;
+  let end: number = highlight.end + CLIP_PAD_AFTER + extra;
+  const missing: number = MIN_SCRIPT_WINDOW - (end - start);
+
+  if (missing > 0) {
+    start -= missing / 2;
+    end += missing / 2;
+  }
+
+  start = Math.max(0, start);
+  end = Math.min(duration, end);
+
+  // 碰到录播的开头或结尾：往另一边补
+  if (end - start < MIN_SCRIPT_WINDOW) {
+    if (start === 0) {
+      end = Math.min(duration, MIN_SCRIPT_WINDOW);
+    } else {
+      start = Math.max(0, end - MIN_SCRIPT_WINDOW);
+    }
+  }
+
+  return { start, length: end - start };
+}
+
+/* 剪完的长度合不合要求 */
+export function clipLengthProblem(total: number): 'short' | 'long' | null {
+  if (total < CLIP_MIN_SECONDS) return 'short';
+
+  if (total > CLIP_MAX_SECONDS) return 'long';
+
+  return null;
+}
+
+/* 剪完的长度不合要求、重做一次时告诉模型的话 */
+export function clipLengthNote(problem: 'short' | 'long', total: number): string {
+  if (problem === 'short') {
+    return `上一次按你选的句子剪出来只有 ${ Math.round(total) } 秒，太短了，这件事没有讲完整。这次音频前后多给了一些：`
+      + `请把这件事前面的铺垫（是怎么聊到这件事的）和后面的结论、她自己的反应也留下，让留下来的部分在 ${ CLIP_MIN_SECONDS } 秒到 ${ CLIP_MAX_SECONDS / 60 } 分钟之间。`;
+  }
+
+  return `上一次按你选的句子剪出来有 ${ Math.round(total) } 秒，超过了 ${ CLIP_MAX_SECONDS / 60 } 分钟。`
+    + `请去掉离题、重复和拖沓的部分，只留这件事本身，让留下来的部分在 ${ CLIP_MIN_SECONDS } 秒到 ${ CLIP_MAX_SECONDS / 60 } 分钟之间。`;
+}
+
 /* 成员的名字，不带队伍：SNH48 沈馨、SNH48-沈馨 → 沈馨 */
 export function shortName(member: string): string {
   return member.trim().split(/[\s-]+/).pop() ?? '';

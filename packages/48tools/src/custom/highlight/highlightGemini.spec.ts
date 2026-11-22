@@ -221,6 +221,26 @@ describe('片段的字幕、标题、简介', (): void => {
     expect(prompt).toContain('9 分以上');
     expect(prompt).toContain('可以用半分');
   });
+
+  test('切片要讲完整一件事：两步的提示里都要求成片 45 秒到 5 分钟，是 B 站的切片不是抖音短视频', (): void => {
+    const find: string = findRequest({ member: '测试成员', title: '测试直播' }, { start: 0, length: 1_800 }, 'QUJD', []).parts[0].text!;
+    const script: string = scriptRequest({ member: '测试成员', title: '测试直播' }, highlight, 90, 'QUJD', []).parts[0].text!;
+
+    for (const prompt of [find, script]) {
+      expect(prompt).toContain('45 秒到 5 分钟');
+      expect(prompt).toContain('B 站');
+      expect(prompt).toContain('抖音');
+    }
+
+    expect(find).toContain('不要拆成几段');
+    expect(script).not.toContain('注意：');
+  });
+
+  test('剪完长度不对、重做时把原因告诉模型', (): void => {
+    const prompt: string = scriptRequest({ member: '测试成员', title: '测试直播' }, highlight, 150, 'QUJD', [], '上一次剪出来只有 31 秒').parts[0].text!;
+
+    expect(prompt).toContain('注意：上一次剪出来只有 31 秒');
+  });
 });
 
 describe('挑封面', (): void => {

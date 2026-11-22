@@ -3,7 +3,8 @@
  */
 import {
   toSeconds, clock, parseLrc, planWindows, mergeHighlights, targetCount, safeFileName, postTitle, cleanPeople,
-  isGiftDanmu, isReactionDanmu, danmuHeat
+  isGiftDanmu, isReactionDanmu, danmuHeat, clipWindow, clipLengthProblem, clipLengthNote, CLIP_MIN_SECONDS, CLIP_MAX_SECONDS,
+  RETRY_EXTRA_CONTEXT
 } from './highlightTime';
 import type { DanmuLine, Highlight } from './highlightTypes';
 
@@ -219,5 +220,36 @@ describe('safeFileName', (): void => {
   test('太长就截断，空的给个名字', (): void => {
     expect(safeFileName('一二三四五六', 4)).toBe('一二三四');
     expect(safeFileName('???')).toBe('未命名');
+  });
+});
+
+describe('切片的长度', (): void => {
+  test('成片 45 秒到 5 分钟', (): void => {
+    expect([CLIP_MIN_SECONDS, CLIP_MAX_SECONDS]).toEqual([45, 300]);
+    expect(clipLengthProblem(44.9)).toBe('short');
+    expect(clipLengthProblem(45)).toBeNull();
+    expect(clipLengthProblem(300)).toBeNull();
+    expect(clipLengthProblem(300.5)).toBe('long');
+  });
+
+  test('交给模型的音频：爆点前后各多留十几秒；爆点很短时至少给 90 秒，好把铺垫和后续留下', (): void => {
+    expect(clipWindow({ start: 600, end: 720 }, 3_600)).toEqual({ start: 585, length: 147 });
+    expect(clipWindow({ start: 600, end: 630 }, 3_600)).toEqual({ start: 568.5, length: 90 });
+  });
+
+  test('碰到录播开头、结尾时往另一边补', (): void => {
+    expect(clipWindow({ start: 5, end: 20 }, 3_600)).toEqual({ start: 0, length: 90 });
+    expect(clipWindow({ start: 3_580, end: 3_595 }, 3_600)).toEqual({ start: 3_510, length: 90 });
+  });
+
+  test('剪完太短重做时前后各再多给 30 秒', (): void => {
+    expect(clipWindow({ start: 600, end: 720 }, 3_600, RETRY_EXTRA_CONTEXT)).toEqual({ start: 555, length: 207 });
+  });
+
+  test('重做时告诉模型的话：实际多长、要往哪边改', (): void => {
+    expect(clipLengthNote('short', 31.4)).toContain('只有 31 秒');
+    expect(clipLengthNote('short', 31.4)).toContain('铺垫');
+    expect(clipLengthNote('long', 333)).toContain('有 333 秒，超过了 5 分钟');
+    expect(clipLengthNote('long', 333)).toContain('45 秒到 5 分钟');
   });
 });
