@@ -22,7 +22,8 @@ import {
 import DownloadMeter from '../../../../../custom/download/downloadMeter';
 import { createAudio, type AudioWorkerDeps } from '../../../../../custom/download/audioExtract';
 import type { ProgressStats } from '../../../../../custom/download/formatProgress';
-import { SEGMENT_TIMEOUT, withRetry } from '../../../../../custom/download/segmentRetry';
+import { SEGMENT_TIMEOUT, withRetry, segmentViaProxy } from '../../../../../custom/download/segmentRetry';
+import { pocket48Agent, setPocket48ProxyForWorker } from '../../../../../custom/pocket48Proxy/pocket48Proxy';
 import { SegmentPrefetcher, trackSegmentRequest, abortSegmentRequests, closeSegmentPrefetchers } from '../../../../../custom/download/segmentPrefetcher';
 
 export type WorkerEventData = {
@@ -34,6 +35,7 @@ export type WorkerEventData = {
   audioOnly?: boolean; // 只下载音频（custom/download/audioExtract）
   resume?: boolean;    // 音频：接着上次没下完的继续
   audioMeta?: Record<string, string>; // 音频：写进 m4a 的标题、成员等信息
+  pocket48Proxy?: string; // 口袋48代理的地址（worker 里读不到 localStorage）：直连下不来的分片改走它
 };
 
 type ProbePacket = {
@@ -296,14 +298,16 @@ async function probeSegment(ffprobe: string, file: string): Promise<SegmentProbe
   }
 }
 
-async function downloadSegment(uri: string, file: string): Promise<number> {
+async function downloadSegment(uri: string, file: string, attempt: number = 0): Promise<number> {
   const url: URL = new URL(uri);
   const request: GotRequest = got.stream(uri, {
     headers: {
       'Host': url.hostname,
       'User-Agent': 'SNH48 ENGINE'
     },
-    timeout: SEGMENT_TIMEOUT // 卡住时断开，交给 downloadSegmentWithRetry 重试
+    timeout: SEGMENT_TIMEOUT, // 卡住时断开，交给 downloadSegmentWithRetry 重试
+    // 直连失败两次以后改走口袋48代理（个别分片从美国的 CDN 节点每次都下不来，见 custom/download/segmentRetry）
+    agent: segmentViaProxy(attempt) ? pocket48Agent() : undefined
   });
 
   activeRequest = request;
@@ -331,7 +335,7 @@ function downloadSegmentWithRetry(
   onRetry?: (attempt: number) => void,
   signal?: AbortSignal
 ): Promise<number> {
-  return withRetry((): Promise<number> => downloadSegment(uri, file), {
+  return withRetry((attempt: number): Promise<number> => downloadSegment(uri, file, attempt), {
     label,
     isStopped: (): boolean => isStopped || Boolean(signal?.aborted),
     onRetry
@@ -372,7 +376,7 @@ async function downloadParts(
   const prefetcher: SegmentPrefetcher = new SegmentPrefetcher(segments.length, workDir, // 并行下载，按顺序处理
     (i: number, file: string, signal: AbortSignal): Promise<number> => downloadSegmentWithRetry(segments[i].uri, file,
       `第 ${ i + 1 }/${ segments.length } 个分片`,
-      (attempt: number): void => postProgress(qid, i / segments.length * 90, { stage: 'retry', retry: attempt }), signal));
+      (attempt: number): void => postProgress(qid, i / segments.length * 90, { stage: 'retry', retry: attempt, viaProxy: segmentViaProxy(attempt) }), signal));
 
   for (let index: number = 0; index < segments.length; index++) {
     if (isStopped) break;
@@ -653,6 +657,8 @@ function stop(): void {
 addEventListener('message', function(event: MessageEvent<WorkerEventData>): void {
   switch (event.data.type) {
     case 'start':
+      setPocket48ProxyForWorker(event.data.pocket48Proxy); // 没有代理时是 undefined：一直直连
+
       if (!activeTask) {
         activeTask = run(event.data).finally(function(): void {
           activeTask = null;

@@ -104,10 +104,30 @@ describe('公演录像：小工具', (): void => {
       .toEqual(['3.0 第一段', '7.0 第二段']);
     expect(progress[progress.length - 1]).toBe(30);
 
+    // 接好的 mp4 用公演名命名、留在录像文件夹里；接进去的 ts 删掉；manifest 记下 mp4 和每段的长度
+    expect(result.source).toBe(path.join(dir, '《示例》公演.mp4'));
+    expect(fs.existsSync(path.join(dir, 'part-01.ts'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'part-02.ts'))).toBe(false);
+
+    const saved: GongyanManifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+
+    expect(saved.joined).toBe('《示例》公演.mp4');
+    expect(saved.parts.map((part: { file: string; duration?: number }): string => `${ part.file } ${ Math.round(part.duration ?? 0) }`))
+      .toEqual(['part-01.ts 6', 'part-02.ts 6']);
+
+    // 再做一次（重试、重切）：直接用接好的 mp4，弹幕照样对得上；工作文件夹（上次切完删掉了）要重新建好，后面要往里面写
     const made: number = fs.statSync(result.source).mtimeMs;
 
-    await prepareGongyanSource({ ffmpeg: FFMPEG, dir, manifest, workDir, progressEnd: 30, onProgress: (): void => undefined });
+    fs.rmSync(workDir, { recursive: true, force: true });
+
+    const again: Awaited<ReturnType<typeof prepareGongyanSource>> = await prepareGongyanSource({
+      ffmpeg: FFMPEG, dir, manifest: saved, workDir, progressEnd: 30, onProgress: (): void => undefined
+    });
+
+    expect(again.source).toBe(result.source);
     expect(fs.statSync(result.source).mtimeMs).toBe(made);
+    expect(fs.existsSync(workDir)).toBe(true);
+    expect(again.danmu.map((item: { time: number }): string => item.time.toFixed(1))).toEqual(['3.0', '7.0']);
   }, 120_000);
 
   test('两段的分辨率不一样：重新编码，长度还是对的', async (): Promise<void> => {

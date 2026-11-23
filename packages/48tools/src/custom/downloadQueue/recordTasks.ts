@@ -3,10 +3,12 @@ import * as path from 'node:path';
 import { queueTaskStart, queueTaskProgress, queueTaskEnd } from './downloadQueue';
 import { beijingDate } from '../room/roomTime';
 import { formatProgressDetail, type ProgressStats } from '../download/formatProgress';
+import { startInSlot, cancelWaitingInSlot } from './slotTasks';
 
 /**
  * 录播下载（视频 / 音频）登记到下载队列用的接入函数，以及写进音频文件的信息。
- * 接入点：Pocket48Record.tsx 的 handleDownloadM3u8Click、handleStopClick（recordTaskStopping）。
+ * 和别的录播下载（切片、自动抓取）排队，同一时间只下一场（recordTaskQueue）。
+ * 接入点：Pocket48Record.tsx 的 handleDownloadM3u8Click、handleStopClick（recordTaskCancelWaiting、recordTaskStopping）。
  *
  * 停止下载时下载到一半的内容不会删掉：视频留在保存的文件里（不完整，能播放）；音频留在「文件名.part.aac」，
  * 下次下载同一场的音频时可以接着下；备用方案下载的分片留在「文件名.cache」文件夹里。
@@ -60,6 +62,25 @@ export function recordTaskStart(record: RecordLike, filePath: string, audioOnly:
     },
     retry
   });
+}
+
+/**
+ * 和别的录播下载排队（同一时间只下一场，见 ./slotTasks）：轮到了调用 start；排队时下载队列里显示「排队中」。
+ * 返回下完（结束、出错、停止）后要调用的函数，让给下一场
+ * @param { string } liveId
+ * @param { () => void } start - 真正开始下载（给 worker 发 start）
+ * @param { () => void } cancelled - 排队时点了停止（不会再调用 start）
+ */
+export function recordTaskQueue(liveId: string, start: () => void, cancelled: () => void): () => void {
+  return startInSlot(taskId(liveId), start, (): void => {
+    recordTaskStopping(liveId); // 结束时显示「已停止」
+    cancelled();
+  });
+}
+
+/* 点了停止：还在排队的就不排了（返回 true），已经开始下的返回 false，由调用的地方让 worker 停下 */
+export function recordTaskCancelWaiting(liveId: string): boolean {
+  return cancelWaitingInSlot(taskId(liveId));
 }
 
 export function recordTaskProgress(liveId: string, message: WorkerMessage): void {

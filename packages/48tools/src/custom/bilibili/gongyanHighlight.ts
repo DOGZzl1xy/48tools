@@ -8,7 +8,8 @@ import { readGlossaryFile } from '../highlight/glossaryFile';
 import { highlightGeminiConfig, highlightUnavailable, enqueueHighlight, isHighlightQueued } from '../highlight/highlightTask';
 import { getMemberDirectory, loadMemberDirectory } from '../room/memberDirectory';
 import { DOWNLOAD_END, type HighlightJob, type HighlightProgress, type PreparedSource } from '../highlight/highlightPipeline';
-import { MANIFEST, type GongyanManifest } from './gongyanRecorder';
+import type { GongyanManifest } from './gongyanRecorder';
+import { MANIFEST } from './gongyanFiles';
 import { showNameOf } from './gongyanSchedule';
 import { prepareGongyanSource } from './gongyanSource';
 

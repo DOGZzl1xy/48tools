@@ -153,6 +153,16 @@ describe('buildVideoAss / renderFilter', (): void => {
   test('滤镜：响度拉齐之后要重新算音频的时间戳（不然开头卡顿、音画不同步）', (): void => {
     expect(renderFilter(segments, fonts)).toMatch(/\[ac\]loudnorm=[^;[]*,aresample=48000,asetpts=N\/SR\/TB\[aout\]$/);
   });
+
+  test('电台：只剪声音，画面是第二个输入的图，截成拼完的长度', (): void => {
+    const filter: string = renderFilter(segments, fonts, 'overlay.ass', true);
+
+    expect(filter).not.toContain('[0:v]');
+    expect(filter).toContain('[0:a]atrim=start=10.000:end=20.000');
+    expect(filter).toContain('[a0][a1]concat=n=2:v=0:a=1[ac]');
+    expect(filter).toContain('[1:v]trim=duration=20.000,setpts=PTS-STARTPTS,scale=out_range=tv,format=yuv420p[vc]');
+    expect(filter).toContain('subtitles=overlay.ass:fontsdir=../fonts[vout]');
+  });
 });
 
 describe('封面', (): void => {
@@ -160,6 +170,12 @@ describe('封面', (): void => {
     expect(splitTitle('好萌')).toEqual(['好萌']);
     expect(splitTitle('忘切小号！用大号自吹好萌')).toEqual(['忘切小号！', '用大号自吹好萌']);
     expect(splitTitle('被说一笑就老气到回怼')).toEqual(['被说一笑就', '老气到回怼']);
+  });
+
+  test('没有标点时在词和词之间断，不把一个词拆到两行', (): void => {
+    expect(splitTitle('真到自己这儿也没招')).toEqual(['真到自己', '这儿也没招']); // 以前是「真到自己这 / 儿也没招」
+    expect(splitTitle('吐槽队友不说人话')).toEqual(['吐槽队友', '不说人话']);
+    expect(splitTitle('比皇登基后的退费公告')).toEqual(['比皇登基后的', '退费公告']); // 不拆「登基后」
   });
 
   test('结尾的括号吐槽单独一行；逗号离中间远一点也在逗号后面断', (): void => {

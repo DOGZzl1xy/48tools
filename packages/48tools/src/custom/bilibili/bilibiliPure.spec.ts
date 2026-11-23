@@ -93,16 +93,19 @@ describe('公演：什么时候查、录哪些队', (): void => {
     expect(showNameOf('Team NII《示例》剧场公演')).toBe('《示例》');
     expect(showNameOf('X队《示例》公演 ')).toBe('《示例》');
     expect(showNameOf('公演')).toBe('公演');
+    // 书名号后面还有别的字：「公演」留着，不然读不通
+    expect(showNameOf('TEAM NII《新芽之契》十三周年庆特别公演')).toBe('《新芽之契》十三周年庆特别公演');
   });
 
-  test('正在直播、而且是 HII / NII / X 的才录', (): void => {
+  test('正在直播、而且是 SII / NII / HII / X 的才录（GNZ48 的 NIII 不录）', (): void => {
     const list: Array<{ liveId: string; title: string; subTitle: string; status: number }> = [
       { liveId: '1', title: 'A', subTitle: 'Team X 剧场公演', status: 2 },
       { liveId: '2', title: 'B', subTitle: 'Team SII 剧场公演', status: 2 },
       { liveId: '3', title: 'C', subTitle: 'Team NII 剧场公演', status: 1 },
-      { liveId: '4', title: 'D', subTitle: 'Team HII 剧场公演', status: 2 }
+      { liveId: '4', title: 'D', subTitle: 'Team HII 剧场公演', status: 2 },
+      { liveId: '5', title: 'E', subTitle: 'Team NIII 剧场公演', status: 2 }
     ];
 
-    expect(liveWantedShows(list).map((show: { liveId: string; team: string }): string => `${ show.liveId }:${ show.team }`)).toEqual(['1:X', '4:HII']);
+    expect(liveWantedShows(list).map((show: { liveId: string; team: string }): string => `${ show.liveId }:${ show.team }`)).toEqual(['1:X', '2:SII', '4:HII']);
   });
 });

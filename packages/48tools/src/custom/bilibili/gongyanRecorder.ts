@@ -4,9 +4,10 @@ import { promises as fsP } from 'node:fs';
 import * as path from 'node:path';
 import { getFFmpeg } from '../../utils/utils';
 import { queueTaskStart, queueTaskProgress, queueTaskEnd } from '../downloadQueue/downloadQueue';
-import { safeFileName, clock } from '../highlight/highlightTime';
+import { clock } from '../highlight/highlightTime';
 import { roomInfo, playUrl, type BiliRoomInfo } from './biliApi';
 import { BiliDanmuRecorder } from './biliDanmuRecorder';
+import { MANIFEST, recordingFolderName } from './gongyanFiles';
 
 /**
  * 录一场 B 站直播的公演：视频（ffmpeg 拷贝着存成 ts，断了就接着录下一段）+ 弹幕（./biliDanmuRecorder），
@@ -28,6 +29,7 @@ export interface GongyanPart {
   file: string;     // 文件名（在这个文件夹里）
   start: number;    // 开始录的时间（毫秒）
   end?: number;
+  duration?: number; // 实际有多长（秒）：接成 mp4 时量出来写上（之后 ts 删掉了也能对弹幕）
 }
 
 export interface GongyanManifest {
@@ -41,9 +43,9 @@ export interface GongyanManifest {
   parts: Array<GongyanPart>;
   danmu: string;        // 弹幕文件名
   danmuCount?: number;
+  joined?: string;      // 几段接成的 mp4（文件名）；有了它以后 ts 就删掉了，重切时直接用它
 }
 
-export const MANIFEST: string = 'manifest.json';
 const DANMU_FILE: string = 'danmu.lrc';
 const OFFLINE_CHECKS: number = 3;          // 断了以后连着查这么多次都不在直播，才算结束
 const OFFLINE_CHECK_MS: number = 30_000;
@@ -51,6 +53,14 @@ const RESTART_MS: number = 3_000;
 const UA: string = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 const running: Map<string, () => void> = new Map(); // liveId → 停止
+const children: Set<ChildProcessWithoutNullStreams> = new Set();
+
+// 程序退出（界面关掉）时把正在录的 ffmpeg 一起结束：不然它会留在后台接着写，重启后接着录时两个一起写
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', (): void => {
+    for (const child of children) child.kill();
+  });
+}
 
 export function isGongyanRecording(liveId?: string): boolean {
   return liveId ? running.has(liveId) : running.size > 0;
@@ -80,6 +90,8 @@ function recordPart(url: string, file: string, setChild: (child: ChildProcessWit
     const log: Array<string> = [];
 
     setChild(child);
+    children.add(child);
+    child.on('exit', (): unknown => children.delete(child));
     child.stdout.resume();
     child.stderr.on('data', (data: Buffer): void => {
       log.push(data.toString());
@@ -107,9 +119,11 @@ async function writeManifest(dir: string, manifest: GongyanManifest): Promise<vo
  * @param { string } baseDir - 录像放在它下面的「日期 队伍 公演名」文件夹里
  * @param { number | string } room - B 站房间号（短号也行）
  * @param { (manifestFile: string) => void } onDone - 录完（不管是直播结束还是点了停止）后调用
+ * @param { { dir: string; manifest: GongyanManifest } } [resume] - 这场录到一半程序重启了：接着录进原来的文件夹（新的一段，弹幕接在后面）
  */
 export function startGongyanRecording(
-  show: GongyanShow, baseDir: string, room: number | string, onDone: (manifestFile: string) => void
+  show: GongyanShow, baseDir: string, room: number | string, onDone: (manifestFile: string) => void,
+  resume?: { dir: string; manifest: GongyanManifest }
 ): void {
   if (running.has(show.liveId)) return;
 
@@ -120,7 +134,7 @@ export function startGongyanRecording(
     child?.kill();
   };
   const id: string = `gongyan:${ show.liveId }`;
-  const dir: string = path.join(baseDir, safeFileName(`${ show.day } ${ show.team } ${ show.title }`, 80));
+  const dir: string = resume?.dir ?? path.join(baseDir, recordingFolderName(show));
 
   running.set(show.liveId, stop);
   queueTaskStart({ id, title: `B站公演 ${ show.team } ${ show.title }`, kind: 'B站公演录制', filePath: dir, detail: '准备录制…', stop });
@@ -134,11 +148,28 @@ export function startGongyanRecording(
       await fsP.mkdir(dir, { recursive: true });
 
       const info: BiliRoomInfo = await roomInfo(room);
-      const startedAt: number = Date.now();
 
-      manifest = {
-        version: 1, room: info.roomId, show, biliTitle: info.title, cover: info.cover || info.keyframe, startedAt, parts: [], danmu: DANMU_FILE
-      };
+      if (resume) {
+        // 接着录：上次没写结束时间的段按文件最后修改的时间算；开始时间不变，弹幕的时间接着算
+        const parts: Array<GongyanPart> = resume.manifest.parts.map((part: GongyanPart): GongyanPart => {
+          if (part.end) return part;
+
+          try {
+            return { ...part, end: fs.statSync(path.join(dir, part.file)).mtimeMs };
+          } catch {
+            return part;
+          }
+        });
+
+        manifest = { ...resume.manifest, room: info.roomId, parts, endedAt: undefined };
+      } else {
+        manifest = {
+          version: 1, room: info.roomId, show, biliTitle: info.title, cover: info.cover || info.keyframe, startedAt: Date.now(), parts: [], danmu: DANMU_FILE
+        };
+      }
+
+      const startedAt: number = manifest.startedAt;
+
       danmu = new BiliDanmuRecorder({
         roomId: info.roomId,
         file: path.join(dir, DANMU_FILE),
@@ -206,6 +237,12 @@ export function startGongyanRecording(
       }
 
       danmuCount = danmu.stop();
+
+      try {
+        // 程序中途重启过时，这次只数了重启后的：按文件里的行数算整场的
+        danmuCount = fs.readFileSync(path.join(dir, DANMU_FILE), 'utf8').split('\n').filter(Boolean).length;
+      } catch { /* 一条弹幕都没有时没有这个文件 */ }
+
       manifest.endedAt = Date.now();
       manifest.danmuCount = danmuCount;
       // 没录到东西的段（文件很小）去掉

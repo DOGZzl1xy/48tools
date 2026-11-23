@@ -79,6 +79,13 @@ export async function mediaDuration(ffmpeg: string, file: string, signal?: Abort
   return (Number(match[1]) * 3_600) + (Number(match[2]) * 60) + Number(match[3]);
 }
 
+/* 文件里有没有画面（电台的录音没有） */
+export async function hasVideoStream(ffmpeg: string, file: string, signal?: AbortSignal): Promise<boolean> {
+  const log: string = await runFfmpeg(ffmpeg, ['-hide_banner', '-i', file], { signal, allowFail: true });
+
+  return /Stream #\d+:\d+.*: Video:/.test(log);
+}
+
 /* ffmpeg 的 silencedetect 打印的内容 → 静音的时间段 */
 export function parseSilences(log: string): Array<Silence> {
   const list: Array<Silence> = [];

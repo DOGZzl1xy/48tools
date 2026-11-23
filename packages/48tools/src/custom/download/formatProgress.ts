@@ -5,6 +5,7 @@ export interface ProgressStats {
   downloaded?: number; // 字节
   stage?: 'download' | 'merge' | 'audio' | 'retry';
   retry?: number;      // 第几次重试
+  viaProxy?: boolean;  // 这次重试走口袋48代理（见 ./segmentRetry 的 segmentViaProxy）
 }
 
 /* 格式化字节数 */
@@ -43,7 +44,11 @@ export function formatProgressDetail(stats: ProgressStats): string {
 
   if (stats.stage === 'audio') return '下载完成，正在封装音频…';
 
-  if (stats.stage === 'retry') return `网络波动，正在重试（第 ${ stats.retry ?? 1 } 次）…`;
+  if (stats.stage === 'retry') {
+    return stats.viaProxy
+      ? `这个分片直连下不来，改走代理下（第 ${ stats.retry ?? 1 } 次）…`
+      : `网络波动，正在重试（第 ${ stats.retry ?? 1 } 次）…`;
+  }
 
   const parts: Array<string> = [];
 

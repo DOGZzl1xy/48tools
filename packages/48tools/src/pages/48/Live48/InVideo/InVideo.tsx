@@ -41,6 +41,17 @@ import { formatTsUrl, getTeamId } from '../utils/utils';
 import type { WebWorkerChildItem } from '../../../../commonTypes';
 import type { MessageEventData } from '../../../../utils/worker/FFmpegDownload.worker/FFmpegDownload.worker';
 import { useAutoLoadMore } from '../../../../custom/table/useAutoLoadMore';
+import { queueTaskStart, queueTaskProgress, queueTaskEnd } from '../../../../custom/downloadQueue/downloadQueue';
+import { startInSlot, cancelWaitingInSlot } from '../../../../custom/downloadQueue/slotTasks';
+import { formatProgressDetail } from '../../../../custom/download/formatProgress';
+import { startStageReplayHighlight, stageReplayTeam } from '../../../../custom/bilibili/gongyanReplay';
+
+/* 公演录播下载在下载队列里的 id；点了停止的记在 inVideoStopping 里（worker 停止和正常结束发的是同一种消息） */
+function inVideoTaskId(liveId: string): string {
+  return `invideo:${ liveId }`;
+}
+
+const inVideoStopping: Set<string> = new Set();
 
 const liveTypeSelectOptions: Array<DefaultOptionType> = ['SNH48', 'BEJ48', 'GNZ48', 'CKG48', 'CGT48']
   .map((o: string): DefaultOptionType => ({ label: o, value: o.toLowerCase() }));
@@ -103,7 +114,21 @@ function InVideo(props: {}): ReactElement {
       (o: WebWorkerChildItem): boolean => o.id === record.liveId);
 
     if (index >= 0) {
+      if (cancelWaitingInSlot(inVideoTaskId(record.liveId))) return; // 还在排队：不排了
+
+      inVideoStopping.add(record.liveId);
       videoListChild[index].worker.postMessage({ type: 'stop' });
+    }
+  }
+
+  // 公演切片：用口袋48 的公演录播（custom/bilibili/gongyanReplay），先在下载队列里排队下载，再切
+  function handleStageHighlightClick(record: OpenLiveInfo, event: MouseEvent): void {
+    const reason: string | undefined = startStageReplayHighlight(record);
+
+    if (reason) {
+      messageApi.warning(reason);
+    } else {
+      messageApi.success('加到下载队列了：先下载公演录播，再做公演切片（口袋48 的公演录播没有弹幕）');
     }
   }
 
@@ -146,31 +171,62 @@ function InVideo(props: {}): ReactElement {
       await fsP.writeFile(m3u8File, m3u8UrlF);
 
       const worker: Worker = getFFmpegDownloadWorker();
+      const queueId: string = inVideoTaskId(record.liveId);
+      let releaseSlot: () => void = (): void => undefined; // 下完让给下一场（custom/downloadQueue/slotTasks）
 
       worker.addEventListener('message', function(workerEvent: MessageEvent<MessageEventData>) {
         const { type }: MessageEventData = workerEvent.data;
 
-        if (type === 'progress') {
+        if (workerEvent.data.type === 'progress') {
           dispatch(setDownloadProgress(workerEvent.data));
+          queueTaskProgress(queueId, workerEvent.data.data, formatProgressDetail(workerEvent.data));
         }
 
         if (type === 'close' || type === 'error') {
           if (type === 'error') {
             messageApi.error(`视频：${ record.title } 下载失败！`);
+            queueTaskEnd(queueId, 'error', '下载失败');
+          } else {
+            queueTaskEnd(queueId, inVideoStopping.has(record.liveId) ? 'stopped' : 'done');
           }
 
+          inVideoStopping.delete(record.liveId);
+          releaseSlot();
           worker.terminate();
           dispatch(setVideoListChildDelete(record));
         }
       }, false);
 
-      worker.postMessage({
-        type: 'start',
-        playStreamPath: m3u8File,
+      // 登记到下载队列，和别的录播下载排队，轮到了才开始（同一时间只下一场）
+      queueTaskStart({
+        id: queueId,
+        title: record.title,
+        kind: '公演录播',
         filePath: result.filePath,
-        ffmpeg: getFFmpeg(),
-        protocolWhitelist: true,
-        qid: record.liveId
+        percent: 0,
+        detail: '准备中…',
+        stop: (): void => {
+          if (cancelWaitingInSlot(queueId)) return; // 还在排队：不排了
+
+          inVideoStopping.add(record.liveId);
+          worker.postMessage({ type: 'stop' });
+        }
+      });
+      releaseSlot = startInSlot(queueId, (): void => {
+        worker.postMessage({
+          type: 'start',
+          playStreamPath: m3u8File,
+          filePath: result.filePath,
+          ffmpeg: getFFmpeg(),
+          protocolWhitelist: true,
+          qid: record.liveId
+        });
+      }, (): void => {
+        // 排队时点了停止：还没开始下
+        queueTaskEnd(queueId, 'stopped', undefined, '已停止（还没开始下）');
+        fsP.rm(m3u8File, { force: true }).catch((): void => undefined);
+        worker.terminate();
+        dispatch(setVideoListChildDelete(record));
       });
 
       dispatch(setVideoListChildAdd({
@@ -285,21 +341,28 @@ function InVideo(props: {}): ReactElement {
     {
       title: '操作',
       key: 'handle',
-      width: 110,
+      width: 200,
       render: (value: undefined, record: OpenLiveInfo, index: number): ReactElement => {
         const idx: number = videoListChild.findIndex(
           (o: WebWorkerChildItem): boolean => o.id === record.liveId);
 
-        return idx >= 0 ? (
-          <Popconfirm title="确定要停止下载吗？"
-            onConfirm={ (event?: MouseEvent): void => handleStopClick(record, event) }
-          >
-            <Button type="primary" danger={ true }>停止下载</Button>
-          </Popconfirm>
-        ) : (
-          <Button onClick={ (event: MouseEvent): Promise<void> => handleDownloadClick(record, event) }>
-            下载
-          </Button>
+        return (
+          <Space size={ 8 }>
+            { idx >= 0 ? (
+              <Popconfirm title="确定要停止下载吗？"
+                onConfirm={ (event?: MouseEvent): void => handleStopClick(record, event) }
+              >
+                <Button type="primary" danger={ true }>停止下载</Button>
+              </Popconfirm>
+            ) : (
+              <Button onClick={ (event: MouseEvent): Promise<void> => handleDownloadClick(record, event) }>
+                下载
+              </Button>
+            ) }
+            { stageReplayTeam(record) ? (
+              <Button onClick={ (event: MouseEvent): void => handleStageHighlightClick(record, event) }>公演切片</Button>
+            ) : null }
+          </Space>
         );
       }
     }

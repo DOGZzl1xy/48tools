@@ -1,7 +1,7 @@
 /**
  * 录播自动切片里走本机 agy 的部分：格式说明怎么转、音频和图片怎么变成文件、怎么读它的回答。不真的运行 agy。
  */
-import { toJsonSchema, agyInput, firstJson, readAgyResult, type AgyAsk } from './highlightAgy';
+import { toJsonSchema, agyInput, firstJson, readAgyResult, AgyRefused, type AgyAsk } from './highlightAgy';
 
 function result(response: unknown, status: string = 'SUCCESS'): string {
   return [
@@ -90,5 +90,13 @@ describe('readAgyResult', (): void => {
     expect((): unknown => readAgyResult(result('', 'ERROR'))).toThrow('agy 没有成功（ERROR）');
     expect((): unknown => readAgyResult('{"event":"init"}')).toThrow('agy 没有返回结果');
     expect((): unknown => readAgyResult(result('抱歉，我听不了这个音频'))).toThrow('格式不对');
+  });
+
+  test('以内容为由拒绝（2026-11-22 实际遇到的回答）：单独的错误，调用的地方不重试', (): void => {
+    const refusal: string = 'The prompt could not be submitted. The prompt contains sensitive words that violate our policy.';
+
+    expect((): unknown => readAgyResult(result(refusal))).toThrow(AgyRefused);
+    expect((): unknown => readAgyResult(result('', 'ERROR').replace('"status":"ERROR"', `"status":"ERROR","error":"${ refusal }"`))).toThrow(AgyRefused);
+    expect((): unknown => readAgyResult(result('抱歉，我听不了这个音频'))).not.toThrow(AgyRefused);
   });
 });

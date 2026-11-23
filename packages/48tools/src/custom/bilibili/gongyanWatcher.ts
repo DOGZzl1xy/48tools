@@ -6,13 +6,14 @@ import { getSetting } from '../settings/settingsStore';
 import { resolveLocalDir } from '../download/defaultSaveDir';
 import { roomInfo } from './biliApi';
 import { BILI_GONGYAN_ROOM, beijingClock, inWatchWindow, liveWantedShows, type ShowInfo } from './gongyanSchedule';
-import { startGongyanRecording, stopGongyanRecording, isGongyanRecording } from './gongyanRecorder';
+import { startGongyanRecording, stopGongyanRecording, isGongyanRecording, type GongyanManifest } from './gongyanRecorder';
+import { findRecordingDir, unfinishedRecordings } from './gongyanFiles';
 import { startGongyanHighlight } from './gongyanHighlight';
 import { prepareGongyanSource } from './gongyanSource';
 
 /**
  * B 站公演自动录制并切片：程序开着时，在北京时间 13:30、18:30（19:30）前后每分钟看一次口袋48的公演列表，
- * SNH48 HII / NII / X 的公演开播了、B 站 SNH48 直播间（短号 48）也在直播，就开始录 B 站的视频和弹幕（./gongyanRecorder），
+ * SNH48 SII / NII / HII / X 的公演开播了、B 站 SNH48 直播间（短号 48）也在直播，就开始录 B 站的视频和弹幕（./gongyanRecorder），
  * 录完自动切片（./gongyanHighlight）。录过的场次记在本机，程序重启不会重录。设置里可以关（gongyanAuto）。
  * 接入点：custom/shell/AppShell.tsx（程序启动后 startGongyanWatcher）。
  */
@@ -47,27 +48,35 @@ function markRecorded(liveId: string): void {
 }
 
 async function check(): Promise<void> {
-  if (checking || getSetting('gongyanAuto') === false || !inWatchWindow(new Date()) || isGongyanRecording()) return;
+  if (checking || getSetting('gongyanAuto') === false || isGongyanRecording()) return;
+
+  const baseDir: string | undefined = gongyanBaseDir();
+
+  if (!baseDir) return;
+
+  // 录到一半程序重启了的场次（有文件夹、没写结束时间）：不管在不在监测时段都要接着录
+  const inWindow: boolean = inWatchWindow(new Date());
+
+  if (!inWindow && unfinishedRecordings(baseDir).length === 0) return;
 
   checking = true;
 
   try {
-    const baseDir: string | undefined = gongyanBaseDir();
-
-    if (!baseDir) return;
-
     const res: OpenLiveList = await requestOpenLiveList({ record: false });
-    const shows: Array<ShowInfo & { team: string }> = liveWantedShows(res?.content?.liveList ?? [])
-      .filter((item: ShowInfo): boolean => !recorded().includes(item.liveId));
+    const candidates: Array<{ show: ShowInfo & { team: string }; resume?: { dir: string; manifest: GongyanManifest } }> = liveWantedShows(res?.content?.liveList ?? [])
+      .map((item: ShowInfo & { team: string }): { show: ShowInfo & { team: string }; resume?: { dir: string; manifest: GongyanManifest } } =>
+        ({ show: item, resume: findRecordingDir(baseDir, item.liveId) }))
+      .filter((item: { show: ShowInfo; resume?: { manifest: GongyanManifest } }): boolean =>
+        (item.resume ? !item.resume.manifest.endedAt : inWindow && !recorded().includes(item.show.liveId)));
 
-    if (shows.length === 0) return;
+    if (candidates.length === 0) return;
 
     if (!(await roomInfo(BILI_GONGYAN_ROOM)).live) return; // 口袋48 开播了但 B 站还没开：下一分钟再看
 
-    const show: ShowInfo & { team: string } = shows[0];
+    const { show, resume }: { show: ShowInfo & { team: string }; resume?: { dir: string; manifest: GongyanManifest } } = candidates[0];
 
     markRecorded(show.liveId);
-    startGongyanRecording({
+    startGongyanRecording(resume?.manifest.show ?? {
       liveId: show.liveId,
       title: show.title,
       subTitle: show.subTitle,
@@ -77,7 +86,7 @@ async function check(): Promise<void> {
       void startGongyanHighlight(manifestFile).then((reason: string | undefined): void => {
         if (reason) notify(`公演录好了，但没有自动切片：${ show.title }`, reason);
       });
-    });
+    }, resume);
   } catch (err) {
     console.warn('B 站公演：检查开播失败', err);
   } finally {

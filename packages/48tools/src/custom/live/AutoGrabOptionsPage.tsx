@@ -147,7 +147,7 @@ function AutoGrabOptionsPage(props: {}): ReactElement {
       <h1>自动抓取配置</h1>
       <section>
         <h2>监听谁</h2>
-        <Row label="成员" hint="这些成员一开播就自动录。可以按名字、拼音、队伍（比如 NII）搜索。">
+        <Row label="成员" hint="这些成员一开播就记下来，直播结束后下载录播、切片（开始自动抓取时勾选要什么）。可以按名字、拼音、队伍（比如 NII）搜索。">
           <Select className="w-full"
             mode="multiple"
             allowClear={ true }
@@ -189,11 +189,11 @@ function AutoGrabOptionsPage(props: {}): ReactElement {
       </section>
 
       <section>
-        <h2>录到哪里</h2>
+        <h2>存到哪里</h2>
         <Row label="保存文件夹"
           hint={ fixedDir
-            ? '设置页里已经指定了直播录制的文件夹，录像保存在那里，这里不用选。要改请到「设置 → 保存位置」。'
-            : '自动录制的录像保存在这里。也可以在「设置 → 保存位置」里统一指定。' }
+            ? '设置页里已经指定了直播录制的文件夹，下载的录播和弹幕保存在那里，这里不用选。要改请到「设置 → 保存位置」。'
+            : '直播结束后下载的录播和弹幕保存在这里（切片保存在「录播切片」的位置）。也可以在「设置 → 保存位置」里统一指定。' }
         >
           {
             fixedDir ? (
@@ -206,7 +206,8 @@ function AutoGrabOptionsPage(props: {}): ReactElement {
             )
           }
           <Typography.Text className="block mt-[6px] text-[12px]" type="secondary">
-            录完后的格式：{ formatText[getLiveRecordFormat()] ?? '保持 flv' }（在「设置 → 保存位置」里改）
+            自动抓取不录直播流，下载的是官方录播（mp4；电台是 m4a 录音加一张 jpg 封面）。页面上手动点「录制」录下来的直播，录完后的格式：
+            { formatText[getLiveRecordFormat()] ?? '保持 flv' }（在「设置 → 保存位置」里改）
           </Typography.Text>
         </Row>
       </section>

@@ -14,7 +14,7 @@ import { execFileSync } from 'node:child_process';
 import * as process from 'node:process';
 import { parseSilences, mediaDuration } from './highlightFfmpeg';
 import {
-  coverTimes, clipInfoText, runHighlight, prepareHighlight,
+  coverTimes, clipInfoText, runHighlight, prepareHighlight, saveRadioCover,
   type HighlightResult, type HighlightProgress, type HighlightDeps, type HighlightJob, type PreparedSource
 } from './highlightPipeline';
 import { highlightDefaults } from './highlightGemini';
@@ -80,6 +80,46 @@ describe('封面候选和说明文字', (): void => {
     expect(text).toContain('录播 20:30 ~ 22:15');
     expect(text).toContain('成片长度：75 秒');
     expect(text).toContain('字幕时间：本地模型打轴（100 个字里对上 90 个）');
+  });
+});
+
+describe('电台封面', (): void => {
+  const base: Pick<HighlightDeps, 'liveInfo' | 'fetchText'> = {
+    liveInfo: (): Promise<never> => Promise.reject(new Error('不该用')),
+    fetchText: (): Promise<never> => Promise.reject(new Error('不该用'))
+  };
+
+  test('用这场直播的封面图，存到给的文件', async (): Promise<void> => {
+    const saved: Array<[string, string]> = [];
+
+    await saveRadioCover({
+      ...base,
+      fetchImage: (url: string, file: string): Promise<void> => {
+        saved.push([url, file]);
+
+        return Promise.resolve();
+      }
+    }, 'https://source3.48.cn/2026/1123/a.jpg', 'D:/下载/电台.jpg');
+
+    expect(saved).toEqual([['https://source3.48.cn/2026/1123/a.jpg', 'D:/下载/电台.jpg']]);
+  });
+
+  test('没有封面图、下载失败时不报错（留着录播开头那一帧）', async (): Promise<void> => {
+    let calls: number = 0;
+    const deps: HighlightDeps = {
+      ...base,
+      fetchImage: (): Promise<void> => {
+        calls += 1;
+
+        return Promise.reject(new Error('不是图片：text/html'));
+      }
+    };
+    const warn: jest.SpyInstance = jest.spyOn(console, 'warn').mockImplementation((): void => undefined);
+
+    await expect(saveRadioCover(deps, undefined, 'D:/下载/电台.jpg')).resolves.toBeUndefined();
+    await expect(saveRadioCover(deps, 'https://source3.48.cn/a.jpg', 'D:/下载/电台.jpg')).resolves.toBeUndefined();
+    expect(calls).toBe(1);
+    warn.mockRestore();
   });
 });
 

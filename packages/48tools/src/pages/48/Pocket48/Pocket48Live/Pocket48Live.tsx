@@ -44,7 +44,9 @@ import {
 import { getFFmpeg, getFileTime, getFilePath } from '../../../../utils/utils';
 import { getPocket48Proxy } from '../../../../custom/pocket48Proxy/pocket48Proxy';
 import { liveRecordingStart, liveRecordingEnd } from '../../../../custom/live/liveRecording';
-import { rememberAutoGrabMode } from '../../../../custom/live/autoGrabRunner';
+import { getAutoGrabActions, rememberAutoGrabActions } from '../../../../custom/live/autoGrabRunner';
+import { actionsText, type GrabActions } from '../../../../custom/live/replayGrabCore';
+import AutoGrabActionsForm from '../../../../custom/live/AutoGrabActionsForm';
 import { highlightUnavailable } from '../../../../custom/highlight/highlightTask';
 import RowActions from '../../../../custom/table/RowActions';
 import MediaTitleCell from '../../../../custom/table/MediaTitleCell';
@@ -107,7 +109,7 @@ function Pocket48Live(props: {}): ReactElement {
   // 开始自动抓取
   async function handleStartAutoGrabClick(event: MouseEvent): Promise<void> {
     type LiveOptionsResult = { name: string; value: Pocket48LiveAutoGrabOptions };
-    type OnionContext = { result: LiveOptionsResult; transcoding?: boolean; backup?: boolean; clip?: boolean };
+    type OnionContext = { result: LiveOptionsResult; actions?: GrabActions };
 
     // 获取配置
     const result: { query: string; result?: LiveOptionsResult }
@@ -132,76 +134,38 @@ function Pocket48Live(props: {}): ReactElement {
 
     const onion: Onion = new Onion();
 
-    // 判断是否需要转码
+    // 直播结束后要什么：完整直播、切片，还是都要（开播时只记下来，不录直播流，见 custom/live/replayGrab）
     onion.use(function(ctx: OnionContext, next: Function): void {
-      function handleFlvVideoClick(e: MouseEvent): void {
-        ctx.transcoding = false;
-        next();
-        // eslint-disable-next-line @typescript-eslint/no-use-before-define
-        m.destroy();
-      }
-
-      function handleTsVideoClick(e: MouseEvent): void {
-        ctx.transcoding = true;
-        next();
-        // eslint-disable-next-line @typescript-eslint/no-use-before-define
-        m.destroy();
-      }
-
-      function handleFlvVideoBackupClick(e: MouseEvent): void {
-        ctx.backup = true;
-        next();
-        // eslint-disable-next-line @typescript-eslint/no-use-before-define
-        m.destroy();
-      }
-
-      // 录完等录播出来自动切片，切完删掉录像，只留切片（custom/live/autoClip）
-      function handleClipClick(e: MouseEvent): void {
-        const unavailable: string | undefined = highlightUnavailable();
-
-        if (unavailable) messageApi.warning(`现在还做不了切片：${ unavailable }。录像会照常保留`, 8);
-
-        ctx.clip = true;
-        next();
-        // eslint-disable-next-line @typescript-eslint/no-use-before-define
-        m.destroy();
-      }
+      let actions: GrabActions = getAutoGrabActions();
 
       const m: ModuleFuncReturn = modalApi.confirm({
-        title: '选择要录制的视频方法',
+        title: '开始自动抓取',
         content: (
-          <div>
-            <Space.Compact className="mb-[16px]">
-              <Button onClick={ handleFlvVideoClick }>录制(*.flv)</Button>
-              <Button onClick={ handleTsVideoClick }>录制(*.ts)</Button>
-              <Button onClick={ handleFlvVideoBackupClick }>备用录制(*.flv)</Button>
-            </Space.Compact>
-            <div className="mb-[8px]">
-              <Button type="primary" onClick={ handleClipClick }>录制并自动切片（只留切片）</Button>
-            </div>
-            <p className="m-0 text-[12px] opacity-70">直播结束后等录播出来，自动做切片（数量「自动」），切完删掉录像；电台照常录。</p>
-          </div>
+          <AutoGrabActionsForm initial={ actions }
+            clipUnavailable={ highlightUnavailable() }
+            onChange={ (changed: GrabActions): void => {
+              actions = changed;
+              m.update({ okButtonProps: { disabled: !changed.full && !changed.clip } });
+            } }
+          />
         ),
-        closable: false,
-        keyboard: false,
-        mask: false,
-        maskClosable: false,
+        okText: '开始',
+        cancelText: '取消',
         centered: true,
-        footer: (
-          <div className="text-right">
-            <Button onClick={ (e: MouseEvent): void => m.destroy() }>关闭</Button>
-          </div>
-        )
+        onOk(): void {
+          ctx.actions = actions;
+          next();
+        }
       });
     });
 
     // 自动抓取
     onion.use(function(ctx: OnionContext, next: Function): void {
-      const { result: r, transcoding = false, backup = false, clip = false }: OnionContext = ctx;
-      const args: [MessageInstance, string, string[], boolean, boolean, boolean] = [messageApi, r.value.dir, usersArr, transcoding, backup, clip];
+      const { result: r, actions = getAutoGrabActions() }: OnionContext = ctx;
+      const args: [MessageInstance, string, string[], GrabActions] = [messageApi, r.value.dir, usersArr, actions];
 
-      rememberAutoGrabMode(clip ? 'clip' : (transcoding ? 'ts' : (backup ? 'backup' : 'flv'))); // 下次程序启动自动开始时用同样的方式
-      messageApi.info(clip ? '开始自动抓取：录完自动切片，只留切片。' : '开始自动抓取。');
+      rememberAutoGrabActions(actions); // 下次程序启动自动开始时用同样的选择
+      messageApi.info(`开始自动抓取：开播时记下来，直播结束后${ actionsText(actions) }。`);
       autoGrab(...args);
       dispatch(setAutoGrab(
         window.setInterval(autoGrab, r.value.time * 60_000, ...args)

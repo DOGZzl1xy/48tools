@@ -27,17 +27,18 @@ export interface CustomSettings {
   sttHints?: boolean;                 // 语音转文字：把语音前后的文字一起发给接口当参考（默认开，只有关掉时才保存成 false）
   roomBeijingTime?: boolean;          // 房间消息的时间按北京时间显示（默认按这台电脑的时区）
   autoGrabAutoStart?: boolean;        // 程序启动后自动开始「自动抓取」（默认开，只有关掉时才保存成 false）
-  autoGrabMode?: AutoGrabMode;        // 自动抓取用哪种方式录（上次手动开始时选的；默认 flv）
+  autoGrabMode?: AutoGrabMode;        // 旧版：自动抓取用哪种方式录。现在只在没有 autoGrabActions 时用来换算（「录制并切片」→ 只切片，别的 → 只要完整直播）
+  autoGrabActions?: { full: boolean; clip: boolean }; // 自动抓取：直播结束后要完整录播、切片，还是都要（上次开始时勾的，见 custom/live/replayGrabCore）
   highlightModel?: string;            // 录播切片：用哪个 Gemini 模型（key 和接口地址用语音转文字里 Gemini 的那一份）
   highlightDir?: string;              // 录播切片：保存的文件夹（不设置就用 downloadDir 下面的「录播切片」）
   highlightVia?: 'api' | 'agy';       // 录播切片：Gemini 走按量付费的接口（默认），还是本机的 agy（Antigravity 的订阅额度）
   highlightAgyModel?: string;         // 录播切片：走 agy 时用的模型名（不填用 gemini-4-hydrogen-medium）
   highlightAutoScore?: number;        // 录播切片：选「自动」时，爆点分不低于它的才做（不设置用默认的 8.5）
   highlightCount?: number;            // 录播切片：上次选的数量（没选过或选了「自动」时不保存）
-  gongyanAuto?: boolean;              // B 站公演自动录制并切片（SNH48 HII、NII、X；默认开，只有关掉时才保存成 false）
+  gongyanAuto?: boolean;              // B 站公演自动录制并切片（SNH48 SII、NII、HII、X；默认开，只有关掉时才保存成 false）
 }
 
-export type AutoGrabMode = 'flv' | 'ts' | 'backup' | 'clip'; // clip：录 flv，录完自动切片、切完删掉录像（custom/live/autoClip）
+export type AutoGrabMode = 'flv' | 'ts' | 'backup' | 'clip'; // 旧版的录制方式（现在自动抓取不录直播流了，只用来换算 autoGrabActions）
 
 /* 需要加密保存的选项 */
 const SECRET_KEYS: Array<keyof CustomSettings> = ['sttGeminiKey', 'sttOpenaiKey'];

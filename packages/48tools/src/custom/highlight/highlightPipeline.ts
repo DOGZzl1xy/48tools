@@ -1,14 +1,14 @@
 import * as fs from 'node:fs';
 import { promises as fsP } from 'node:fs';
 import * as path from 'node:path';
-import { runFfmpeg, mediaDuration, detectSilences, readPcm, pickFonts, PCM_RATE } from './highlightFfmpeg';
+import { runFfmpeg, mediaDuration, hasVideoStream, detectSilences, readPcm, pickFonts, PCM_RATE } from './highlightFfmpeg';
 import { downloadReplay, type DownloadProgress, type SegmentFetcher } from './highlightDownload';
 import {
-  geminiJson, findRequest, readFound, scriptRequest, readScript, coverRequest, HighlightStopped,
+  geminiJson, findRequest, readFound, scriptRequest, readScript, coverRequest, HighlightStopped, ContentRefused,
   type GeminiConfig, type LiveMeta
 } from './highlightGemini';
 import {
-  parseLrc, planWindows, mergeHighlights, targetCount, safeFileName, postTitle, clock, AGY_WINDOW_LENGTH, AGY_WINDOW_OVERLAP,
+  parseLrc, planWindows, mergeHighlights, targetCount, safeFileName, postTitle, clock, AGY_WINDOW_LENGTH, AGY_WINDOW_OVERLAP, AUTO_SCORE,
   clipWindow, clipLengthProblem, clipLengthNote, CLIP_MIN_SECONDS, CLIP_MAX_SECONDS, RETRY_EXTRA_CONTEXT, type ClipWindow
 } from './highlightTime';
 import { tidyLines, buildSegments } from './highlightCut';
@@ -21,15 +21,17 @@ import {
 } from './highlightAss';
 import type { AudioWindow, CaptionLine, ClipScript, DanmuLine, Highlight, HighlightCount, Segment, Silence, StageKind } from './highlightTypes';
 import {
-  stageFindRequest, stageKindOf, stageClipWindow, stageLengthProblem, stageScript, stageCoverLines, stagePostTitle
+  stageFindRequest, stageKindOf, stageClipWindow, stageLengthProblem, stageScript, stageCoverLines, stagePostTitle, stageQuota, type StageQuota
 } from './highlightStage';
 import {
   buildStageVideoAss, stageRenderFilter, buildStageCoverAss, stageCoverFilter, STAGE_VIDEO, type StageInfo
 } from './highlightStageAss';
+import { locateMistake, locateSong, lowBandLevels, type StageTiming } from './highlightStageTiming';
 
 /**
  * 录播自动切片：给一场直播的录播，自动剪出几个横屏短视频（左边直播画面，右上她说的话，右下弹幕），
  * 每个带封面、标题和简介。听音频、挑片段、写字幕都由 Gemini 做，剪和合成用 ffmpeg。
+ * 电台也切（用户 2026-11-23 定的，找爆点的标准和视频直播一样，排版也一样）：录音没有画面，左边放电台封面（见 saveRadioCover、stillInput）。
  *
  * 流程（runHighlight；第 1 步是 prepareHighlight，后面是 processHighlight）：
  *   1. 取录播地址和弹幕文件，把整场录播下载到工作文件夹（同时下 4 个分片，不重新编码，见 ./highlightDownload）
@@ -58,13 +60,16 @@ export interface HighlightJob {
   glossary?: string;    // 专有词汇（本机那个文件的原文，见 ./glossaryFile、./highlightGlossary）
   members?: string;     // 成员名单那一段提示（./highlightMembers 的 membersPrompt）
   stage?: StageInfo;    // 公演切片（B 站公演录像）：用公演版的提示、规则和排版（./highlightStage、./highlightStageAss）
+  radio?: boolean;      // 电台：只下录音，成片左边放电台封面（见 saveRadioCover）
 }
 
 export interface HighlightDeps {
-  /* 录播的地址和弹幕文件的地址 */
-  liveInfo: (liveId: string) => Promise<{ playStreamPath: string; msgFilePath: string }>;
+  /* 录播的地址、弹幕文件的地址和这场直播的封面图（成员设置的那张，完整地址） */
+  liveInfo: (liveId: string) => Promise<{ playStreamPath: string; msgFilePath: string; coverUrl?: string }>;
   /* 下载一个文本文件（弹幕、m3u8） */
   fetchText: (url: string) => Promise<string>;
+  /* 下载一张图存成文件（电台封面）；不是图片时报错 */
+  fetchImage?: (url: string, file: string, signal?: AbortSignal) => Promise<void>;
   /* 下载录播的一个分片；不给的话让 ffmpeg 自己下载整场（只有一条连接，慢） */
   fetchSegment?: SegmentFetcher;
   /* 本地打轴：用本机的识别模型认出一段音频里每个字的时间；没装模型时返回 null（见 ./alignerPlugin） */
@@ -76,6 +81,27 @@ export interface HighlightDeps {
 export interface PreparedSource {
   source: string;
   danmu: Array<DanmuLine>;
+  picture?: string;     // 电台：录音没有画面，成片和封面用这张图（电台封面，见 saveRadioCover）
+}
+
+/**
+ * 电台封面：用这场直播的封面图（成员设置的那张，播放页上看到的就是它；用户 2026-11-23 定的）。
+ * 录播的画面只是口袋48的占位图「成员暂时离开」，下载时先存了开头那一帧兜底；封面图取得到就盖掉它，取不到就留着那一帧
+ * @param { HighlightDeps } deps
+ * @param { string | undefined } coverUrl - liveInfo 给的封面图地址
+ * @param { string } file - 存成这个文件
+ * @param { AbortSignal } [signal]
+ */
+export async function saveRadioCover(deps: HighlightDeps, coverUrl: string | undefined, file: string, signal?: AbortSignal): Promise<void> {
+  if (!coverUrl || !deps.fetchImage) return;
+
+  try {
+    await deps.fetchImage(coverUrl, file, signal);
+  } catch (err) {
+    if (signal?.aborted) throw new HighlightStopped();
+
+    console.warn('电台封面没有下载下来，用录播开头那一帧', err);
+  }
 }
 
 export interface HighlightProgress {
@@ -215,6 +241,19 @@ interface ClipContext {
   danmu: Array<DanmuLine>;
   fonts: FontSet;
   meta: LiveMeta;
+  still?: Array<string>;       // 素材没有画面（电台）：当画面的那个输入的 ffmpeg 参数（见 stillInput）
+}
+
+/**
+ * 电台的录音没有画面：合成时用电台封面当画面，一直循环；没有这张图时用一块深色。
+ * 返回加在录音后面的 ffmpeg 输入参数；素材有画面时返回 undefined
+ */
+async function stillInput(ffmpeg: string, prepared: PreparedSource, signal?: AbortSignal): Promise<Array<string> | undefined> {
+  if (prepared.picture) return ['-loop', '1', '-framerate', '30', '-i', path.resolve(prepared.picture)];
+
+  if (await hasVideoStream(ffmpeg, prepared.source, signal)) return undefined;
+
+  return ['-f', 'lavfi', '-i', 'color=c=0x1B2030:s=720x1280:r=30'];
 }
 
 /* 一次「写字幕、对时间、定剪辑点」的结果 */
@@ -262,8 +301,21 @@ async function scriptAndCut(
     const clipDanmu: Array<DanmuLine> = danmu.filter(
       (item: DanmuLine): boolean => item.time >= window.start && item.time < window.start + window.length);
 
-    script = readScript(await geminiJson<unknown>(
-      job.gemini, scriptRequest(meta, highlight, window.length, await base64Of(audio), clipDanmu, note), signal, deps.fetchImpl), highlight, job.member);
+    const audioBase64: string = await base64Of(audio);
+    const ask: (withDanmu: Array<DanmuLine>) => Promise<unknown> = (withDanmu: Array<DanmuLine>): Promise<unknown> => geminiJson<unknown>(
+      job.gemini, scriptRequest(meta, highlight, window.length, audioBase64, withDanmu, note, job.stage), signal, deps.fetchImpl);
+    let answer: unknown;
+
+    try {
+      answer = await ask(clipDanmu);
+    } catch (err) {
+      // 以内容为由被拒：敏感词多半在弹幕里，弹幕只是用来认人的，去掉再问一次（还不行由 makeClip 跳过这个片段）
+      if (!(err instanceof ContentRefused) || clipDanmu.length === 0) throw err;
+
+      answer = await ask([]);
+    }
+
+    script = readScript(answer, highlight, job.member);
     await fsP.writeFile(scriptFile, JSON.stringify(script, null, 2));
   }
 
@@ -323,7 +375,7 @@ async function makeClip(
   let cut: ClipCut;
 
   if (kind !== 'mc') {
-    // 公演里唱歌、失误的片段：不写字幕，按模型给的起止整段保留（舞台上自己有歌词）
+    // 公演里唱歌、失误的片段：不写字幕，按找爆点时定好的起止（见 locateStageItem）整段保留（舞台上自己有歌词）
     const window: ClipWindow = stageClipWindow(highlight, duration);
     const problem: string | undefined = stageLengthProblem(kind, window.length);
 
@@ -333,19 +385,26 @@ async function makeClip(
       window,
       script: stageScript(highlight),
       lines: [],
-      timing: kind === 'song' ? '整首歌，没有字幕（舞台上有歌词）' : '失误的片段，没有字幕',
+      timing: `${ kind === 'song' ? '整首歌，没有字幕（舞台上有歌词）' : '失误的片段，没有字幕' }${ highlight.timing ? `；${ highlight.timing }` : '' }`,
       segments: [{ from: 0, to: -1, start: 0, end: window.length, out: 0 }],
       total: window.length
     };
   } else {
-    cut = await scriptAndCut(context, highlight, clipDir, clipWindow(highlight, duration), undefined, report);
+    try {
+      cut = await scriptAndCut(context, highlight, clipDir, clipWindow(highlight, duration), undefined, report);
 
-    const problem: 'short' | 'long' | null = clipLengthProblem(cut.total);
+      const problem: 'short' | 'long' | null = clipLengthProblem(cut.total);
 
-    // 剪完不到 45 秒或者超过 5 分钟：告诉模型实际剪出来多长，再做一次；太短时前后多给一些音频，好把铺垫和后续留下
-    if (problem) {
-      cut = await scriptAndCut(context, highlight, clipDir,
-        problem === 'short' ? clipWindow(highlight, duration, RETRY_EXTRA_CONTEXT) : cut.window, clipLengthNote(problem, cut.total), report);
+      // 剪完不到 45 秒或者超过 5 分钟：告诉模型实际剪出来多长，再做一次；太短时前后多给一些音频，好把铺垫和后续留下
+      if (problem) {
+        cut = await scriptAndCut(context, highlight, clipDir,
+          problem === 'short' ? clipWindow(highlight, duration, RETRY_EXTRA_CONTEXT) : cut.window, clipLengthNote(problem, cut.total), report);
+      }
+    } catch (err) {
+      // 去掉弹幕也被拒：跳过这个片段，换下一个候选（不让整场的切片停下来）
+      if (err instanceof ContentRefused) return `「${ highlight.title }」写字幕时被模型以内容为由拒绝（${ err.message }），跳过`;
+
+      throw err;
     }
 
     if (cut.segments.length === 0 || clipLengthProblem(cut.total)) {
@@ -374,8 +433,8 @@ async function makeClip(
   report('合成', 0.35);
   await runFfmpeg(job.ffmpeg, [
     '-y', '-v', 'error', '-nostats', '-progress', 'pipe:1',
-    '-ss', clipStart.toFixed(3), '-t', clipLength.toFixed(3), '-i', source,
-    '-filter_complex', job.stage ? stageRenderFilter(segments, fonts) : renderFilter(segments, fonts),
+    '-ss', clipStart.toFixed(3), '-t', clipLength.toFixed(3), '-i', source, ...(context.still ?? []),
+    '-filter_complex', job.stage ? stageRenderFilter(segments, fonts) : renderFilter(segments, fonts, 'overlay.ass', Boolean(context.still)),
     '-map', '[vout]', '-map', '[aout]',
     '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-movflags', '+faststart', 'out.mp4'
@@ -388,7 +447,8 @@ async function makeClip(
   // 封面：几张候选里让模型挑一张；挑不出来就用第一张
   report('做封面', 0.87);
 
-  const times: Array<number> = coverTimes(lines, segments, total);
+  // 电台的画面是同一张图，不用挑
+  const times: Array<number> = coverTimes(lines, segments, total).slice(0, context.still ? 1 : undefined);
   const candidates: Array<string> = [];
 
   for (const [order, time] of times.entries()) {
@@ -483,12 +543,13 @@ export async function prepareHighlight(
 ): Promise<PreparedSource> {
   const source: string = path.join(job.workDir, 'source.mp4');
   const sourceDone: string = path.join(job.workDir, 'source.done');
+  const cover: string | undefined = job.radio ? path.join(job.workDir, 'cover.jpg') : undefined; // 电台：只下录音，另存封面
 
   checkStopped(signal);
   await fsP.mkdir(job.workDir, { recursive: true });
   onProgress({ percent: 0, detail: '取录播地址…' });
 
-  const info: { playStreamPath: string; msgFilePath: string } = await deps.liveInfo(job.liveId);
+  const info: { playStreamPath: string; msgFilePath: string; coverUrl?: string } = await deps.liveInfo(job.liveId);
 
   if (!info.playStreamPath) throw new Error('这场直播没有录播地址（可能还没生成，或者已经被删除）');
 
@@ -518,16 +579,48 @@ export async function prepareHighlight(
       playlist,
       workDir: job.workDir,
       output: source,
+      cover,
       fetchSegment: deps.fetchSegment,
       signal,
       onProgress: (progress: DownloadProgress): void => onProgress({ percent: progress.part * DOWNLOAD_END, detail: progress.detail })
     });
+
+    if (cover) await saveRadioCover(deps, info.coverUrl, cover, signal);
+
     await fsP.writeFile(sourceDone, '');
   }
 
   onProgress({ percent: DOWNLOAD_END, detail: '录播下载好了' });
 
-  return { source, danmu };
+  return { source, danmu, picture: cover && await exists(cover) ? cover : undefined };
+}
+
+/* 找爆点那一步一段的结果（存在工作文件夹的 find-N.json 里）；dropped 是没法定位、扔掉的片段和原因 */
+interface FoundWindow {
+  summary: string;
+  highlights: Array<Highlight>;
+  dropped?: Array<string>;
+}
+
+const SONG_LOOK_AROUND: number = 120; // 唱歌：模型给的时间前后各多看这么久的伴奏
+
+/* 公演里的失误、唱歌：重新定起止（按弹幕的反应、伴奏，见 ./highlightStageTiming） */
+async function locateStageItem(
+  job: HighlightJob, source: string, duration: number, danmu: Array<DanmuLine>, item: Highlight, signal?: AbortSignal
+): Promise<Highlight> {
+  let timing: StageTiming;
+
+  if (stageKindOf(item) === 'mistake') {
+    timing = locateMistake(item, danmu, duration);
+  } else {
+    const from: number = Math.max(0, item.start - SONG_LOOK_AROUND);
+    const to: number = Math.min(duration, item.end + SONG_LOOK_AROUND);
+    const levels: Array<number> = await lowBandLevels(job.ffmpeg, source, from, to - from, path.join(job.workDir, 'lowband.pcm'), signal);
+
+    timing = locateSong(item, levels, from, duration);
+  }
+
+  return { ...item, start: timing.start, end: timing.end, timing: timing.how };
 }
 
 /**
@@ -546,6 +639,9 @@ export async function processHighlight(
   const { source, danmu }: PreparedSource = prepared;
 
   checkStopped(signal);
+  // 找爆点、剪片段都往工作文件夹里写；用已经下好的录播切片时（自动抓取）前面没有下载这一步，文件夹还没建，
+  // ffmpeg 会报「Error opening output files」（2026-11-23 曾昕妍、刘诗彤两场实际遇到）
+  await fsP.mkdir(job.workDir, { recursive: true });
 
   const duration: number = await mediaDuration(job.ffmpeg, source, signal);
 
@@ -562,7 +658,7 @@ export async function processHighlight(
   for (const [order, window] of windows.entries()) {
     const label: string = `找爆点 ${ order + 1 }/${ windows.length }`;
     const cacheFile: string = path.join(job.workDir, `find-${ Math.round(window.start) }.json`);
-    let found: { summary: string; highlights: Array<Highlight> } | undefined = await readJsonFile(cacheFile);
+    let found: FoundWindow | undefined = await readJsonFile(cacheFile);
 
     onProgress({ percent: DOWNLOAD_END + ((order / windows.length) * (FIND_END - DOWNLOAD_END)), detail: `${ label }…` });
 
@@ -573,10 +669,28 @@ export async function processHighlight(
         '-y', '-v', 'error', '-ss', window.start.toFixed(3), '-t', window.length.toFixed(3), '-i', source,
         '-vn', '-ac', '1', '-ar', '16000', '-b:a', '32k', audio
       ], { signal });
-      found = readFound(await geminiJson<unknown>(
+      const audioBase64: string = await base64Of(audio);
+      const ask: (withDanmu: Array<DanmuLine>) => Promise<unknown> = (withDanmu: Array<DanmuLine>): Promise<unknown> => geminiJson<unknown>(
         job.gemini, job.stage
-          ? stageFindRequest(meta, window, await base64Of(audio), danmu, viaAgy, job.stage)
-          : findRequest(meta, window, await base64Of(audio), danmu, viaAgy), signal, deps.fetchImpl), window);
+          ? stageFindRequest(meta, window, audioBase64, withDanmu, viaAgy, job.stage)
+          : findRequest(meta, window, audioBase64, withDanmu, viaAgy), signal, deps.fetchImpl);
+      let refused: string | undefined;
+
+      try {
+        found = readFound(await ask(danmu), window);
+      } catch (err) {
+        if (!(err instanceof ContentRefused)) throw err;
+
+        // 以内容为由被拒：多半是弹幕里的敏感词，去掉弹幕再问一次；还不行就跳过这一段
+        try {
+          found = readFound(await ask([]), window);
+        } catch (again) {
+          if (!(again instanceof ContentRefused)) throw again;
+
+          refused = `${ label }被模型以内容为由拒绝（${ again.message }），这一段没有找爆点`;
+          found = { summary: '', highlights: [] };
+        }
+      }
       // 原话（quote、first、last）不换：要拿它们去本地识别的结果里找
       found = {
         summary: applyGlossary(found.summary, glossary),
@@ -586,45 +700,62 @@ export async function processHighlight(
         }))
       };
 
-      if (viaAgy) {
-        onProgress({ percent: DOWNLOAD_END + (((order + 0.6) / windows.length) * (FIND_END - DOWNLOAD_END)), detail: `${ label }：按原话定位…` });
+      // 公演里的失误、唱歌：按弹幕的反应、伴奏定起止（不按原话：唱歌时识别不准，歌词还可能唱两遍，见 ./highlightStageTiming）
+      const located: Array<Highlight> = [];
+      const dropped: Array<string> = refused ? [refused] : [];
+      let tokens: Array<TimedToken> | null | undefined;
 
-        const tokens: Array<TimedToken> | null = await deps.recognize!(audio, signal);
+      if (viaAgy && found.highlights.some((item: Highlight): boolean => !job.stage || stageKindOf(item) === 'mc')) {
+        onProgress({ percent: DOWNLOAD_END + (((order + 0.6) / windows.length) * (FIND_END - DOWNLOAD_END)), detail: `${ label }：按原话定位…` });
+        tokens = await deps.recognize!(audio, signal);
 
         if (!tokens) throw new Error(NEED_ALIGNER);
-
-        // 本地识别的时间是这一段里的，爆点的时间是整场里的
-        const absolute: Array<TimedToken> = tokens.map((token: TimedToken): TimedToken => ({ text: token.text, time: token.time + window.start }));
-        const located: Array<Highlight> = [];
-
-        for (const item of found.highlights) {
-          const fixed: Highlight | null = fixHighlightTimes(item, absolute);
-
-          if (fixed) {
-            located.push({ ...fixed, end: Math.min(fixed.end, window.start + window.length) });
-          } else {
-            unlocated.push(`「${ item.title }」在录音里找不到它引的原话，没法定位，跳过`);
-          }
-        }
-
-        found = { summary: found.summary, highlights: located };
       }
 
+      // 本地识别的时间是这一段里的，爆点的时间是整场里的
+      const absolute: Array<TimedToken> = (tokens ?? []).map((token: TimedToken): TimedToken => ({ text: token.text, time: token.time + window.start }));
+
+      for (const item of found.highlights) {
+        if (job.stage && stageKindOf(item) !== 'mc') {
+          located.push(await locateStageItem(job, source, duration, danmu, item, signal));
+          continue;
+        }
+
+        if (!viaAgy) {
+          located.push(item);
+          continue;
+        }
+
+        const fixed: Highlight | null = fixHighlightTimes(item, absolute);
+
+        if (fixed) {
+          located.push({ ...fixed, end: Math.min(fixed.end, window.start + window.length) });
+        } else {
+          dropped.push(`「${ item.title }」在录音里找不到它引的原话，没法定位，跳过`);
+        }
+      }
+
+      found = { summary: found.summary, highlights: located, dropped };
       await fsP.writeFile(cacheFile, JSON.stringify(found, null, 2));
       await fsP.rm(audio, { force: true });
     }
 
+    unlocated.push(...(found.dropped ?? []));
     all.push(...found.highlights);
     found.summary && summaries.push(found.summary);
   }
 
   // 3. 决定做哪几个
   const candidates: Array<Highlight> = mergeHighlights(all);
-  const target: number = targetCount(candidates, job.count, duration, job.autoScore);
+  // 公演的「自动」：MC、唱歌、失误各算各的名额（见 ./highlightStage 的 STAGE_QUOTA）
+  const quota: StageQuota | null = job.stage && job.count === 'auto' ? stageQuota(candidates, job.autoScore ?? AUTO_SCORE) : null;
+  const target: number = quota ? quota.total : targetCount(candidates, job.count, duration, job.autoScore);
+  const madeByKind: Record<StageKind, number> = { mc: 0, song: 0, mistake: 0 };
   const fonts: FontSet = await pickFonts(job.workDir);
   const context: ClipContext = {
     job, deps, signal, source, duration, danmu, meta, glossary,
-    fonts: fonts.dir ? { ...fonts, dir: `../${ fonts.dir }` } : fonts // 合成时的当前文件夹是 clip-N
+    fonts: fonts.dir ? { ...fonts, dir: `../${ fonts.dir }` } : fonts, // 合成时的当前文件夹是 clip-N
+    still: await stillInput(job.ffmpeg, prepared, signal)
   };
   const clips: Array<ClipResult> = [];
   const skipped: Array<string> = [...unlocated];
@@ -632,6 +763,9 @@ export async function processHighlight(
   // 4 ~ 6. 一个一个做；某个剪完太短就换下一个候选
   for (const [slot, highlight] of candidates.entries()) {
     if (clips.length >= target) break;
+
+    // 这一类不够分，或者名额满了：看下一个候选
+    if (quota && (highlight.score < quota.minScore[stageKindOf(highlight)] || madeByKind[stageKindOf(highlight)] >= quota.limit[stageKindOf(highlight)])) continue;
 
     checkStopped(signal);
 
@@ -645,6 +779,7 @@ export async function processHighlight(
       skipped.push(made);
     } else {
       clips.push(made);
+      madeByKind[stageKindOf(highlight)]++;
     }
   }
 
@@ -678,6 +813,54 @@ export async function processHighlight(
   await fsP.rm(job.workDir, { recursive: true, force: true }).catch((): void => undefined);
 
   return { clips, found: candidates.length, summary: summaries.join(' '), skipped, infoFile };
+}
+
+/**
+ * 按给定的片段做切片，不再找爆点：用户从「切片说明」的「没做的其他爆点」里挑了要补切的（2026-11-23）。
+ * 起止就用给的时间（说明里写的时间已经按原话、伴奏定位过）；MC 照样写字幕、剪掉无关的话，唱歌、失误整段保留。
+ * 成片从 firstIndex 开始编号，接在已经做好的后面。不写切片说明（由调用的地方写），做完删掉工作文件夹
+ * @param { HighlightJob } job
+ * @param { HighlightDeps } deps
+ * @param { PreparedSource } prepared
+ * @param { Array<Highlight> } chosen - 要做的片段，按这个顺序做
+ * @param { number } firstIndex - 第一个成片的编号
+ * @param { (progress: HighlightProgress) => void } onProgress - 0 ~ 100
+ * @param { AbortSignal } [signal]
+ */
+export async function processChosenHighlights(
+  job: HighlightJob, deps: HighlightDeps, prepared: PreparedSource, chosen: Array<Highlight>, firstIndex: number,
+  onProgress: (progress: HighlightProgress) => void, signal?: AbortSignal
+): Promise<{ clips: Array<ClipResult>; skipped: Array<string> }> {
+  const glossary: Glossary = parseGlossary(job.glossary);
+  const meta: LiveMeta = { member: job.member, title: job.title, glossary: glossaryPrompt(glossary), members: job.members };
+
+  checkStopped(signal);
+  await fsP.mkdir(job.workDir, { recursive: true });
+
+  const duration: number = await mediaDuration(job.ffmpeg, prepared.source, signal);
+  const fonts: FontSet = await pickFonts(job.workDir);
+  const context: ClipContext = {
+    job, deps, signal, source: prepared.source, duration, danmu: prepared.danmu, meta, glossary,
+    fonts: fonts.dir ? { ...fonts, dir: `../${ fonts.dir }` } : fonts, // 合成时的当前文件夹是 clip-N
+    still: await stillInput(job.ffmpeg, prepared, signal)
+  };
+  const clips: Array<ClipResult> = [];
+  const skipped: Array<string> = [];
+
+  for (const [order, highlight] of chosen.entries()) {
+    checkStopped(signal);
+
+    const made: ClipResult | string = await makeClip(context, highlight, firstIndex + clips.length, order + 1, (stage: string, part: number): void => {
+      onProgress({ percent: ((order + part) / chosen.length) * 100, detail: `第 ${ order + 1 }/${ chosen.length } 个：${ stage }` });
+    });
+
+    if (typeof made === 'string') skipped.push(made);
+    else clips.push(made);
+  }
+
+  await fsP.rm(job.workDir, { recursive: true, force: true }).catch((): void => undefined);
+
+  return { clips, skipped };
 }
 
 /**

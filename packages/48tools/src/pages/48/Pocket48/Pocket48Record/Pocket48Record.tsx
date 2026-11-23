@@ -59,10 +59,13 @@ import { pick } from '../../../../utils/lodash';
 import type { ProgressSet } from '../../../../components/ProgressNative/index';
 import ProgressDetail from '../../../../custom/download/ProgressDetail';
 import { recordListErrorText, recordListFailText } from '../../../../custom/pocket48Record/recordListError';
+import { getPocket48Proxy } from '../../../../custom/pocket48Proxy/pocket48Proxy';
 import { pickAudioResume } from '../../../../custom/download/audioResume';
 import RowActions from '../../../../custom/table/RowActions';
 import MediaTitleCell from '../../../../custom/table/MediaTitleCell';
-import { recordTaskStart, recordTaskProgress, recordTaskEnd, recordTaskStopping, audioMetaOf } from '../../../../custom/downloadQueue/recordTasks';
+import {
+  recordTaskStart, recordTaskProgress, recordTaskEnd, recordTaskStopping, recordTaskQueue, recordTaskCancelWaiting, audioMetaOf
+} from '../../../../custom/downloadQueue/recordTasks';
 import { canHighlight } from '../../../../custom/highlight/highlightTask';
 import { openHighlightDialog } from '../../../../custom/highlight/highlightDialogStore';
 import HighlightRowProgress, { useHighlightRunning } from '../../../../custom/highlight/HighlightRowProgress';
@@ -222,6 +225,8 @@ function Pocket48Record(props: {}): ReactElement {
     const index: number = recordChildList.findIndex((o: RecordVideoDownloadWebWorkerItem): boolean => o.id === record.liveId);
 
     if (index >= 0) {
+      if (recordTaskCancelWaiting(record.liveId)) return; // 还在排队：不排了
+
       recordTaskStopping(record.liveId); // 下载队列据此显示「已停止」而不是「已完成」（custom/downloadQueue/recordTasks）
       recordChildList[index].worker.postMessage({ type: 'stop' });
     }
@@ -335,6 +340,7 @@ function Pocket48Record(props: {}): ReactElement {
       }
 
       let requestIdleID: number | null = null;
+      let releaseSlot: () => void = (): void => undefined; // 下完让给下一场（custom/downloadQueue/recordTasks 的 recordTaskQueue）
       const worker: Worker = isM3u8 && downloadType === 0
         ? new Worker(new URL('./Pocket48M3u8Download.worker/Pocket48M3u8Download.worker.ts', import.meta.url))
         : (isM3u8 && downloadType === 1 ? getRecordVideoDownloadWorker : getFFmpegDownloadWorker)();
@@ -362,23 +368,36 @@ function Pocket48Record(props: {}): ReactElement {
           }
 
           recordTaskEnd(record.liveId, result.filePath!, workerEvent.data);
+          releaseSlot();
           worker.terminate();
           dispatch(setDeleteRecordChildList(record));
         }
       }, false);
-      recordTaskStart(record, result.filePath, audioOnly, (): void => worker.postMessage({ type: 'stop' }),
-        (): unknown => handleDownloadM3u8Click(record, downloadType, undefined as unknown as MouseEvent, audioOnly)); // 下载队列里的「重试」
+      recordTaskStart(record, result.filePath, audioOnly, (): void => {
+        if (!recordTaskCancelWaiting(record.liveId)) worker.postMessage({ type: 'stop' });
+      }, (): unknown => handleDownloadM3u8Click(record, downloadType, undefined as unknown as MouseEvent, audioOnly)); // 下载队列里的「重试」
 
-      worker.postMessage({
-        type: 'start',
-        playStreamPath: downloadFile,
-        filePath: result.filePath,
-        ffmpeg: getFFmpeg(),
-        protocolWhitelist: isM3u8,
-        qid: record.liveId,
-        audioOnly,
-        resume: Boolean(resumeFilePath),
-        audioMeta: audioOnly ? audioMetaOf(record) : undefined
+      // 和别的录播下载排队，轮到了才开始（同一时间只下一场）
+      releaseSlot = recordTaskQueue(record.liveId, (): void => {
+        worker.postMessage({
+          type: 'start',
+          playStreamPath: downloadFile,
+          filePath: result.filePath,
+          ffmpeg: getFFmpeg(),
+          protocolWhitelist: isM3u8,
+          qid: record.liveId,
+          audioOnly,
+          resume: Boolean(resumeFilePath),
+          audioMeta: audioOnly ? audioMetaOf(record) : undefined,
+          pocket48Proxy: getPocket48Proxy() // 直连下不来的分片改走口袋48代理（worker 里读不到 localStorage）
+        });
+      }, (): void => {
+        // 排队时点了停止：还没开始下
+        if (isM3u8 && downloadType === 0) fsP.rm(downloadFile, { force: true }).catch((): void => undefined);
+
+        recordTaskEnd(record.liveId, result.filePath!, { type: 'close' });
+        worker.terminate();
+        dispatch(setDeleteRecordChildList(record));
       });
 
       dispatch(setAddRecordChildList({
@@ -562,7 +581,7 @@ function Pocket48Record(props: {}): ReactElement {
                 label: '备用方案下载',
                 onClick: (event: MouseEvent): Promise<void> => handleDownloadM3u8Click(record, 1, event)
               }]),
-              // 自动切片：只有视频直播有（电台没有画面），见 custom/highlight
+              // 自动切片：视频直播和电台都有（电台用录播开头那一帧当画面），见 custom/highlight
               ...(canHighlight(record) ? [{ key: 'highlight', label: '自动切片', onClick: (): void => openHighlightDialog(record) }] : []),
               { key: 'danmu', label: '下载弹幕', onClick: (event: MouseEvent): Promise<void> => handleDownloadLrcClick(record, event) },
               { key: 'images', label: '下载图片', onClick: (event: MouseEvent): Promise<void> => handleDownloadImagesClick(record, event) },

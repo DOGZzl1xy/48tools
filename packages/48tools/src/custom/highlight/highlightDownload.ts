@@ -2,8 +2,9 @@ import { promises as fsP } from 'node:fs';
 import * as path from 'node:path';
 import DownloadMeter from '../download/downloadMeter';
 import { SegmentPrefetcher } from '../download/segmentPrefetcher';
-import { withRetry } from '../download/segmentRetry';
+import { withRetry, segmentViaProxy } from '../download/segmentRetry';
 import { formatProgressDetail } from '../download/formatProgress';
+import { withDownloadSlot, DownloadWaitStopped } from '../download/downloadSlot';
 import { runFfmpeg } from './highlightFfmpeg';
 import { HighlightStopped } from './highlightGemini';
 import { clock } from './highlightTime';
@@ -14,11 +15,12 @@ import { clock } from './highlightTime';
  * 卡住或失败的分片自动重试；全部下完后在本机合成一个 mp4（不重新编码，几秒钟的事）。
  * 分片放在「工作文件夹/segments」里，中途停止后再来时已经下好的不用重新下。
  * 不是普通 m3u8 的（很早以前的录播是一个 mp4、加密的、或者调用的地方没给下载分片的函数）让 ffmpeg 直接下载，只有一条连接。
- * 接入点：./highlightPipeline 的 prepareHighlight。
+ * 和所有录播下载共用一个下载位（../download/downloadSlot）：前面有别的在下时排队，下完分片就让给下一场（合并在本机做）。
+ * 接入点：./highlightPipeline 的 prepareHighlight、./highlightTask 的 downloadStream。
  */
 
-/* 下载一个分片到文件，返回大小；signal 中止后要尽快结束 */
-export type SegmentFetcher = (uri: string, file: string, signal: AbortSignal) => Promise<number>;
+/* 下载一个分片到文件，返回大小；signal 中止后要尽快结束。attempt 是第几次（0 是第一次），直连下不来时改走代理（../download/segmentRetry） */
+export type SegmentFetcher = (uri: string, file: string, signal: AbortSignal, attempt: number) => Promise<number>;
 
 export interface PlaylistSegment {
   uri: string;      // 完整的地址
@@ -42,6 +44,9 @@ export interface ReplayDownload {
   playlist?: string;      // 录播地址是 m3u8 时它的内容
   workDir: string;
   output: string;         // 合成后的 mp4
+  // 电台：只留声音（画面只是口袋48的占位图，存进去白占地方，44 分钟的录播 521 MB → 19 MB），开头那一帧另存成这张图，
+  // 给电台封面兜底（取得到这场直播的封面图时会被换掉，见 ./highlightPipeline 的 saveRadioCover）
+  cover?: string;
   fetchSegment?: SegmentFetcher;
   signal?: AbortSignal;
   onProgress: (progress: DownloadProgress) => void;
@@ -148,14 +153,14 @@ export async function downloadSegments(
     let retried: boolean = false;
 
     try {
-      return await withRetry((): Promise<number> => fetchSegment(segments[index].uri, file, inner), {
+      return await withRetry((attempt: number): Promise<number> => fetchSegment(segments[index].uri, file, inner, attempt), {
         label: `第 ${ index + 1 }/${ total } 个分片`,
         isStopped: (): boolean => inner.aborted,
         onRetry(attempt: number): void {
           if (!retried) retrying++;
 
           retried = true;
-          report(index, formatProgressDetail({ stage: 'retry', retry: attempt }));
+          report(index, formatProgressDetail({ stage: 'retry', retry: attempt, viaProxy: segmentViaProxy(attempt) }));
         }
       });
     } finally {
@@ -196,10 +201,31 @@ export async function downloadSegments(
   }
 }
 
+/* 电台只留声音：合成时不要画面 */
+function keepArgs(job: ReplayDownload): Array<string> {
+  return job.cover ? ['-vn', '-c', 'copy'] : ['-c', 'copy'];
+}
+
+/* 电台：开头那一帧先存成封面兜底。没有画面、存不下来时不存，不影响录音 */
+async function saveFirstFrame(job: ReplayDownload, input: string, cwd?: string): Promise<void> {
+  if (!job.cover) return;
+
+  try {
+    await runFfmpeg(job.ffmpeg, ['-y', '-v', 'error', '-i', input, '-map', '0:v:0', '-frames:v', '1', '-q:v', '2', path.resolve(job.cover)], {
+      cwd, signal: job.signal
+    });
+  } catch (err) {
+    if (job.signal?.aborted) throw new HighlightStopped();
+
+    console.warn('电台录播的封面没有存下来', err);
+  }
+}
+
 /* 让 ffmpeg 直接下载（只有一条连接，没有重试） */
 async function downloadWithFfmpeg(job: ReplayDownload, expected: number | undefined): Promise<void> {
+  await saveFirstFrame(job, job.url);
   await runFfmpeg(job.ffmpeg, [
-    '-y', '-v', 'error', '-nostats', '-progress', 'pipe:1', '-i', job.url, '-c', 'copy', job.output
+    '-y', '-v', 'error', '-nostats', '-progress', 'pipe:1', '-i', job.url, ...keepArgs(job), job.output
   ], {
     signal: job.signal,
     onTime(seconds: number): void {
@@ -213,18 +239,32 @@ async function downloadWithFfmpeg(job: ReplayDownload, expected: number | undefi
   });
 }
 
+/* 等轮到这一场再下（所有录播下载一次只下一场，见 ../download/downloadSlot）；排队时点了停止当作切片停止 */
+async function inSlot(job: ReplayDownload, task: () => Promise<void>): Promise<void> {
+  try {
+    await withDownloadSlot(task, {
+      signal: job.signal,
+      onWaiting: (): void => job.onProgress({ part: 0, detail: '排队中：等前面的下载完再下（同一时间只下一场）…' })
+    });
+  } catch (err) {
+    throw err instanceof DownloadWaitStopped ? new HighlightStopped() : err;
+  }
+}
+
 /**
- * 把整场录播下载成一个 mp4
+ * 把整场录播下载成一个 mp4。和别的录播下载排队，一次只下一场
  * @param { ReplayDownload } job
  */
 export async function downloadReplay(job: ReplayDownload): Promise<void> {
   const playlist: ReplayPlaylist | undefined = job.playlist === undefined ? undefined : readPlaylist(job.playlist, job.url);
   const expected: number | undefined = playlist?.segments.reduce((sum: number, item: PlaylistSegment): number => sum + item.duration, 0);
 
-  job.onProgress({ part: 0, detail: '下载录播…' });
-
   if (!playlist || !job.fetchSegment) {
-    await downloadWithFfmpeg(job, expected || undefined);
+    await inSlot(job, (): Promise<void> => {
+      job.onProgress({ part: 0, detail: '下载录播…' });
+
+      return downloadWithFfmpeg(job, expected || undefined);
+    });
 
     return;
   }
@@ -232,13 +272,19 @@ export async function downloadReplay(job: ReplayDownload): Promise<void> {
   const dir: string = path.join(job.workDir, SEGMENT_FOLDER);
 
   await fsP.mkdir(dir, { recursive: true });
-  await downloadSegments(job, playlist, job.fetchSegment, dir);
+  // 合并是本机的事，下完分片就让给下一场
+  await inSlot(job, (): Promise<void> => {
+    job.onProgress({ part: 0, detail: '下载录播…' });
+
+    return downloadSegments(job, playlist, job.fetchSegment!, dir);
+  });
 
   // 合成一个文件：ffmpeg 读本机的 m3u8，和直接读网上的那个是同一种处理，只是分片已经在硬盘上了
   job.onProgress({ part: MERGE_PART, detail: '下载完成，正在合并分片…' });
   await fsP.writeFile(path.join(dir, LOCAL_PLAYLIST), playlist.local);
+  await saveFirstFrame(job, LOCAL_PLAYLIST, dir);
   await runFfmpeg(job.ffmpeg, [
-    '-y', '-v', 'error', '-nostats', '-progress', 'pipe:1', '-i', LOCAL_PLAYLIST, '-c', 'copy', path.resolve(job.output)
+    '-y', '-v', 'error', '-nostats', '-progress', 'pipe:1', '-i', LOCAL_PLAYLIST, ...keepArgs(job), path.resolve(job.output)
   ], {
     cwd: dir,
     signal: job.signal,

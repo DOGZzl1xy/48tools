@@ -2,7 +2,7 @@
  * 公演切片的排版：左边直播画面、下面字幕、右边弹幕；封面压暗加大字和色块。
  */
 import {
-  assColor, stageTitleRows, coverSegments, buildStageVideoAss, buildStageCoverAss, stageRenderFilter, stageCoverFilter, type StageInfo
+  assColor, teamShade, stageTitleRows, stageShowLabel, coverSegments, buildStageVideoAss, buildStageCoverAss, stageRenderFilter, stageCoverFilter, type StageInfo
 } from './highlightStageAss';
 import type { FontSet, PlacedDanmu } from './highlightAss';
 
@@ -14,6 +14,11 @@ function dialogues(ass: string): Array<string> {
 }
 
 describe('公演排版：小工具', (): void => {
+  test('画面上的公演名：后面加「公演」，本来就以「公演」结尾的不再加', (): void => {
+    expect(stageShowLabel('《Fire X》2.0')).toBe('《Fire X》2.0 公演');
+    expect(stageShowLabel('《新芽之契》十三周年庆特别公演')).toBe('《新芽之契》十三周年庆特别公演');
+  });
+
   test('颜色转成 ASS 的 BBGGRR', (): void => {
     expect(assColor('#af83bb')).toBe('&HBB83AF&');
     expect(assColor('a9ca27')).toBe('&H27CAA9&');
@@ -23,6 +28,10 @@ describe('公演排版：小工具', (): void => {
     expect(stageTitleRows('忘词现场')).toEqual(['忘词现场']);
     expect(stageTitleRows('这首歌好绝，原班人马回来了')).toEqual(['这首歌好绝', '原班人马回来了']);
     expect(stageTitleRows('一二三四五六七八九十')).toEqual(['一二三四五', '六七八九十']);
+    // 中间没有标点：在词和词之间断，不把一个词拆开；第二行不以「的」开头；一样近时取靠后的
+    expect(stageTitleRows('不是那么熟悉的前辈')).toEqual(['不是那么', '熟悉的前辈']);
+    expect(stageTitleRows('没升格不配加前辈微信')).toEqual(['没升格不配', '加前辈微信']);
+    expect(stageTitleRows('初兔跳一半突然掐断重开')).toEqual(['初兔跳一半突然', '掐断重开']);
   });
 
   test('封面的一行：【】里的词要色块', (): void => {
@@ -97,13 +106,72 @@ describe('公演排版：封面', (): void => {
       expect(ass).not.toContain('公演切片');
       expect(ass).toContain('耳朵红了');
 
-      // 两个色块都是 NII 的紫色，不再用黄色、粉色
+      // 荧光笔（标签 + 两个要突出的词）都是深一点的 NII 紫，不再用整块的团队色矩形，也不用黄色、粉色
       const boxes: Array<string> = dialogues(ass).filter((line: string): boolean => line.includes(',Shape,') && line.includes('\\p1'));
+      const ink: string = assColor(teamShade('#af83bb', 0.42));
 
-      expect(boxes.filter((line: string): boolean => line.includes(`\\c${ assColor('#af83bb') }`))).toHaveLength(3); // 标签 + 两个色块
+      expect(boxes).toHaveLength(3);
+      expect(boxes.every((line: string): boolean => line.includes(`\\c${ ink }`))).toBe(true);
+      expect(ass).not.toContain(`\\c${ assColor('#af83bb') }`);
       expect(ass).not.toContain(assColor('#ffd400'));
       expect(ass).not.toContain(assColor('#ff6fa3'));
     }
+  });
+
+  test('荧光笔只盖住字的下半截；要突出的词白字，最后一行别的字浅紫', (): void => {
+    const ass: string = buildStageCoverAss({ stage, lines: ['交换衣服【守护谁穿谁的】', '徐佳琳守护的是【某某】？'], fonts, width: 1_920 });
+    const texts: Array<string> = dialogues(ass).filter((line: string): boolean => line.includes(',Text,'));
+    const tint: string = assColor(teamShade('#af83bb', 0.87, 0.42));
+    const lineOf: (text: string) => string = (text: string): string => texts.find((line: string): boolean => line.endsWith(text))!;
+
+    expect(lineOf('交换衣服')).not.toContain('\\c&');          // 第一行白字
+    expect(lineOf('守护谁穿谁的')).not.toContain('\\c&');      // 要突出的词白字
+    expect(lineOf('徐佳琳守护的是')).toContain(`\\c${ tint }`); // 最后一行浅紫
+    expect(lineOf('某某')).not.toContain('\\c&');
+
+    // 荧光笔的上沿在字的中间往下，不从字的顶上开始
+    const size: number = Number(/\\fs(\d+)/.exec(lineOf('守护谁穿谁的'))![1]);
+    const textY: number = Number(/\\pos\(\d+,(\d+)\)/.exec(lineOf('守护谁穿谁的'))![1]);
+    const band: string = dialogues(ass).filter((line: string): boolean => line.includes(',Shape,'))[1];
+    const ys: Array<number> = [...band.matchAll(/[ml] -?\d+ (-?\d+)/g)].map((match: RegExpMatchArray): number => Number(match[1]));
+
+    expect(Math.min(...ys)).toBeGreaterThan(textY + (size * 0.45));
+    expect(Math.max(...ys)).toBeLessThan(textY + size);
+  });
+
+  test('团队色推算的深色、浅色：色相不变，NII 的紫和参考图一致', (): void => {
+    expect(teamShade('#af83bb', 0.42)).toBe('#7d4c8a');
+    expect(teamShade('#af83bb', 0.87, 0.42)).toBe('#e6d0ec');
+    expect(teamShade('#8fc8eb', 0.42)).toBe('#207db6'); // SII 蓝
+    expect(teamShade('#ffffff', 0.5)).toBe('#808080');  // 没有颜色的还是灰
+  });
+
+  test('唱歌的封面只有「《歌名》」一个色块：字比平常大、色块留得更宽，不超出画面', (): void => {
+    const sizeOf: (ass: string, text: string) => number = (ass: string, text: string): number => {
+      const line: string | undefined = dialogues(ass).find((item: string): boolean => item.endsWith(text));
+
+      return Number(/\\fs(\d+)/.exec(line ?? '')?.[1] ?? 0);
+    };
+
+    for (const width of [1_920, 1_440]) {
+      const song: string = buildStageCoverAss({ stage, lines: ['【《示例歌》】'], fonts, width });
+      const normal: string = buildStageCoverAss({ stage, lines: ['【《示例歌》】', '第二行'], fonts, width });
+
+      expect(sizeOf(song, '《示例歌》')).toBeGreaterThan(sizeOf(normal, '《示例歌》') * 1.25);
+
+      // 色块的左右边都在画面里
+      const songBox: string = dialogues(song).filter((line: string): boolean => line.includes(',Shape,') && line.includes('\\p1')).at(-1)!;
+      const xs: Array<number> = [...songBox.matchAll(/[ml] (-?\d+) -?\d+/g)].map((match: RegExpMatchArray): number => Number(match[1]));
+
+      expect(Math.min(...xs)).toBeGreaterThan(0);
+      expect(Math.max(...xs)).toBeLessThan(width);
+    }
+
+    // 歌名很长时字号跟着缩小，色块还在画面里
+    const long: string = buildStageCoverAss({ stage, lines: ['【《一首名字特别特别长的歌》】'], fonts, width: 1_440 });
+    const box: string = dialogues(long).filter((line: string): boolean => line.includes(',Shape,') && line.includes('\\p1')).at(-1)!;
+
+    expect(Math.max(...[...box.matchAll(/[ml] (-?\d+) -?\d+/g)].map((match: RegExpMatchArray): number => Number(match[1])))).toBeLessThan(1_440);
   });
 
   test('封面的底：取左上的直播画面放大、裁成要的宽度、压暗', (): void => {
@@ -111,6 +179,6 @@ describe('公演排版：封面', (): void => {
 
     expect(filter).toContain('crop=1440:810:0:0');
     expect(filter).toContain('crop=1440:1080');
-    expect(filter).toContain('brightness=-0.32');
+    expect(filter).toContain('brightness=-0.42');
   });
 });

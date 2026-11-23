@@ -3,7 +3,7 @@
  * 录播自动切片里问 Gemini 的部分：提示里给了什么、结果怎么读、接口出错时怎么办。接口换成假的。
  */
 import {
-  geminiJson, findRequest, readFound, scriptRequest, readScript, coverRequest, cleanTitle,
+  geminiJson, findRequest, readFound, scriptRequest, readScript, coverRequest, cleanTitle, ContentRefused, PRONOUN,
   type GeminiConfig, type GeminiAsk
 } from './highlightGemini';
 import type { Highlight } from './highlightTypes';
@@ -41,6 +41,16 @@ describe('geminiJson', (): void => {
 
     await expect(geminiJson({ ...config, apiKey: ' ' }, ask, undefined, fake as unknown as typeof fetch)).rejects.toThrow('API key');
     expect(fake).not.toHaveBeenCalled();
+  });
+
+  test('以内容为由拦下（blockReason、finishReason 是 SAFETY 这类）：报 ContentRefused，不重试', async (): Promise<void> => {
+    const blocked: jest.Mock = jest.fn(async (): Promise<Response> => new Response(JSON.stringify({ promptFeedback: { blockReason: 'PROHIBITED_CONTENT' } })));
+    const safety: jest.Mock = jest.fn(async (): Promise<Response> => new Response(JSON.stringify({ candidates: [{ content: { parts: [] }, finishReason: 'SAFETY' }] })));
+
+    await expect(geminiJson(config, ask, undefined, blocked as unknown as typeof fetch)).rejects.toThrow(ContentRefused);
+    expect(blocked).toHaveBeenCalledTimes(1);
+    await expect(geminiJson(config, ask, undefined, safety as unknown as typeof fetch)).rejects.toThrow(ContentRefused);
+    expect(safety).toHaveBeenCalledTimes(1);
   });
 
   test('key 不对（400 / 401）直接报错，不重试', async (): Promise<void> => {
@@ -134,6 +144,19 @@ describe('找爆点', (): void => {
     ]);
   });
 
+  test('公演的失误：抄来的弹幕时间换成整场里的秒数；空的、看不懂的不要', (): void => {
+    const found: ReturnType<typeof readFound> = readFound({
+      summary: '',
+      highlights: [
+        { kind: 'mistake', start: '05:00', end: '06:00', title: '停音乐了', score: 9, reaction: '05:32' },
+        { kind: 'mc', start: '08:00', end: '09:00', title: '聊天', score: 8, reaction: '' },
+        { kind: 'mistake', start: '10:00', end: '11:00', title: '看不懂', score: 8, reaction: '大概十分钟' }
+      ]
+    }, { start: 1_800, length: 1_200 });
+
+    expect(found.highlights.map((item: Highlight): number | undefined => item.reaction)).toEqual([2_132, undefined, undefined]);
+  });
+
   test('返回的东西乱七八糟也不报错', (): void => {
     expect(readFound(null, { start: 0, length: 100 })).toEqual({ summary: '', highlights: [] });
     expect(readFound({ highlights: 'x' }, { start: 0, length: 100 }).highlights).toEqual([]);
@@ -141,6 +164,23 @@ describe('找爆点', (): void => {
 });
 
 describe('片段的字幕、标题、简介', (): void => {
+  test('公演 MC：说的是公演和台上的成员，不是口袋48的直播、主播、连麦', (): void => {
+    const stage: { team: string; teamColor: string; show: string; date: string } = { team: 'NII', teamColor: '#af83bb', show: '《示例公演》', date: '2026.11.22' };
+    const prompt: string = scriptRequest({ member: 'SNH48 TEAM NII', title: '《示例公演》' }, highlight, 120, 'QUJD', [], undefined, stage).parts[0].text!;
+    const live: string = scriptRequest({ member: '测试成员', title: '测试直播' }, highlight, 120, 'QUJD', []).parts[0].text!;
+
+    expect(prompt).toContain('SNH48 TEAM NII 《示例公演》 公演（2026.11.22）在 B 站直播的录像里，MC 环节的一段');
+    expect(prompt).toContain('剪出一个发到 B 站的公演切片');
+    expect(prompt).toContain('【SNH48 TEAM NII｜甲&乙】');
+    expect(prompt).toContain('台上大家的反应');
+    expect(prompt).not.toMatch(/口袋48|主播|连麦/);
+    // 找片段时听了 20 分钟，谁在讲认得更准：把那时的说明带上，认人以它为准
+    expect(prompt).toContain('对它的说明是：「理由」');
+    expect(live).not.toContain('对它的说明是');
+    expect(live).toContain('测试成员 在口袋48的直播「测试直播」');
+    expect(live).toContain('除了主播以外的主角');
+  });
+
   test('提示里有主题和关键的那句话；弹幕没有昵称', (): void => {
     const prompt: string = scriptRequest({ member: '测试成员', title: '测试直播' }, highlight, 87.4, 'QUJD', [
       { time: 110, nickname: '某个粉丝的昵称', message: '右上角' }
@@ -151,6 +191,23 @@ describe('片段的字幕、标题、简介', (): void => {
     expect(prompt).toContain('（87 秒）');
     expect(prompt).toContain('右上角');
     expect(prompt).not.toContain('某个粉丝的昵称');
+  });
+
+  test('成员都是女生：找片段和写字幕的提示里都说「tā」写「她」', (): void => {
+    const meta: { member: string; title: string } = { member: '测试成员', title: '测试直播' };
+
+    expect(scriptRequest(meta, highlight, 60, 'QUJD', []).parts[0].text).toContain(PRONOUN);
+    expect(findRequest(meta, { start: 0, length: 600 }, 'QUJD', []).parts[0].text).toContain(PRONOUN);
+    expect(PRONOUN).toContain('都写「她」');
+  });
+
+  test('字幕逐字照录、不换近义词；简介不添油加醋、不把反驳写成承认', (): void => {
+    const prompt: string = scriptRequest({ member: '测试成员', title: '测试直播' }, highlight, 60, 'QUJD', []).parts[0].text!;
+
+    expect(prompt).toContain('逐字照录');
+    expect(prompt).toContain('不要换成意思相近的词');
+    expect(prompt).toContain('弹幕里的话不是音频里说的，不能写进字幕');
+    expect(prompt).toContain('是反驳还是承认不要弄反');
   });
 
   test('读出句子、标题、简介、看点', (): void => {

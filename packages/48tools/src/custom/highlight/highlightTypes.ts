@@ -23,7 +23,9 @@ export interface Highlight {
   kind?: StageKind;
   song?: string;               // 歌名（kind 是 song 时）
   singers?: Array<string>;     // 演唱的成员
-  coverLines?: Array<string>;  // 封面上的 2 ~ 3 行大字，【】里的词用色块突出
+  coverLines?: Array<string>;  // 封面上的 1 ~ 3 行大字（按需要），【】里的词下面刷荧光笔
+  reaction?: number;           // 失误：模型从弹幕里抄的代表性反应的时间（在录像里的秒数），按它找弹幕的高峰（见 ./highlightStageTiming）
+  timing?: string;             // 失误、唱歌的起止是怎么定的（写进切片说明）
 }
 
 /* 公演切片的三类：MC 环节的爆点、表演中的失误、组合有特色的一整首歌 */

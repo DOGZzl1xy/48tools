@@ -2,7 +2,8 @@
  * 公演切片的规则：片段的起止和长度、发布标题、提示里讲到的东西、弹幕的时间对到接起来的录像上。
  */
 import {
-  STAGE_LIMITS, stageKindOf, stageClipWindow, stageLengthProblem, stageScript, stageCoverLines, stagePostTitle, stageFindRequest, mapDanmuToParts
+  STAGE_LIMITS, stageKindOf, stageClipWindow, stageLengthProblem, stageScript, stageCoverLines, stagePostTitle, stageFindRequest, mapDanmuToParts, stageQuota,
+  songNameOf
 } from './highlightStage';
 import type { DanmuLine, Highlight } from './highlightTypes';
 import type { StageInfo } from './highlightStageAss';
@@ -20,7 +21,7 @@ describe('公演切片：起止和长度', (): void => {
   });
 
   test('唱歌前后多留一点（前奏、结束动作和掌声），失误留得少；不超出录像', (): void => {
-    expect(stageClipWindow(highlight({ kind: 'song', start: 100, end: 340 }), 3_600)).toEqual({ start: 98, length: 246 });
+    expect(stageClipWindow(highlight({ kind: 'song', start: 100, end: 340 }), 3_600)).toEqual({ start: 98, length: 248 });
     expect(stageClipWindow(highlight({ kind: 'mistake', start: 50, end: 80 }), 3_600)).toEqual({ start: 49, length: 33 });
     expect(stageClipWindow(highlight({ kind: 'song', start: 1, end: 3_599 }), 3_600)).toEqual({ start: 0, length: 3_600 });
   });
@@ -29,9 +30,40 @@ describe('公演切片：起止和长度', (): void => {
     expect(STAGE_LIMITS.mc).toEqual({ min: 45, max: 300 });
     expect(stageLengthProblem('mistake', 20)).toBeUndefined();
     expect(stageLengthProblem('mistake', 8)).toContain('至少 12 秒');
+    expect(stageLengthProblem('mistake', 150)).toBeUndefined(); // 停音乐重来、救场这类要一两分钟
+    expect(stageLengthProblem('mistake', 200)).toContain('最多 160 秒');
     expect(stageLengthProblem('song', 40)).toContain('至少 60 秒');
     expect(stageLengthProblem('song', 600)).toContain('最多 480 秒');
     expect(stageLengthProblem('mc', 30)).toContain('至少 45 秒');
+  });
+});
+
+describe('公演切片：自动时每类做几个', (): void => {
+  function list(kind: 'mc' | 'song' | 'mistake', scores: Array<number>): Array<Highlight> {
+    return scores.map((score: number): Highlight => highlight({ kind, score }));
+  }
+
+  test('MC 合起来最多 15 个，门槛放宽半分；唱歌、失误各最多 2 个，要够门槛；三类各算各的', (): void => {
+    const candidates: Array<Highlight> = [
+      ...list('mc', [9.5, 9, 9, 9, 8.5, 8.5, 8.5, 8, 8, 8, 7.5]),
+      ...list('song', [9, 8.5, 8.5, 8]),
+      ...list('mistake', [8])
+    ];
+
+    expect(stageQuota(candidates, 8.5)).toEqual({
+      limit: { mc: 10, song: 2, mistake: 0 },
+      minScore: { mc: 8, song: 8.5, mistake: 8.5 },
+      total: 12
+    });
+    // 门槛调到 9：MC 8.5 分以上的只有 7 个就做 7 个，唱歌 9 分以上的 1 个
+    expect(stageQuota(candidates, 9).limit).toEqual({ mc: 7, song: 1, mistake: 0 });
+    // 够分的 MC 再多也最多 15 个
+    expect(stageQuota(list('mc', Array.from({ length: 20 }, (): number => 9)), 8.5).limit.mc).toBe(15);
+  });
+
+  test('一个够分的都没有：最高的那个不低于 7 分也做一个；再低就不做', (): void => {
+    expect(stageQuota([...list('mc', [7.5]), ...list('song', [8])], 8.5)).toMatchObject({ limit: { mc: 0, song: 1, mistake: 0 }, total: 1 });
+    expect(stageQuota(list('mc', [6.5]), 8.5).total).toBe(0);
   });
 });
 
@@ -45,6 +77,17 @@ describe('公演切片：文案', (): void => {
   test('封面大字：有 cover_lines 用它，没有用标题和封面的话', (): void => {
     expect(stageCoverLines(highlight({ coverLines: ['甲【好绝】'] }), '标题')).toEqual(['甲【好绝】']);
     expect(stageCoverLines(highlight({}), '新标题')).toEqual(['新标题', '封面的话']);
+  });
+
+  test('唱歌的封面只写歌名（一个色块）；歌名不知道时从标题、理由里找《》，再没有就和别的一样', (): void => {
+    expect(stageCoverLines(highlight({ kind: 'song', song: '示例歌', coverLines: ['甲【好绝】'] }), '标题')).toEqual(['【《示例歌》】']);
+    expect(stageCoverLines(highlight({ kind: 'song', song: '《示例歌》' }), '标题')).toEqual(['【《示例歌》】']);
+    expect(stageCoverLines(highlight({ kind: 'song', song: '未知', reason: '三人合唱《另一首》引发回忆杀' }), '标题')).toEqual(['【《另一首》】']);
+    expect(stageCoverLines(highlight({ kind: 'song', title: '《标题里的歌》全开麦', reason: '理由里有《别的》' }), '标题')).toEqual(['【《标题里的歌》】']);
+    expect(stageCoverLines(highlight({ kind: 'song', coverLines: ['甲【好绝】'] }), '标题')).toEqual(['甲【好绝】']);
+    expect(songNameOf(highlight({ kind: 'song' }))).toBeUndefined();
+    // 不是唱歌的片段，理由里有歌名也照常
+    expect(stageCoverLines(highlight({ kind: 'mc', reason: '聊到《某歌》' }), '新标题')).toEqual(['新标题', '封面的话']);
   });
 
   test('发布标题带队伍、最多三个人、公演名和日期', (): void => {
@@ -68,7 +111,8 @@ describe('公演切片：文案', (): void => {
     expect(prompt).toContain('00:20 哈哈哈哈');
     expect(prompt).not.toContain('太早了');
     expect(prompt).toContain('first、last');
-    expect((ask.schema as any).properties.highlights.items.required).toEqual(expect.arrayContaining(['kind', 'cover_lines', 'first', 'last']));
+    expect(prompt).toContain('reaction：mistake 写粉丝开始刷反应的那条弹幕前面的时间');
+    expect((ask.schema as any).properties.highlights.items.required).toEqual(expect.arrayContaining(['kind', 'cover_lines', 'reaction', 'first', 'last']));
 
     const noQuotes: string = (stageFindRequest({ member: 'm', title: 't' }, { start: 0, length: 60 }, 'A', [], false, stage).parts[0] as { text: string }).text;
 

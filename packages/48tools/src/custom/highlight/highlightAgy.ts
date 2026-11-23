@@ -44,6 +44,16 @@ export class AgyStopped extends Error {
   }
 }
 
+/* agy 以内容为由拒绝（「The prompt could not be submitted. The prompt contains sensitive words…」）：每次都一样，不要重试 */
+export class AgyRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AgyRefused';
+  }
+}
+
+const REFUSED: RegExp = /could not be submitted|sensitive words|violat(e|es|ion) .*polic/i;
+
 /* Gemini 接口的格式说明里类型是大写的（OBJECT、STRING…），agy 要标准的 JSON Schema（小写） */
 export function toJsonSchema(schema: unknown): unknown {
   if (Array.isArray(schema)) return schema.map(toJsonSchema);
@@ -142,7 +152,11 @@ export function readAgyResult(stdout: string): unknown {
   if (!result) throw new Error('agy 没有返回结果');
 
   if (result.status !== 'SUCCESS') {
-    throw new Error(`agy 没有成功（${ result.status ?? '未知状态' }）：${ String(result.error ?? '').slice(0, 300) || '可能是订阅额度用完了，或者没有登录' }`);
+    const error: string = String(result.error ?? '').slice(0, 300);
+
+    if (REFUSED.test(error)) throw new AgyRefused(`agy 拒绝了这次的内容：${ error }`);
+
+    throw new Error(`agy 没有成功（${ result.status ?? '未知状态' }）：${ error || '可能是订阅额度用完了，或者没有登录' }`);
   }
 
   if (typeof result.response !== 'string') return result.response;
@@ -155,6 +169,8 @@ export function readAgyResult(stdout: string): unknown {
       return JSON.parse(json);
     } catch { /* 下面统一报错 */ }
   }
+
+  if (REFUSED.test(text)) throw new AgyRefused(`agy 拒绝了这次的内容：${ text.slice(0, 200) }`);
 
   throw new Error(`agy 返回的内容格式不对（${ text.length } 字，开头：${ text.slice(0, 80) }）`);
 }

@@ -63,8 +63,24 @@ export function assEscape(text: string): string {
 }
 
 /* 一个字占多宽：英文数字算半个多一点，其余算一个 */
+/* 一个字大概占几个汉字宽（排版时估算用）。英文按字母分开估：以前一律 0.56，加粗字体里的大写字母（尤其 M、W）宽得多，
+   「听MC正好【暖和睡】」这种封面上后面的字压到了前面的字上（2026-11-23） */
 export function charWidth(ch: string): number {
-  return /[\x20-\x7e]/.test(ch) ? 0.56 : 1;
+  if (!/[\x20-\x7e]/.test(ch)) return 1;
+
+  if (ch === ' ') return 0.3;
+
+  if (/[MW]/.test(ch)) return 0.9;
+
+  if (/[A-Z]/.test(ch)) return 0.7;
+
+  if (/[0-9]/.test(ch)) return 0.6;
+
+  if (/[il.,:;!|'`]/.test(ch)) return 0.3;
+
+  if (/[mw]/.test(ch)) return 0.82;
+
+  return 0.56;
 }
 
 export function textWidth(text: string): number {
@@ -386,17 +402,31 @@ export function subtitlesFilter(file: string, fonts: FontSet): string {
  * 合成成片的 ffmpeg 滤镜：按 segments 剪出几段拼起来，缩放后放到左边，压上字幕；声音统一响度。
  * 输入是已经定位到片段开头的原片，输出是 [vout] 和 [aout]
  */
-/* 按 segments 剪出几段拼起来：输出 [vc] 和 [ac]（两种排版共用） */
-export function segmentFilters(segments: Array<Segment>): Array<string> {
+/**
+ * 按 segments 剪出几段拼起来：输出 [vc] 和 [ac]（两种排版共用）。
+ * still：电台的录音没有画面，画面是第二个输入（一张图一直循环），只剪声音，画面截成拼完的长度
+ */
+export function segmentFilters(segments: Array<Segment>, still: boolean = false): Array<string> {
   const parts: Array<string> = [];
 
   segments.forEach((segment: Segment, index: number): void => {
     const range: string = `start=${ segment.start.toFixed(3) }:end=${ segment.end.toFixed(3) }`;
     const fadeOut: string = Math.max(0, segment.end - segment.start - 0.06).toFixed(3);
 
-    parts.push(`[0:v]trim=${ range },setpts=PTS-STARTPTS[v${ index }]`);
+    if (!still) parts.push(`[0:v]trim=${ range },setpts=PTS-STARTPTS[v${ index }]`);
+
     parts.push(`[0:a]atrim=${ range },asetpts=PTS-STARTPTS,afade=t=in:d=0.04,afade=t=out:st=${ fadeOut }:d=0.06[a${ index }]`);
   });
+
+  if (still) {
+    const total: number = segments.reduce((sum: number, segment: Segment): number => sum + segment.end - segment.start, 0);
+
+    parts.push(`${ segments.map((segment: Segment, index: number): string => `[a${ index }]`).join('') }concat=n=${ segments.length }:v=0:a=1[ac]`);
+    // jpg 是全范围的颜色（pc），转成和直播画面一样的标准范围（tv），不然成片标成 yuvj420p，有的播放器颜色会偏
+    parts.push(`[1:v]trim=duration=${ total.toFixed(3) },setpts=PTS-STARTPTS,scale=out_range=tv,format=yuv420p[vc]`);
+
+    return parts;
+  }
 
   parts.push(`${ segments.map((segment: Segment, index: number): string => `[v${ index }][a${ index }]`).join('')
   }concat=n=${ segments.length }:v=1:a=1[vc][ac]`);
@@ -408,8 +438,8 @@ export function segmentFilters(segments: Array<Segment>): Array<string> {
    播放时开头卡顿、之后音画不同步。它输出的采样本身是完整、连续的，所以在后面按采样数重新算一遍时间戳就对了 */
 export const LOUDNESS_FILTER: string = '[ac]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,asetpts=N/SR/TB[aout]';
 
-export function renderFilter(segments: Array<Segment>, fonts: FontSet, assFile: string = 'overlay.ass'): string {
-  const parts: Array<string> = segmentFilters(segments);
+export function renderFilter(segments: Array<Segment>, fonts: FontSet, assFile: string = 'overlay.ass', still: boolean = false): string {
+  const parts: Array<string> = segmentFilters(segments, still);
 
   // 横屏的录屏直播也放得下：按比例缩进 608×1080，空的地方填深色
   parts.push(`[vc]fps=30,scale=${ LEFT_WIDTH }:${ H }:force_original_aspect_ratio=decrease:flags=lanczos,`
@@ -438,7 +468,25 @@ function coverCard(width: number): Card {
   return { x: LEFT_WIDTH + 32, y: 40, w: width - LEFT_WIDTH - 64, h: H - 80, r: 48 };
 }
 
-/* 封面上的标题：超过 7 个字分两行，尽量在标点后面断 */
+/* 词和词之间的位置（第几个字后面），用系统自带的中文分词；没有分词功能时返回空数组 */
+export function wordBoundaries(text: string): Array<number> {
+  if (typeof Intl === 'undefined' || typeof Intl.Segmenter !== 'function') return [];
+
+  const out: Array<number> = [];
+  let count: number = 0;
+
+  for (const part of new Intl.Segmenter('zh', { granularity: 'word' }).segment(text)) {
+    count += Array.from(part.segment).length;
+    out.push(count);
+  }
+
+  return out;
+}
+
+/**
+ * 封面上的标题：超过 7 个字分两行，尽量在标点后面断；中间附近没有标点时在词和词之间断
+ * （以前在正中间硬断，出现过「真到自己这 / 儿也没招」把「这儿」拆开，2026-11-23 用户看到的），第二行不以「的」「了」这类字开头
+ */
 export function splitTitle(title: string): Array<string> {
   const chars: Array<string> = Array.from(title);
 
@@ -453,10 +501,28 @@ export function splitTitle(title: string): Array<string> {
     if (/[（(]/.test(ch)) spots.push(index);
   });
 
-  // 取离正中间最近的那个（差得不超过 3 个字），没有就在正中间断
-  const at: number = spots
+  // 取离正中间最近的那个（差得不超过 3 个字）
+  let at: number | undefined = spots
     .filter((spot: number): boolean => spot > 0 && spot < chars.length && Math.abs(spot - middle) <= 3)
-    .sort((a: number, b: number): number => Math.abs(a - middle) - Math.abs(b - middle))[0] ?? middle;
+    .sort((a: number, b: number): number => Math.abs(a - middle) - Math.abs(b - middle))[0];
+
+  // 没有标点：在离正中间最近的词边界断（一样近时取靠前的，第一行长一点更稳）；分不了词就在正中间断
+  if (at === undefined) {
+    let best: number = Infinity;
+
+    for (const boundary of wordBoundaries(title)) {
+      if (boundary <= 1 || boundary >= chars.length - 1) continue;
+
+      const cost: number = Math.abs(boundary - middle) + (/[的了地得着过吗呢吧啊儿后]/.test(chars[boundary]) ? 2 : 0);
+
+      if (cost <= 3 && cost < best) {
+        best = cost;
+        at = boundary;
+      }
+    }
+  }
+
+  at ??= middle;
 
   return [chars.slice(0, at).join('').replace(/[，,\s]+$/, ''), chars.slice(at).join('').trim()].filter((row: string): boolean => row !== '');
 }
@@ -464,7 +530,7 @@ export function splitTitle(title: string): Array<string> {
 export interface CoverInput {
   title: string;
   tag: string;            // 小字：成员、日期
-  points: Array<string>;  // 2 ~ 3 个看点
+  points: Array<string>;  // 1 ~ 3 个看点（按需要，2026-11-23 用户定的不用凑满三个）
   fonts: FontSet;
   width?: number;         // 封面的宽度（见 COVER_WIDTHS），默认 16:9
 }
