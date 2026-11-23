@@ -205,17 +205,17 @@ function ChatView(props: ChatViewProps): ReactElement {
           </small>
         </div>
         <Segmented options={ modeOptions } value={ mode } onChange={ setMode } />
-        <Tooltip title={ followed ? '已关注（点一下取消）' : '关注（加到左边的关注列表）' }>
+        <Tooltip title={ followed ? '已关注（点一下取消）' : '关注（加到左边的关注列表）' } placement="bottom">
           <Button className={ followed ? 'room-follow is-on' : 'room-follow' }
             icon={ followed ? <IconStarFilled /> : <IconStarOutlined /> }
             aria-label={ followed ? '取消关注' : '关注' }
             onClick={ (): void => toggleFollow(member) }
           />
         </Tooltip>
-        <Tooltip title="查找：搜索消息，或者跳到某一天">
+        <Tooltip title="查找：搜索消息，或者跳到某一天" placement="bottom">
           <Button icon={ <IconSearchOutlined /> } aria-label="查找" onClick={ (): void => setSearchOpen(true) } />
         </Tooltip>
-        <Tooltip title="取最新消息（每分钟也会自动取一次）">
+        <Tooltip title="取最新消息（每分钟也会自动取一次）" placement="bottom">
           <Button icon={ <IconReloadOutlined /> } loading={ room.loading || room.syncing } aria-label="取最新消息" onClick={ refreshBoth } />
         </Tooltip>
         <Dropdown trigger={ ['click'] }

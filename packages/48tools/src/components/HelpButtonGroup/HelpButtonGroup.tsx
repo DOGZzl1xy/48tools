@@ -25,7 +25,7 @@ function HelpButtonGroup(props: HelpButtonGroupProps): ReactElement {
   return (
     <Space.Compact { ...spaceCompactProps }>
       { children }
-      <Tooltip title={ tooltipTitle ?? '查看帮助文件' }>
+      <Tooltip title={ tooltipTitle ?? '查看帮助文件' } placement="bottomRight">
         <Button icon={ <IconQuestionCircleFilled className={ commonStyle.tips } /> }
           onClick={ handleOpenHelpPageClick }
           { ...buttonProps }

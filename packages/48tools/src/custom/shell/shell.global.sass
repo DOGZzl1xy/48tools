@@ -210,6 +210,7 @@
   overflow: hidden
   text-overflow: ellipsis
 
+// 数字提示：未读消息、等你挑的爆点、下载任务。都用主题色（用户 2026-11-23 定的，以前未读是红的）
 .shell-item-badge
   flex: none
   min-width: 18px
@@ -223,10 +224,10 @@
   line-height: 18px
   text-align: center
 
-  // 未读消息数（房间消息）
-  &.is-unread
-    background: var(--shell-danger)
-    color: #fff
+// 头像上的数字气泡（antd 默认是红的）：和上面一样
+.shell .ant-badge .ant-badge-count
+  background: var(--shell-primary)
+  color: var(--accent-on, #fff)
 
 // 自动抓取运行中：「直播抓取」后面的绿点（侧边栏收起时在图标右上角）
 .shell-item-live

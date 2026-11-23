@@ -13,7 +13,7 @@ function RoomUnreadBadge(props: {}): ReactElement | null {
 
   if (total <= 0) return null;
 
-  return <span className="shell-item-badge is-unread" aria-label={ `${ total } 条未读消息` }>{ unreadText(total) }</span>;
+  return <span className="shell-item-badge" aria-label={ `${ total } 条未读消息` }>{ unreadText(total) }</span>;
 }
 
 export default RoomUnreadBadge;
