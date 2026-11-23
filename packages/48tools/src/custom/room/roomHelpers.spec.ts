@@ -2,7 +2,7 @@ import type { CustomMessageV2 } from '@48tools-api/48';
 import { emojiText } from './emojiText';
 import { roomClock, dayStart, beijingDate } from './roomTime';
 import { searchDirectory, teamLabel, type DirectoryMember } from './memberSearch';
-import { messageText, matchMessage, senderName, snippet } from './roomSearchText';
+import { messageText, matchMessage, senderName, snippet, voiceReplyOf } from './roomSearchText';
 
 function raw(msgType: string, bodys: unknown, nickName: string = '成员'): CustomMessageV2 {
   return {
@@ -123,6 +123,28 @@ describe('roomSearchText', function(): void {
     expect(messageText(raw('LIVEPUSH', { livePushInfo: { liveTitle: '进来聊天' } }))).toBe('直播 进来聊天');
     expect(messageText(raw('IMAGE', { url: 'https://example.com/a.jpg' }))).toBe('');
     expect(messageText(raw('REPLY', 'not json'))).toBe('');
+    // 语音回复礼物：能搜到粉丝的名字、送的什么礼物，转过文字的还有转出来的字
+    expect(messageText(raw('AUDIO_GIFT_REPLY', {
+      giftReplyInfo: { voiceUrl: 'https://mp4.example.com/a.aac', replyText: '送给 测试成员 1个心锁', replyName: '小牛', duration: 19 },
+      messageType: 'AUDIO_GIFT_REPLY'
+    }), '谢谢小牛的心锁')).toBe('小牛 送给 测试成员 1个心锁 谢谢小牛的心锁');
+  });
+
+  test('voiceReplyOf: 语音回复（回复消息、回复礼物）的地址、回复的是什么、时长；别的类型和没有语音地址的返回 undefined', function(): void {
+    const gift: string = JSON.stringify({
+      giftReplyInfo: { voiceUrl: 'https://mp4.example.com/2026/1122/a.aac', replyText: '送给 测试成员 1个心锁', replyName: '小牛', replyMessageId: 'x', duration: 19 },
+      messageType: 'AUDIO_GIFT_REPLY'
+    });
+
+    expect(voiceReplyOf('AUDIO_GIFT_REPLY', gift)).toEqual({
+      url: 'https://mp4.example.com/2026/1122/a.aac', replyName: '小牛', replyText: '送给 测试成员 1个心锁', duration: 19_000
+    });
+    // 已经解析好的对象也行；相对地址补成完整的
+    expect(voiceReplyOf('AUDIO_REPLY', { replyInfo: { voiceUrl: '/2026/1122/b.aac', replyText: '晚安', replyName: '小羊' } }))
+      .toEqual({ url: 'https://mp4.48.cn/2026/1122/b.aac', replyName: '小羊', replyText: '晚安', duration: undefined });
+    expect(voiceReplyOf('GIFTREPLY', gift)).toBeUndefined();
+    expect(voiceReplyOf('AUDIO_GIFT_REPLY', { giftReplyInfo: { replyText: '没有语音' } })).toBeUndefined();
+    expect(voiceReplyOf('AUDIO_GIFT_REPLY', 'not json')).toBeUndefined();
   });
 
   test('matchMessage looks in the text, the transcript and the sender name', function(): void {

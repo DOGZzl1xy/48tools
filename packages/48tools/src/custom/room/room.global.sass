@@ -1,11 +1,12 @@
 // 口袋房间消息（聊天风格）的样式，颜色变量来自 custom/shell/AppShell。
 
-// 页面外面有一层 16px 的内边距（components/Content），这里用负边距抵消，让聊天界面铺满整个内容面板
+// 聊天界面贴满整个内容面板（custom/shell 的 .shell-main，position: relative）：绝对定位，不占面板的滚动高度。
+// 以前用「整页高度」撑开，算出来的高度和面板差一点时，消息列表滚到底后滚轮会接着滚整个面板，顶部的工具栏就被推出去点不到了（2026-11-23）
 .room
+  position: absolute
+  inset: 0
   display: flex
-  height: var(--shell-page-height, 100vh)
   min-height: 420px
-  margin: -16px
   overflow: hidden
 
 // ---------- 左边：搜索、关注 ----------
@@ -90,6 +91,7 @@
   flex: 1
   min-height: 0
   overflow-y: auto
+  overscroll-behavior: contain
 
 .room-side-empty
   margin: 8px
@@ -287,6 +289,7 @@
   min-height: 0
   overflow-y: auto
   overflow-anchor: none
+  overscroll-behavior: contain // 滚到头以后滚轮不传给外面的面板
 
 .room-content
   position: relative // 消息的位置（offsetTop）相对它来算，见 ./useChatScroll

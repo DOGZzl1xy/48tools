@@ -7,8 +7,6 @@
   overflow: hidden
   background: var(--shell-bg)
   color: var(--shell-text)
-  // 内容面板里一整页能用的高度（需要自己撑满高度的页面用，例如房间消息）
-  --shell-page-height: calc(100vh - 18px)
 
 .shell-body
   display: flex
@@ -38,8 +36,6 @@
   white-space: nowrap
 
 .shell.has-titlebar
-  --shell-page-height: calc(100vh - env(titlebar-area-height, 38px) - 10px)
-
   .shell-sidebar
     padding-top: 2px
 

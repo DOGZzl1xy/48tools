@@ -7,7 +7,7 @@ import { mp4Source } from '../../utils/snh48';
 import { getAllTranscripts } from '../transcribe/transcriptCache';
 import { searchRoomCache, firstCachedSince, type RoomStream } from './roomCache';
 import { keyOf, type RoomMember } from './roomStore';
-import { matchMessage, messageText, senderName, snippet } from './roomSearchText';
+import { matchMessage, messageText, senderName, snippet, voiceReplyOf, type VoiceReply } from './roomSearchText';
 import { roomClock, dayStart, type RoomClock } from './roomTime';
 
 /**
@@ -30,6 +30,10 @@ interface RoomSearchProps {
 
 /* 语音消息在转写缓存里的标识（和 MessageBubble 里用的一致）；不是语音返回 undefined */
 function voiceIdOf(raw: CustomMessageV2): string | undefined {
+  const reply: VoiceReply | undefined = voiceReplyOf(raw.msgType as string, raw.bodys); // 语音回复
+
+  if (reply) return reply.url;
+
   try {
     if (raw.msgType === 'AUDIO') {
       const body: { md5?: string; url?: string } = JSON.parse(raw.bodys);

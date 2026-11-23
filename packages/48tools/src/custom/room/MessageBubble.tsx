@@ -6,6 +6,7 @@ import { source, mp4Source } from '../../utils/snh48';
 import { openLivePush, type OpenLiveResult } from './liveCard';
 import VoiceMessage from '../transcribe/VoiceMessage';
 import { emojiText } from './emojiText';
+import { voiceReplyOf, type VoiceReply } from './roomSearchText';
 import type { RoomMessageItem } from './roomStore';
 
 /**
@@ -179,6 +180,27 @@ function renderBody(item: RoomMessageItem, ownerId: number): { body: ReactNode; 
 
       if (url) return { body: <img className="room-sticker" src={ source(url) } alt="表情" loading="lazy" />, plain: true };
     }
+  }
+
+  // 语音回复（回复粉丝的消息或者送的礼物）：上面引用粉丝说的话 / 送的礼物，下面是语音（可以转文字）。
+  // 原版整理消息时不认这两种，所以直接从原始内容里读
+  const voiceReply: VoiceReply | undefined = voiceReplyOf(item.raw.msgType as string, item.raw.bodys);
+
+  if (voiceReply) {
+    return {
+      body: (
+        <div>
+          { voiceReply.replyText ? <Quote name={ voiceReply.replyName }>{ emojiText(voiceReply.replyText) }</Quote> : null }
+          <VoiceMessage id={ voiceReply.url }
+            url={ voiceReply.url }
+            time={ item.raw.msgTime }
+            question={ voiceReply.replyText || undefined }
+            ownerId={ ownerId }
+            duration={ voiceReply.duration }
+          />
+        </div>
+      )
+    };
   }
 
   // 粉丝送礼物

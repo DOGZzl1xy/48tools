@@ -13,6 +13,7 @@ import { source } from '../../utils/snh48';
 import type { SendDataItem } from '../../pages/48/types';
 import { getAllTranscripts } from '../transcribe/transcriptCache';
 import { readAllCached, type RoomMember, type RoomStream } from './roomStore';
+import { voiceReplyOf, type VoiceReply } from './roomSearchText';
 
 /**
  * 房间消息的导出和房间背景图下载（从 RoomPage 里拆出来的）。
@@ -26,6 +27,10 @@ const JSON_PAGE_SIZE: number = 3_000;
 /* 导出的一条消息如果是语音：它在转写缓存里的标识（和 MessageBubble 里用的一致） */
 function voiceIdOf(item: SendDataItem): string | undefined {
   const bodys: any = item.bodys;
+
+  const reply: VoiceReply | undefined = voiceReplyOf(item.msgType as string, bodys); // 语音回复（bodys 是字符串也行）
+
+  if (reply) return reply.url;
 
   if (!bodys || typeof bodys !== 'object') return undefined;
 
@@ -52,7 +57,8 @@ export function attachTranscripts(data: Array<SendDataItem>, transcripts: Map<st
     const id: string | undefined = voiceIdOf(item);
     const text: string | undefined = id === undefined ? undefined : transcripts.get(id);
 
-    if (text) {
+    // bodys 是字符串（原版没有解析的类型）时没法带上
+    if (text && item.bodys && typeof item.bodys === 'object') {
       (item.bodys as unknown as { transcript: string }).transcript = text;
       count++;
     }
