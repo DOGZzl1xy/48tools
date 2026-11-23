@@ -13,7 +13,7 @@ import { agyDefaults } from './highlightAgy';
 import { ensureGlossaryFile } from './glossaryFile';
 
 /**
- * 设置页面里的「录播切片」：用哪个 Gemini 模型、走接口还是本机的 agy、专有词汇、「自动」时多少分以上才做、切片保存在哪里、本地打轴模型装不装。
+ * 设置页面里的「录播切片」：用哪个 Gemini 模型、走接口还是本机的 agy、专有词汇、「自动」时多少分以上才推荐、切片保存在哪里、本地打轴模型装不装。
  * API key 和接口地址用「语音转文字」里 Google Gemini 的那一份，不用另外填。
  * 接入点：custom/settings/SettingsPage.tsx。
  */
@@ -61,7 +61,7 @@ function HighlightOption(props: {}): ReactElement {
         </Space>
       </Row>
       { /* 数字是之前切过的几场（共约 3 小时）里各个分数以上的爆点数，按每小时算 */ }
-      <Row label="「自动」的门槛" hint="越高切片越少。按之前切过的几场，每小时直播大约：8 分 5～6 个，8.5 分 3 个，9 分 1～2 个，9.5 分不到 1 个">
+      <Row label="「自动」的门槛" hint="找完爆点后默认推荐哪些（切哪些由你挑）。越高推荐得越少，按之前切过的几场，每小时直播大约：8 分 5～6 个，8.5 分 3 个，9 分 1～2 个，9.5 分不到 1 个">
         <Segmented options={ AUTO_SCORE_OPTIONS.map((score: number): { label: string; value: number } => ({ label: `${ score } 分`, value: score })) }
           value={ resolveSetting(overrides, 'highlightAutoScore') ?? AUTO_SCORE }
           onChange={ (value: number): void => setSetting('highlightAutoScore', value === AUTO_SCORE ? undefined : value) }

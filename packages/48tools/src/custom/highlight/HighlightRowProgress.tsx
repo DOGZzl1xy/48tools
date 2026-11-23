@@ -2,6 +2,7 @@ import { Fragment, type ReactElement, type ReactNode } from 'react';
 import { theme, type GlobalToken } from 'antd';
 import { useQueueTasks, type QueueTask } from '../downloadQueue/downloadQueue';
 import { highlightTaskId } from './highlightTask';
+import { pickKey } from './highlightShow';
 
 /**
  * 录播列表「下载进度」那一列里的切片进度：这一行的录播正在自动切片时，显示做到哪一步了
@@ -10,14 +11,14 @@ import { highlightTaskId } from './highlightTask';
  * 接入点：Pocket48Record.tsx 的「下载进度」列。
  */
 function runningHighlight(tasks: Array<QueueTask>, liveId: string): QueueTask | undefined {
-  const id: string = highlightTaskId(liveId);
+  const ids: Array<string> = [highlightTaskId(liveId), highlightTaskId(pickKey({ liveId }))]; // 找爆点、切片
 
-  return tasks.find((task: QueueTask): boolean => task.id === id && task.status === 'running');
+  return tasks.find((task: QueueTask): boolean => ids.includes(task.id) && task.status === 'running');
 }
 
 /* 有没有正在进行的切片任务（没有任何任务时「下载进度」这一列不显示） */
 export function useHighlightRunning(): boolean {
-  return useQueueTasks().some((task: QueueTask): boolean => task.kind === '切片' && task.status === 'running');
+  return useQueueTasks().some((task: QueueTask): boolean => (task.kind === '找爆点' || task.kind === '切片') && task.status === 'running');
 }
 
 function HighlightRowProgress(props: { readonly liveId: string; readonly downloading: boolean; readonly children: ReactNode }): ReactElement {
@@ -32,7 +33,7 @@ function HighlightRowProgress(props: { readonly liveId: string; readonly downloa
   return (
     <Fragment>
       { downloading ? <div className="mb-[6px]">{ children }</div> : null }
-      <span style={{ color: token.colorLink }} aria-label="切片进度" aria-valuenow={ percent }>自动切片 · 总进度 { percent }%</span>
+      <span style={{ color: token.colorLink }} aria-label="切片进度" aria-valuenow={ percent }>{ task.kind } · 总进度 { percent }%</span>
       <div className="mt-[4px] h-[4px] w-[120px] overflow-hidden rounded-full" style={{ background: token.colorFillSecondary }}>
         <div className="h-full rounded-full transition-[width] duration-300" style={{ width: `${ percent }%`, background: token.colorPrimary }} />
       </div>

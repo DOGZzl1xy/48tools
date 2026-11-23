@@ -1,9 +1,11 @@
 import * as fs from 'node:fs';
 import { shell } from 'electron';
 import type { ReactElement } from 'react';
+import { useNavigate, type NavigateFunction } from 'react-router';
 import { App, Drawer, Progress, Tag, Button, Empty, Typography, Space, Tooltip } from 'antd';
 import type { useAppProps } from 'antd/es/app/context';
 import { useShellState, setQueueOpen, type ShellState } from '../shell/shellStore';
+import { selectShow } from '../highlight/showStore';
 import {
   useQueueTasks,
   queueTaskRemove,
@@ -15,6 +17,7 @@ import {
 /**
  * 下载队列的界面：从右边滑出的任务列表。入口是侧边栏底部的「下载队列」（显示正在进行的任务数和总进度）。
  * 数据来自 ./downloadQueue，开关状态在 shell/shellStore。失败或停止的任务有「重试」（这次运行里开始的任务才有）。
+ * 找好爆点、切完的任务可以直接去切片页面（custom/highlight/HighlightsPage）看那一场。
  * 右上角「清除记录」把已经结束的任务从列表里拿掉（文件不删），每一条上的「移除」只拿掉那一条。
  * 由 custom/shell/AppShell 渲染，所有页面都能打开。
  */
@@ -43,7 +46,15 @@ function showInFolder(filePath: string): void {
 
 function TaskItem(props: { task: QueueTask }): ReactElement {
   const { task }: { task: QueueTask } = props;
+  const navigate: NavigateFunction = useNavigate();
   const isRunning: boolean = task.status === 'running';
+  const toPick: boolean = task.kind === '找爆点'; // 找好了：等着挑
+
+  function handleShowClick(): void {
+    selectShow(task.filePath);
+    setQueueOpen(false);
+    navigate('/48/Highlights');
+  }
 
   return (
     <div className="py-[12px] border-b border-solid border-x-0 border-t-0 border-[#8882]">
@@ -70,6 +81,11 @@ function TaskItem(props: { task: QueueTask }): ReactElement {
       }
       <Space className="mt-[6px]" size={ 4 }>
         { isRunning && task.stop ? <Button size="small" danger={ true } onClick={ (): void => task.stop?.() }>停止</Button> : null }
+        {
+          (toPick || task.kind === '切片') && task.status === 'done' && task.filePath
+            ? <Button size="small" type={ toPick ? 'primary' : 'default' } ghost={ toPick } onClick={ handleShowClick }>{ toPick ? '去挑爆点' : '看切片' }</Button>
+            : null
+        }
         {
           task.filePath
             ? <Button size="small" onClick={ (): void => showInFolder(task.filePath!) }>打开所在文件夹</Button>

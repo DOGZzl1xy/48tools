@@ -93,12 +93,22 @@ export function useMemberDirectory(): DirectoryState {
   return useSyncExternalStore(subscribe, getMemberDirectory);
 }
 
-/* 界面上显示的队伍：短写法和完整说明（鼠标放上去时显示）；名单里没有这个成员时是 undefined */
-export function teamOf(directory: DirectoryState, ownerId: number): { label: string; title: string } | undefined {
-  const member: DirectoryMember | undefined = directory.byId[ownerId];
+function teamOfMember(member: DirectoryMember | undefined): { label: string; title: string } | undefined {
   const label: string = teamLabel(member?.team);
 
   if (!member || !label) return undefined;
 
   return { label, title: member.group && member.group !== member.team ? `${ member.group } ${ member.team }` : label };
+}
+
+/* 界面上显示的队伍：短写法和完整说明（鼠标放上去时显示）；名单里没有这个成员时是 undefined */
+export function teamOf(directory: DirectoryState, ownerId: number): { label: string; title: string } | undefined {
+  return teamOfMember(directory.byId[ownerId]);
+}
+
+/* 只知道名字时（切片的清单里只有名字）；同名的不止一个人时不猜 */
+export function teamOfName(directory: DirectoryState, name: string): { label: string; title: string } | undefined {
+  const same: Array<DirectoryMember> = directory.members.filter((member: DirectoryMember): boolean => member.name === name);
+
+  return same.length === 1 ? teamOfMember(same[0]) : undefined;
 }

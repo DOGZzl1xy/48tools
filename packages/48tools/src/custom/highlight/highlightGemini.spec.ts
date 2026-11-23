@@ -271,6 +271,15 @@ describe('片段的字幕、标题、简介', (): void => {
     expect(readScript({ lines: [], people: ['测试成员', 'SNH48-成员乙'] }, highlight, 'SNH48 测试成员').people).toEqual(['成员乙']);
   });
 
+  test('说明要写出具体内容；改过的标题和说明交给写字幕那一步，没改过的不多写', (): void => {
+    const found: string = findRequest({ member: 'SNH48 测试成员', title: '测试' }, { start: 0, length: 600 }, '', []).parts[0].text ?? '';
+    const script: (item: Highlight) => string = (item: Highlight): string => scriptRequest({ member: 'SNH48 测试成员', title: '测试' }, item, 60, '', []).parts[0].text ?? '';
+
+    expect(found).toContain('不要只写「反差感拉满」');
+    expect(script(highlight)).not.toContain('挑片的人核对');
+    expect(script({ ...highlight, title: '改过的标题', reason: '她说的是乙', edited: true })).toContain('主题是：「改过的标题」。\n挑片的人核对、改过这一段的标题和说明，说明是：「她说的是乙」');
+  });
+
   test('找爆点的提示里要求严格打分', (): void => {
     const prompt: string = findRequest({ member: '测试成员', title: '测试直播' }, { start: 0, length: 1_800 }, 'QUJD', []).parts[0].text!;
 

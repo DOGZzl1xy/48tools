@@ -31,13 +31,13 @@ function AutoGrabActionsForm(props: AutoGrabActionsFormProps): ReactElement {
       </p>
       <Checkbox.Group className="flex flex-col gap-[10px]" value={ value } onChange={ handleChange }>
         <Checkbox value="full">完整直播：下载整场录播和弹幕</Checkbox>
-        <Checkbox value="clip">切片：用录播自动做切片（数量自动）</Checkbox>
+        <Checkbox value="clip">切片：用录播找爆点，等你挑好再切</Checkbox>
       </Checkbox.Group>
       <p className="mt-[12px] mb-0 text-[12px] opacity-70">
         {
           value.length === 0
             ? '至少勾一个。'
-            : (value.length === 2 ? '录播和切片都留着。' : (value[0] === 'clip' ? '只勾切片：切完删掉录播，只留切片（电台也切）。' : '电台下载的是录音和一张封面。'))
+            : (value.length === 2 ? '录播和切片都留着。' : (value[0] === 'clip' ? '只勾切片：录播留到你挑好、切完，然后删掉，只留切片（电台也切）。' : '电台下载的是录音和一张封面。'))
         }
       </p>
       {

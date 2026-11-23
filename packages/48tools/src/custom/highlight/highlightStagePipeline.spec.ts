@@ -9,8 +9,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as process from 'node:process';
-import { processHighlight, type ClipResult, type HighlightDeps, type HighlightJob, type HighlightResult } from './highlightPipeline';
+import { findHighlights, processHighlight, type ClipResult, type HighlightDeps, type HighlightJob, type HighlightResult } from './highlightPipeline';
 import { mediaDuration } from './highlightFfmpeg';
+import { readShowInfoSync, type ShowInfo } from './highlightShow';
 import type { DanmuLine } from './highlightTypes';
 
 const FFMPEG: string = 'ffmpeg';
@@ -198,4 +199,33 @@ function videoSize(file: string): string {
     expect(result.clips.map((clip: ClipResult): string => clip.title)).toEqual(['弹幕惹的祸']);
     expect(result.skipped.join('\n')).toContain('「被拦的爆点」写字幕时被模型以内容为由拒绝');
   }, 600_000);
+
+  test('找爆点：找到了就停下来等人挑，录播留着；一个都没找到就不留', async (): Promise<void> => {
+    for (const found of [true, false]) {
+      const workDir: string = path.join(dir, `.work-find-${ found }`);
+      const source: string = path.join(workDir, 'source.mp4');
+
+      fs.mkdirSync(workDir, { recursive: true });
+      expect(spawnSync(FFMPEG, [
+        '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=10', '-f', 'lavfi', '-i', 'sine=frequency=330:sample_rate=48000',
+        '-t', '100', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-y', source
+      ], { windowsHide: true }).status).toBe(0);
+
+      const answer: unknown = { summary: '聊天', highlights: found ? [{ start: '00:10', end: '01:10', title: '爆点', cover: '', quote: '', reason: '说明', score: 9 }] : [] };
+      const job: HighlightJob = {
+        liveId: 'find', member: 'SNH48 测试成员', title: '测试', date: '2026.11.23', count: 'auto', outDir: path.join(dir, `find-${ found }`), workDir, ffmpeg: FFMPEG,
+        gemini: { apiKey: 'test-key', model: 'test-model', baseUrl: 'https://gemini.invalid', via: 'api' }
+      };
+      const info: ShowInfo = await findHighlights(job, {
+        liveInfo: (): Promise<never> => Promise.reject(new Error('不该下载')),
+        fetchText: (): Promise<never> => Promise.reject(new Error('不该下载')),
+        fetchImpl: ((): Promise<Response> => Promise.resolve(new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(answer) }] } }] })))) as unknown as typeof fetch
+      }, { source, danmu: [] }, (): void => undefined);
+
+      expect(info.status).toBe(found ? 'waiting' : 'done');
+      expect(readShowInfoSync(job.outDir)).toEqual(info);
+      expect(fs.existsSync(source)).toBe(found);
+      expect(fs.existsSync(workDir)).toBe(found);
+    }
+  }, 120_000);
 });

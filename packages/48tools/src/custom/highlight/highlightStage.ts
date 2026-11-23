@@ -1,4 +1,4 @@
-import { audioPart, knowledge, DANMU_TEXT_LENGTH, TASTE, type GeminiAsk, type LiveMeta } from './highlightGemini';
+import { audioPart, knowledge, DANMU_TEXT_LENGTH, REASON_RULE, TASTE, type GeminiAsk, type LiveMeta } from './highlightGemini';
 import { clock, danmuHeat, isGiftDanmu, CLIP_MIN_SECONDS, CLIP_MAX_SECONDS, type ClipWindow } from './highlightTime';
 import type { AudioWindow, ClipScript, DanmuLine, Highlight, StageKind } from './highlightTypes';
 import { stageShowLabel, type StageInfo } from './highlightStageAss';
@@ -184,7 +184,7 @@ ${ TASTE }
 2. quote：mc 写最有传播力的一句原话；mistake、song 写一句能代表它的话或歌词。
 3. title 是给切片用的标题，12 个字以内，口语化，有梗，不要标题党，不要标点，不用写队名。
 4. cover 是写在封面上的一句话，10 个字以内。cover_lines 是封面上的大字，按内容需要写 1～3 行（每行 4～10 个字；一句话能说清的只写一行，不要为了凑三行硬拆或者加废话），每行最多一处用【】标出要用色块突出的词，例如「娜姐【耳朵红了】」。
-5. score 是 1 到 10 的分，可以用半分。打分要严格、拉开差距：9 分以上是路人刷到也会笑或者想转发的；8～8.5 分是粉丝会主动转发的名场面；7～7.5 分是粉丝看了觉得有意思；6.5 分以下不要选。reason 用一句话说明为什么选它。
+5. score 是 1 到 10 的分，可以用半分。打分要严格、拉开差距：9 分以上是路人刷到也会笑或者想转发的；8～8.5 分是粉丝会主动转发的名场面；7～7.5 分是粉丝看了觉得有意思；6.5 分以下不要选。${ REASON_RULE }
 6. 按 score 从高到低给出 3 到 8 个；真的没有就少给，不要凑数。片段之间不要重叠。
 7. summary 用两三句话概括这段公演在做什么（第几首歌、哪个 MC 环节）。
 8. reaction：mistake 写粉丝开始刷反应的那条弹幕前面的时间，从下面「弹幕」里原样抄（MM:SS），不要自己估；mc、song，或者没有弹幕时写空字符串。${ quotes ? `

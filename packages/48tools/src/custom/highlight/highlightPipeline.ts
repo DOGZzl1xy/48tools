@@ -27,22 +27,25 @@ import {
   buildStageVideoAss, stageRenderFilter, buildStageCoverAss, stageCoverFilter, STAGE_VIDEO, type StageInfo
 } from './highlightStageAss';
 import { locateMistake, locateSong, lowBandLevels, type StageTiming } from './highlightStageTiming';
+import { newShowInfo, readShowInfo, writeShowInfo, highlightOf, planCuts, withResult, INFO_FILE, type ShowInfo, type ShowItem } from './highlightShow';
 
 /**
  * 录播自动切片：给一场直播的录播，自动剪出几个横屏短视频（左边直播画面，右上她说的话，右下弹幕），
  * 每个带封面、标题和简介。听音频、挑片段、写字幕都由 Gemini 做，剪和合成用 ffmpeg。
  * 电台也切（用户 2026-11-23 定的，找爆点的标准和视频直播一样，排版也一样）：录音没有画面，左边放电台封面（见 saveRadioCover、stillInput）。
  *
- * 流程（runHighlight；第 1 步是 prepareHighlight，后面是 processHighlight）：
+ * 分两次做（用户 2026-11-23 定的：找完爆点停下来等人挑，挑好了再切）：prepareHighlight、findHighlights 找到第 3 步，
+ * 清单存在输出文件夹里（./highlightShow）；挑好以后 cutHighlights 从第 4 步接着做，只做挑的。
+ * 流程：
  *   1. 取录播地址和弹幕文件，把整场录播下载到工作文件夹（同时下 4 个分片，不重新编码，见 ./highlightDownload）
  *   2. 每半小时一段，音频和弹幕（只有时间和内容）交给 Gemini，找出可能成为爆点的片段和时间。
  *      Gemini 可以走按量付费的接口，也可以走本机的 agy（订阅额度，见 ./highlightAgy）；走 agy 时它说的时间不准，
  *      改用它引的原话到本地识别的结果里定位（见 ./highlightQuotes），所以要装本地打轴模型
- *   3. 各段的结果合在一起按分数排，决定做哪几个（用户选的数量，或者自动）
+ *   3. 各段的结果合在一起按分数排，推荐哪几个（用户选的数量，或者自动），写好清单等人挑
  *   4. 每个片段前后多留十几秒再交给 Gemini：出逐句字幕、每句留不留、重点词、三个不同风格的标题（第一个用在画面上）、简介、看点、除了主播还有谁是主角
  *   5. 用声音里的停顿和音节把每句话的时间对准（模型标的时间偶尔早一两秒，见 ./highlightAlign）；装了本地打轴模型时再用它认出来的每个字的时间（见 ./highlightTokens），按留下的句子剪掉沉默和无关的话，合成横屏视频；再从成片里挑一帧做封面（16:9 和 4:3 各一张）
  *   6. 成片、两张封面、说明（标题和简介）放进输出文件夹；工作文件夹用完删掉
- * 中途失败或停止时工作文件夹留着，重试时下载好的录播和已经问过 Gemini 的结果不用重来。
+ * 中途失败或停止时工作文件夹留着，重试时下载好的录播和已经问过 Gemini 的结果不用重来。等人挑的时候下载好的录播也留在工作文件夹里，切完才删。
  *
  * 这个文件不碰界面、设置和下载队列（见 ./highlightTask），取录播信息的函数由调用的地方传进来，方便单独测试。
  */
@@ -61,6 +64,7 @@ export interface HighlightJob {
   members?: string;     // 成员名单那一段提示（./highlightMembers 的 membersPrompt）
   stage?: StageInfo;    // 公演切片（B 站公演录像）：用公演版的提示、规则和排版（./highlightStage、./highlightStageAss）
   radio?: boolean;      // 电台：只下录音，成片左边放电台封面（见 saveRadioCover）
+  local?: { file: string; danmuFile?: string }; // 用本机已经下好的录播和弹幕（自动抓取），不再下载
 }
 
 export interface HighlightDeps {
@@ -130,11 +134,14 @@ export interface ClipResult {
 
 type ClipInfo = Omit<ClipResult, 'video' | 'cover' | 'cover43' | 'text'>;
 
-export interface HighlightResult {
+export interface CutResult {
   clips: Array<ClipResult>;
+  skipped: Array<string>;      // 没做成的片段和原因
+}
+
+export interface HighlightResult extends CutResult {
   found: number;               // 一共找到几个爆点
   summary: string;
-  skipped: Array<string>;      // 没做成的片段和原因
   infoFile?: string;           // 汇总说明
 }
 
@@ -143,7 +150,6 @@ const NEED_ALIGNER: string = '通过本机的 agy 做切片时，要先在「设
 
 /* 各步占总进度的多少 */
 export const DOWNLOAD_END: number = 30;
-const FIND_END: number = 45;
 
 async function exists(file: string): Promise<boolean> {
   try {
@@ -624,19 +630,45 @@ async function locateStageItem(
 }
 
 /**
- * 第 2 ~ 6 步：找爆点、写字幕、剪、合成、做封面
+ * 推荐切哪几个（candidates 按分数从高到低排好）：公演的「自动」按 MC、唱歌、失误各算各的名额（./highlightStage 的 STAGE_QUOTA），别的取前几个
+ * @return { Set<number> } 第几个候选
+ */
+export function recommend(job: Pick<HighlightJob, 'count' | 'autoScore' | 'stage'>, candidates: Array<Highlight>, duration: number): Set<number> {
+  const quota: StageQuota | null = job.stage && job.count === 'auto' ? stageQuota(candidates, job.autoScore ?? AUTO_SCORE) : null;
+  const target: number = quota ? quota.total : targetCount(candidates, job.count, duration, job.autoScore);
+  const byKind: Record<StageKind, number> = { mc: 0, song: 0, mistake: 0 };
+  const picked: Set<number> = new Set();
+
+  for (const [order, item] of candidates.entries()) {
+    if (picked.size >= target) break;
+
+    const kind: StageKind = stageKindOf(item);
+
+    // 这一类不够分，或者名额满了：看下一个候选
+    if (quota && (item.score < quota.minScore[kind] || byKind[kind] >= quota.limit[kind])) continue;
+
+    picked.add(order);
+    byKind[kind]++;
+  }
+
+  return picked;
+}
+
+/**
+ * 第 2、3 步：找爆点，写好清单（输出文件夹里的 爆点.json）等人挑。重新找一遍时，以前做好的切片会接过来
  * @param { HighlightJob } job
  * @param { HighlightDeps } deps
  * @param { PreparedSource } prepared - prepareHighlight 的结果
- * @param { (progress: HighlightProgress) => void } onProgress - 这几步占总进度的 DOWNLOAD_END ~ 100
+ * @param { (progress: HighlightProgress) => void } onProgress - 这一步占总进度的 DOWNLOAD_END ~ 100
  * @param { AbortSignal } [signal] - 用户点了停止
  */
-export async function processHighlight(
+export async function findHighlights(
   job: HighlightJob, deps: HighlightDeps, prepared: PreparedSource, onProgress: (progress: HighlightProgress) => void, signal?: AbortSignal
-): Promise<HighlightResult> {
+): Promise<ShowInfo> {
   const glossary: Glossary = parseGlossary(job.glossary);
   const meta: LiveMeta = { member: job.member, title: job.title, glossary: glossaryPrompt(glossary), members: job.members };
   const { source, danmu }: PreparedSource = prepared;
+  const cacheFiles: Array<string> = [];
 
   checkStopped(signal);
   // 找爆点、剪片段都往工作文件夹里写；用已经下好的录播切片时（自动抓取）前面没有下载这一步，文件夹还没建，
@@ -660,7 +692,8 @@ export async function processHighlight(
     const cacheFile: string = path.join(job.workDir, `find-${ Math.round(window.start) }.json`);
     let found: FoundWindow | undefined = await readJsonFile(cacheFile);
 
-    onProgress({ percent: DOWNLOAD_END + ((order / windows.length) * (FIND_END - DOWNLOAD_END)), detail: `${ label }…` });
+    cacheFiles.push(cacheFile);
+    onProgress({ percent: DOWNLOAD_END + ((order / windows.length) * (100 - DOWNLOAD_END)), detail: `${ label }…` });
 
     if (!found) {
       const audio: string = path.join(job.workDir, `audio-${ Math.round(window.start) }.mp3`);
@@ -706,7 +739,7 @@ export async function processHighlight(
       let tokens: Array<TimedToken> | null | undefined;
 
       if (viaAgy && found.highlights.some((item: Highlight): boolean => !job.stage || stageKindOf(item) === 'mc')) {
-        onProgress({ percent: DOWNLOAD_END + (((order + 0.6) / windows.length) * (FIND_END - DOWNLOAD_END)), detail: `${ label }：按原话定位…` });
+        onProgress({ percent: DOWNLOAD_END + (((order + 0.6) / windows.length) * (100 - DOWNLOAD_END)), detail: `${ label }：按原话定位…` });
         tokens = await deps.recognize!(audio, signal);
 
         if (!tokens) throw new Error(NEED_ALIGNER);
@@ -745,97 +778,47 @@ export async function processHighlight(
     found.summary && summaries.push(found.summary);
   }
 
-  // 3. 决定做哪几个
+  // 3. 推荐哪几个，写好清单
   const candidates: Array<Highlight> = mergeHighlights(all);
-  // 公演的「自动」：MC、唱歌、失误各算各的名额（见 ./highlightStage 的 STAGE_QUOTA）
-  const quota: StageQuota | null = job.stage && job.count === 'auto' ? stageQuota(candidates, job.autoScore ?? AUTO_SCORE) : null;
-  const target: number = quota ? quota.total : targetCount(candidates, job.count, duration, job.autoScore);
-  const madeByKind: Record<StageKind, number> = { mc: 0, song: 0, mistake: 0 };
-  const fonts: FontSet = await pickFonts(job.workDir);
-  const context: ClipContext = {
-    job, deps, signal, source, duration, danmu, meta, glossary,
-    fonts: fonts.dir ? { ...fonts, dir: `../${ fonts.dir }` } : fonts, // 合成时的当前文件夹是 clip-N
-    still: await stillInput(job.ffmpeg, prepared, signal)
-  };
-  const clips: Array<ClipResult> = [];
-  const skipped: Array<string> = [...unlocated];
+  const info: ShowInfo = newShowInfo(job, {
+    model: job.gemini.model, duration, summaries, notes: unlocated, items: candidates, recommended: recommend(job, candidates, duration)
+  }, await readShowInfo(job.outDir));
 
-  // 4 ~ 6. 一个一个做；某个剪完太短就换下一个候选
-  for (const [slot, highlight] of candidates.entries()) {
-    if (clips.length >= target) break;
+  await writeShowInfo(job.outDir, info);
 
-    // 这一类不够分，或者名额满了：看下一个候选
-    if (quota && (highlight.score < quota.minScore[stageKindOf(highlight)] || madeByKind[stageKindOf(highlight)] >= quota.limit[stageKindOf(highlight)])) continue;
+  // 清单存好了，这些就没用了（留着的话重新找一遍时会直接用上次的结果）
+  for (const file of cacheFiles) await fsP.rm(file, { force: true });
 
-    checkStopped(signal);
+  // 一个都没找到：没有要切的，工作文件夹（里面有下载好的录播）不用留
+  if (candidates.length === 0) await fsP.rm(job.workDir, { recursive: true, force: true }).catch((): void => undefined);
+  // 找到了：下载好的录播留着，切的时候要用；里面什么都没有就删掉
+  else await fsP.rmdir(job.workDir).catch((): void => undefined);
 
-    const index: number = clips.length + 1;
-    const base: number = FIND_END + (((index - 1) / target) * (100 - FIND_END));
-    const made: ClipResult | string = await makeClip(context, highlight, index, slot + 1, (stage: string, part: number): void => {
-      onProgress({ percent: base + ((part / target) * (100 - FIND_END)), detail: `第 ${ index }/${ target } 个：${ stage }` });
-    });
-
-    if (typeof made === 'string') {
-      skipped.push(made);
-    } else {
-      clips.push(made);
-      madeByKind[stageKindOf(highlight)]++;
-    }
-  }
-
-  // 汇总说明；成功后删掉工作文件夹（里面有整场录播，很大）
-  let infoFile: string | undefined;
-
-  if (clips.length > 0) {
-    infoFile = path.join(job.outDir, '切片说明.txt');
-    await fsP.writeFile(infoFile, [
-      `${ job.member }「${ job.title }」${ job.date }`,
-      `录播长度 ${ clock(duration) }，找到 ${ candidates.length } 个爆点，做了 ${ clips.length } 个切片（模型 ${ job.gemini.model }）`,
-      '',
-      ...summaries.map((text: string, order: number): string => `第 ${ order + 1 } 段：${ text }`),
-      '',
-      ...clips.flatMap((clip: ClipResult): Array<string> => [
-        `${ String(clip.index).padStart(2, '0') }. ${ clip.postTitle }（${ clock(clip.start) } ~ ${ clock(clip.end) }，${
-          Math.round(clip.duration) } 秒，${ clip.score } 分）`,
-        ...clip.otherTitles.map((title: string): string => `    备选：${ title }`),
-        `    ${ clip.description }`,
-        ''
-      ]),
-      ...(skipped.length > 0 ? ['没做成的：', ...skipped] : []),
-      '没做的其他爆点：',
-      ...candidates
-        .filter((item: Highlight): boolean => !clips.some((clip: ClipResult): boolean => clip.start < item.end && clip.end > item.start))
-        .map((item: Highlight): string => `    ${ clock(item.start) } ~ ${ clock(item.end) } ${ item.title }（${ item.score } 分）${ item.reason }`),
-      ''
-    ].join('\r\n'));
-  }
-
-  await fsP.rm(job.workDir, { recursive: true, force: true }).catch((): void => undefined);
-
-  return { clips, found: candidates.length, summary: summaries.join(' '), skipped, infoFile };
+  return info;
 }
 
 /**
- * 按给定的片段做切片，不再找爆点：用户从「切片说明」的「没做的其他爆点」里挑了要补切的（2026-11-23）。
- * 起止就用给的时间（说明里写的时间已经按原话、伴奏定位过）；MC 照样写字幕、剪掉无关的话，唱歌、失误整段保留。
- * 成片从 firstIndex 开始编号，接在已经做好的后面。不写切片说明（由调用的地方写），做完删掉工作文件夹
+ * 第 4 ~ 6 步：把挑好的（清单里 cut 的）做成切片，写字幕、剪、合成、做封面。做完一个就记一个（onMade），中途停了不会忘；
+ * 某个剪完太短、被模型拒绝的跳过，原因也交给 onMade。重切的用原来的编号，旧文件换掉。全部做完删掉工作文件夹（里面可能有整场录播，很大）
  * @param { HighlightJob } job
  * @param { HighlightDeps } deps
  * @param { PreparedSource } prepared
- * @param { Array<Highlight> } chosen - 要做的片段，按这个顺序做
- * @param { number } firstIndex - 第一个成片的编号
+ * @param { ShowInfo } info
  * @param { (progress: HighlightProgress) => void } onProgress - 0 ~ 100
- * @param { AbortSignal } [signal]
+ * @param { (item: ShowItem, result: ClipResult | string) => Promise<void> } onMade
+ * @param { AbortSignal } [signal] - 用户点了停止
  */
-export async function processChosenHighlights(
-  job: HighlightJob, deps: HighlightDeps, prepared: PreparedSource, chosen: Array<Highlight>, firstIndex: number,
-  onProgress: (progress: HighlightProgress) => void, signal?: AbortSignal
-): Promise<{ clips: Array<ClipResult>; skipped: Array<string> }> {
+export async function cutHighlights(
+  job: HighlightJob, deps: HighlightDeps, prepared: PreparedSource, info: ShowInfo,
+  onProgress: (progress: HighlightProgress) => void, onMade: (item: ShowItem, result: ClipResult | string) => Promise<void>, signal?: AbortSignal
+): Promise<CutResult> {
   const glossary: Glossary = parseGlossary(job.glossary);
   const meta: LiveMeta = { member: job.member, title: job.title, glossary: glossaryPrompt(glossary), members: job.members };
 
   checkStopped(signal);
+  // 用已经下好的录播切片时（自动抓取）前面没有下载这一步，文件夹还没建，ffmpeg 会报「Error opening output files」（2026-11-23 实际遇到）
   await fsP.mkdir(job.workDir, { recursive: true });
+  await fsP.mkdir(job.outDir, { recursive: true });
 
   const duration: number = await mediaDuration(job.ffmpeg, prepared.source, signal);
   const fonts: FontSet = await pickFonts(job.workDir);
@@ -844,18 +827,30 @@ export async function processChosenHighlights(
     fonts: fonts.dir ? { ...fonts, dir: `../${ fonts.dir }` } : fonts, // 合成时的当前文件夹是 clip-N
     still: await stillInput(job.ffmpeg, prepared, signal)
   };
+  const plan: Array<{ item: ShowItem; index: number }> = planCuts(info, await fsP.readdir(job.outDir));
   const clips: Array<ClipResult> = [];
   const skipped: Array<string> = [];
 
-  for (const [order, highlight] of chosen.entries()) {
+  for (const [order, { item, index }] of plan.entries()) {
     checkStopped(signal);
 
-    const made: ClipResult | string = await makeClip(context, highlight, firstIndex + clips.length, order + 1, (stage: string, part: number): void => {
-      onProgress({ percent: ((order + part) / chosen.length) * 100, detail: `第 ${ order + 1 }/${ chosen.length } 个：${ stage }` });
+    const before: Array<string> = (await fsP.readdir(job.outDir)).filter((name: string): boolean => name.startsWith(`${ String(index).padStart(2, '0') }-`));
+    const made: ClipResult | string = await makeClip(context, highlightOf(item), index, Math.round(item.start), (stage: string, part: number): void => {
+      onProgress({ percent: ((order + part) / plan.length) * 100, detail: `第 ${ order + 1 }/${ plan.length } 个：${ stage }` });
     });
 
-    if (typeof made === 'string') skipped.push(made);
-    else clips.push(made);
+    if (typeof made === 'string') {
+      skipped.push(made);
+    } else {
+      const now: Set<string> = new Set([made.video, made.cover, made.cover43, made.text].map((file: string): string => path.basename(file)));
+
+      // 重切：标题换了的话，原来编号的旧文件换掉
+      for (const name of before) now.has(name) || await fsP.rm(path.join(job.outDir, name), { force: true });
+
+      clips.push(made);
+    }
+
+    await onMade(item, made);
   }
 
   await fsP.rm(job.workDir, { recursive: true, force: true }).catch((): void => undefined);
@@ -864,7 +859,32 @@ export async function processChosenHighlights(
 }
 
 /**
- * 给一场录播做自动切片：下载完接着切，中间不停
+ * 找完直接切推荐的，中间不停（程序里是找完等人挑，这个给测试和检查脚本用）
+ * @param { HighlightJob } job
+ * @param { HighlightDeps } deps
+ * @param { PreparedSource } prepared
+ * @param { (progress: HighlightProgress) => void } onProgress
+ * @param { AbortSignal } [signal]
+ */
+export async function processHighlight(
+  job: HighlightJob, deps: HighlightDeps, prepared: PreparedSource, onProgress: (progress: HighlightProgress) => void, signal?: AbortSignal
+): Promise<HighlightResult> {
+  let info: ShowInfo = await findHighlights(job, deps, prepared, onProgress, signal);
+  const { clips, skipped }: CutResult = await cutHighlights(job, deps, prepared, info, onProgress, async (item: ShowItem, result: ClipResult | string): Promise<void> => {
+    info = withResult(info, item, result);
+    await writeShowInfo(job.outDir, info);
+  }, signal);
+
+  await writeShowInfo(job.outDir, { ...info, status: 'done' });
+
+  return {
+    clips, skipped: [...info.notes, ...skipped], found: info.items.length, summary: info.summaries.join(' '),
+    infoFile: path.join(job.outDir, INFO_FILE)
+  };
+}
+
+/**
+ * 下载、找爆点、切推荐的，中间不停（同上，给测试和检查脚本用）
  * @param { HighlightJob } job
  * @param { HighlightDeps } deps
  * @param { (progress: HighlightProgress) => void } onProgress

@@ -13,9 +13,11 @@ import { SEGMENT_TIMEOUT, segmentViaProxy } from '../download/segmentRetry';
 import { pocket48Agent } from '../pocket48Proxy/pocket48Proxy';
 import { queueTaskStart, queueTaskProgress, queueTaskEnd } from '../downloadQueue/downloadQueue';
 import {
-  prepareHighlight, processHighlight, saveRadioCover, DOWNLOAD_END,
-  type HighlightJob, type HighlightDeps, type HighlightProgress, type HighlightResult, type ClipResult, type PreparedSource
+  prepareHighlight, findHighlights, saveRadioCover, DOWNLOAD_END,
+  type HighlightJob, type HighlightDeps, type HighlightProgress, type PreparedSource
 } from './highlightPipeline';
+import { pickKey, readShowInfoSync, type ShowInfo, type ShowItem } from './highlightShow';
+import { reloadShow, selectShow } from './showStore';
 import { highlightDefaults, type GeminiConfig } from './highlightGemini';
 import { StagedQueue, type QueueStage, type QueueOutcome } from './highlightQueue';
 import { recognizeAudio, isAlignerInstalled } from './alignerRun';
@@ -26,6 +28,7 @@ import { downloadReplay, type DownloadProgress } from './highlightDownload';
 import { membersPrompt } from './highlightMembers';
 import { getMemberDirectory, loadMemberDirectory } from '../room/memberDirectory';
 import { beijingDate } from '../room/roomTime';
+import { sleep } from '../common/util';
 import type { HighlightCount } from './highlightTypes';
 import { getLiveRecordDir } from '../live/liveRecording';
 import { keptReplayOf } from '../live/replayGrabCore';
@@ -34,7 +37,9 @@ import { keptReplayOf } from '../live/replayGrabCore';
  * 录播自动切片接到程序里的部分：从设置里读 Gemini 的 key 和保存位置，登记到下载队列，排队执行。
  * 真正干活的是 ./highlightPipeline，排队的规则在 ./highlightQueue：
  * 同一时间只切一场（合成视频很吃 CPU），前一场开始切的时候后一场就开始下载录播；同一场录播不会重复加。
- * 接入点：./HighlightDialog（录播列表里点「自动切片」后的对话框）。
+ * 分两次排队：先找爆点，清单写好就停下来等人在切片页面挑（用户 2026-11-23 定的）；挑好了再排队切（./pickTask）。
+ * 「切完」要做的事（自动抓取：切完删掉录播）等真的切完才做：找完爆点时记在 waitingEnds 里，切完、不切了时由 endWaiting 叫到。
+ * 接入点：./HighlightDialog（录播列表里点「自动切片」后的对话框）、../live/replayGrab、../bilibili 的公演切片。
  */
 export interface HighlightRecord {
   liveId: string;
@@ -46,6 +51,7 @@ export interface HighlightRecord {
 
 const OUT_FOLDER: string = '录播切片';
 const WORK_FOLDER: string = '.work';
+const SHOWS_HASH: string = '#/48/Highlights';
 const queue: StagedQueue<PreparedSource> = new StagedQueue();
 
 /* 视频直播和电台都能切（电台用电台封面当画面，用户 2026-11-23 定的） */
@@ -110,18 +116,40 @@ export function highlightJobOf(record: HighlightRecord, count: HighlightCount, b
   };
 }
 
-function doneText(result: HighlightResult): string {
-  if (result.clips.length === 0) {
-    return result.found === 0 ? '这场录播里没有找到值得剪的片段' : '找到的片段剪完都太短，没有做成切片';
-  }
+function foundText(info: ShowInfo): string {
+  if (info.items.length === 0) return '这场录播里没有找到值得剪的片段';
 
-  return `做了 ${ result.clips.length } 个切片：${ result.clips.map((clip: ClipResult): string => clip.title).join('、') }`;
+  const cuts: number = info.items.filter((item: ShowItem): boolean => item.cut).length;
+
+  return `找到 ${ info.items.length } 个爆点，推荐切 ${ cuts } 个，等你挑`;
 }
 
-function notify(title: string, body: string): void {
+/* 打开切片页面，看这一场 */
+export function openShow(dir: string): void {
+  selectShow(dir);
+  window.location.hash = SHOWS_HASH;
+  window.focus();
+}
+
+function notify(title: string, body: string, onClick?: () => void): void {
   try {
-    typeof Notification !== 'undefined' && new Notification(title, { body });
+    if (typeof Notification === 'undefined') return;
+
+    const notification: Notification = new Notification(title, { body });
+
+    onClick && (notification.onclick = onClick);
   } catch { /* 系统不让弹通知就算了，下载队列里也看得到 */ }
+}
+
+/* 找完爆点、还在等人挑的场次：切完（或者不切了）以后要告诉谁 */
+const waitingEnds: Map<string, (outcome: QueueOutcome, text: string) => void> = new Map();
+
+/* 等人挑的一场有结果了：切完了（done）、不切了（stopped） */
+export function endWaiting(liveId: string, outcome: QueueOutcome, text: string): void {
+  const end: ((outcome: QueueOutcome, text: string) => void) | undefined = waitingEnds.get(liveId);
+
+  waitingEnds.delete(liveId);
+  end?.(outcome, text);
 }
 
 /**
@@ -157,7 +185,7 @@ async function fetchImage(url: string, file: string, signal?: AbortSignal): Prom
   await fsP.rename(`${ file }.part`, file);
 }
 
-const deps: HighlightDeps = {
+export const highlightDeps: HighlightDeps = {
   async liveInfo(liveId: string): Promise<{ playStreamPath: string; msgFilePath: string; coverUrl?: string }> {
     const res: LiveRoomInfo = await requestLiveRoomInfo(liveId);
 
@@ -175,7 +203,7 @@ const deps: HighlightDeps = {
 };
 
 /* 本机已经有的录播和弹幕（.lrc）当作切片的素材；录播被删了就报错（可以在下载队列里看到原因） */
-async function localSource(
+export async function localSource(
   file: string, danmuFile: string | undefined, report: (progress: HighlightProgress) => void, detail: string
 ): Promise<PreparedSource> {
   await fsP.access(file);
@@ -198,7 +226,7 @@ async function localSource(
 }
 
 /* 自动抓取下好、还留着的这场录播（在直播录制文件夹里；没有返回 undefined）。电台找的是录音 */
-function findKeptReplay(liveId: string, radio: boolean): { file: string; danmuFile?: string } | undefined {
+export function findKeptReplay(liveId: string, radio: boolean): { file: string; danmuFile?: string } | undefined {
   const dir: string = getLiveRecordDir('');
 
   if (!dir) return undefined;
@@ -237,16 +265,22 @@ export interface QueuedHighlight {
   job: HighlightJob;
   // 第 1 步：准备好整场的视频和弹幕（下载录播，或者把录下来的几段接起来）
   prepare(signal: AbortSignal, report: (progress: HighlightProgress) => void): Promise<PreparedSource>;
+  // 准备好以后做什么，返回做完后显示的说明；不给就是找爆点（findHighlights），找完等人挑
+  process?(prepared: PreparedSource, report: (progress: HighlightProgress) => void, signal: AbortSignal): Promise<string>;
+  waiting?: string; // 排队时显示的说明
   retry(): unknown;
-  whenEnded?(outcome: QueueOutcome, text: string): void;
+  whenEnded?(outcome: QueueOutcome, text: string): void; // 找爆点时：找完不算结束，等切完（./pickTask）才叫
+  whenFound?(): void;                                    // 找好爆点了，开始等人挑
 }
 
 /* 加到切片的队列里（同一时间只切一场，前一场开始切的时候后一场就开始准备），进度在下载队列里 */
 export function enqueueHighlight(item: QueuedHighlight): void {
   const { key, job }: QueuedHighlight = item;
   const id: string = highlightTaskId(key);
+  const finding: boolean = item.process === undefined;
   let started: boolean = false; // 开始下载了没有（停止时的说明不一样）
   let text: string = '';        // 做完后显示的说明
+  let found: ShowInfo | undefined;
 
   function report(progress: HighlightProgress): void {
     queueTaskProgress(id, progress.percent, progress.detail);
@@ -255,10 +289,10 @@ export function enqueueHighlight(item: QueuedHighlight): void {
   queueTaskStart({
     id,
     title: item.title,
-    kind: '切片',
+    kind: finding ? '找爆点' : '切片',
     filePath: job.outDir,
     percent: 0,
-    detail: '排队中，等前面那场开始切片后就开始准备…',
+    detail: item.waiting ?? '排队中，等前面那场开始切片后就开始准备…',
     stop: (): void => queue.stop(key),
     retry: item.retry
   });
@@ -266,7 +300,15 @@ export function enqueueHighlight(item: QueuedHighlight): void {
     id: key,
     prepare: (signal: AbortSignal): Promise<PreparedSource> => item.prepare(signal, report),
     async process(prepared: PreparedSource, signal: AbortSignal): Promise<void> {
-      text = doneText(await processHighlight(job, deps, prepared, report, signal));
+      if (item.process) {
+        text = await item.process(prepared, report, signal);
+
+        return;
+      }
+
+      found = await findHighlights(job, highlightDeps, prepared, report, signal);
+      text = foundText(found);
+      await reloadShow(job.outDir);
     },
     onStage(stage: QueueStage): void {
       if (stage === 'preparing') started = true;
@@ -276,17 +318,23 @@ export function enqueueHighlight(item: QueuedHighlight): void {
     onEnd(outcome: QueueOutcome, err?: unknown): void {
       if (outcome === 'done') {
         queueTaskEnd(id, 'done', undefined, text);
-        notify(`切片完成：${ job.member } ${ job.title }`, text);
+        notify(`${ finding ? '找好爆点了' : '切片完成' }：${ job.member } ${ job.title }`, text, (): void => openShow(job.outDir));
       } else if (outcome === 'stopped') {
         queueTaskEnd(id, 'stopped', undefined, started
           ? '已停止。再点「重试」会接着做，已经准备好的部分不用重来'
           : '已取消，还没有开始');
       } else {
-        console.error('自动切片失败', err);
+        console.error(finding ? '找爆点失败' : '切片失败', err);
         queueTaskEnd(id, 'error', err instanceof Error ? err.message : String(err));
       }
 
-      item.whenEnded?.(outcome, text);
+      // 找到了：等人挑好、切完再说
+      if (outcome === 'done' && found?.status === 'waiting') {
+        item.whenEnded && waitingEnds.set(job.liveId, item.whenEnded);
+        item.whenFound?.();
+      } else {
+        item.whenEnded?.(outcome, text);
+      }
     }
   });
 }
@@ -294,6 +342,36 @@ export function enqueueHighlight(item: QueuedHighlight): void {
 /* 这个 key 是不是正在排队或者切片 */
 export function isHighlightQueued(key: string): boolean {
   return queue.has(key);
+}
+
+const STOP_WAIT: number = 20_000;
+
+/* 停掉，等它真的停下来（ffmpeg 退出、不再占着文件）；等太久就算了 */
+export async function stopHighlight(key: string): Promise<void> {
+  queue.stop(key);
+
+  const end: number = Date.now() + STOP_WAIT;
+
+  while (queue.has(key) && Date.now() < end) await sleep(100);
+}
+
+/**
+ * 准备一场直播的素材：自动抓取已经把整场录播下好了（切片失败时会留着）就直接用，否则下载
+ * @param { HighlightJob } job - 成员名单会换成最新的
+ * @param { string } nickname - 主播，SNH48-沈馨
+ */
+export async function prepareLive(
+  job: HighlightJob, nickname: string, report: (progress: HighlightProgress) => void, signal: AbortSignal
+): Promise<PreparedSource> {
+  // 成员名单一天更新一次：开始下载前确认是新的（取不到时用本机存的那份）
+  await loadMemberDirectory();
+  job.members = membersPrompt(getMemberDirectory().members, nickname) || job.members;
+
+  const kept: { file: string; danmuFile?: string } | undefined = findKeptReplay(job.liveId, Boolean(job.radio));
+
+  if (kept) return localSource(kept.file, kept.danmuFile, report, '用自动抓取已经下好的录播');
+
+  return prepareHighlight(job, highlightDeps, report, signal);
 }
 
 /**
@@ -309,7 +387,9 @@ export function startHighlight(
 ): string | undefined {
   if (!canHighlight(record)) return '这种直播不能做切片';
 
-  if (queue.has(record.liveId)) return '这场录播已经在切片了，进度在下载队列里';
+  if (queue.has(record.liveId)) return '这场录播已经在找爆点了，进度在下载队列里';
+
+  if (queue.has(pickKey(record))) return '这场录播正在切片，进度在下载队列里';
 
   const unavailable: string | undefined = highlightUnavailable();
 
@@ -321,18 +401,8 @@ export function startHighlight(
     key: record.liveId,
     title: `${ record.userInfo.nickname } ${ record.title }`,
     job,
-    async prepare(signal: AbortSignal, report: (progress: HighlightProgress) => void): Promise<PreparedSource> {
-      // 成员名单一天更新一次：开始下载前确认是新的（取不到时用本机存的那份）
-      await loadMemberDirectory();
-      job.members = membersPrompt(getMemberDirectory().members, record.userInfo.nickname) || job.members;
-
-      // 自动抓取已经把整场录播下好了（切片失败时会留着）：直接用，不再下一遍
-      const kept: { file: string; danmuFile?: string } | undefined = findKeptReplay(record.liveId, isRadio(record));
-
-      if (kept) return localSource(kept.file, kept.danmuFile, report, '用自动抓取已经下好的录播');
-
-      return prepareHighlight(job, deps, report, signal);
-    },
+    prepare: (signal: AbortSignal, report: (progress: HighlightProgress) => void): Promise<PreparedSource> => (
+      prepareLive(job, record.userInfo.nickname, report, signal)),
     retry: (): unknown => startHighlight(record, count, whenEnded),
     whenEnded
   });
@@ -358,7 +428,7 @@ export async function downloadStream(
   let playlist: string | undefined;
 
   try {
-    playlist = /\.m3u8(\?|$)/i.test(url) ? await deps.fetchText(url) : undefined;
+    playlist = /\.m3u8(\?|$)/i.test(url) ? await highlightDeps.fetchText(url) : undefined;
   } catch { /* 读不到 m3u8 的内容就让 ffmpeg 自己下载，不显示百分比 */ }
 
   await fsP.mkdir(workDir, { recursive: true });
@@ -390,7 +460,7 @@ export async function downloadStream(
 export async function downloadFullReplay(
   liveId: string, output: string, report: (percent: number, detail: string) => void, signal?: AbortSignal, cover?: string
 ): Promise<{ danmu?: string }> {
-  const info: { playStreamPath: string; msgFilePath: string; coverUrl?: string } = await deps.liveInfo(liveId);
+  const info: { playStreamPath: string; msgFilePath: string; coverUrl?: string } = await highlightDeps.liveInfo(liveId);
 
   if (!info.playStreamPath) throw new Error('这场直播没有录播地址（可能还没生成，或者已经被删除）');
 
@@ -398,7 +468,7 @@ export async function downloadFullReplay(
 
   if (info.msgFilePath) {
     try {
-      danmu = await deps.fetchText(info.msgFilePath);
+      danmu = await highlightDeps.fetchText(info.msgFilePath);
     } catch (err) {
       console.warn('弹幕文件下载失败', err);
     }
@@ -406,31 +476,50 @@ export async function downloadFullReplay(
 
   await downloadStream(info.playStreamPath, output, report, signal, undefined, cover);
 
-  if (cover) await saveRadioCover(deps, info.coverUrl, cover, signal);
+  if (cover) await saveRadioCover(highlightDeps, info.coverUrl, cover, signal);
 
   return { danmu };
 }
 
 /**
- * 用已经下好的录播和弹幕做切片（数量「自动」），不再下载一遍。接入点：custom/live/replayGrab（自动抓取勾了「切片」）
+ * 用已经下好的录播和弹幕找爆点（推荐的数量「自动」），不再下载一遍，找完等人挑。接入点：custom/live/replayGrab（自动抓取勾了「切片」）
  * @param { HighlightRecord } record
  * @param { string } file - 下好的录播
  * @param { string | undefined } danmuFile - 下好的弹幕（.lrc）
- * @param { (outcome: QueueOutcome, text: string) => void } [whenEnded] - 做完、停止或失败后调用；在下载队列里点「重试」时也会带上
+ * @param { (outcome: QueueOutcome, text: string) => void } [whenEnded] - 切完、不切了，或者找爆点时停止、失败以后调用；在下载队列里点「重试」时也会带上
+ * @param { () => void } [whenFound] - 找好爆点、开始等人挑时调用
  * @return { string | undefined } 不能开始时返回原因
  */
 export function startHighlightFromFile(
-  record: HighlightRecord, file: string, danmuFile: string | undefined, whenEnded?: (outcome: QueueOutcome, text: string) => void
+  record: HighlightRecord, file: string, danmuFile: string | undefined,
+  whenEnded?: (outcome: QueueOutcome, text: string) => void, whenFound?: () => void
 ): string | undefined {
   if (!canHighlight(record)) return '这种直播不能做切片';
 
-  if (queue.has(record.liveId)) return '这场录播已经在切片了，进度在下载队列里';
+  if (queue.has(record.liveId)) return '这场录播已经在找爆点了，进度在下载队列里';
+
+  if (queue.has(pickKey(record))) return '这场录播正在切片，进度在下载队列里';
 
   const unavailable: string | undefined = highlightUnavailable();
 
   if (unavailable) return unavailable;
 
-  const job: HighlightJob = highlightJobOf(record, 'auto', highlightBaseDir()!);
+  const job: HighlightJob = { ...highlightJobOf(record, 'auto', highlightBaseDir()!), local: { file, danmuFile } };
+  const old: ShowInfo | undefined = readShowInfoSync(job.outDir);
+
+  // 程序重启前已经用这份录播找好爆点了：不再找，接着等人挑；重启前刚切完（或者不切了）就直接说结果
+  if (old?.local?.file === file) {
+    if (old.status === 'waiting') {
+      whenEnded && waitingEnds.set(record.liveId, whenEnded);
+      whenFound?.();
+    } else {
+      const made: number = old.items.filter((item: ShowItem): boolean => item.clip !== undefined).length;
+
+      whenEnded?.(made > 0 ? 'done' : 'stopped', made > 0 ? `做了 ${ made } 个切片` : '没有切');
+    }
+
+    return undefined;
+  }
 
   enqueueHighlight({
     key: record.liveId,
@@ -442,8 +531,9 @@ export function startHighlightFromFile(
 
       return localSource(file, danmuFile, report, '用已经下好的录播');
     },
-    retry: (): unknown => startHighlightFromFile(record, file, danmuFile, whenEnded),
-    whenEnded
+    retry: (): unknown => startHighlightFromFile(record, file, danmuFile, whenEnded, whenFound),
+    whenEnded,
+    whenFound
   });
 
   return undefined;

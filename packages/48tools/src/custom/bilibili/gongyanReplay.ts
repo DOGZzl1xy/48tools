@@ -9,6 +9,7 @@ import { mediaDuration } from '../highlight/highlightFfmpeg';
 import { membersPrompt } from '../highlight/highlightMembers';
 import { DOWNLOAD_END, type HighlightJob, type HighlightProgress, type PreparedSource } from '../highlight/highlightPipeline';
 import { enqueueHighlight, highlightUnavailable, isHighlightQueued, downloadStream } from '../highlight/highlightTask';
+import { pickKey } from '../highlight/highlightShow';
 import { teamOfShow, showNameOf } from './gongyanSchedule';
 import { MANIFEST, findRecordingDir, recordingFolderName } from './gongyanFiles';
 import { gongyanBaseDir } from './gongyanWatcher';
@@ -57,7 +58,7 @@ export function startStageReplayHighlight(show: StageReplayShow): string | undef
 
   if (!team) return '只能切 SNH48 SII、NII、HII、X 的公演（认不出这场是哪个队的）';
 
-  if (isHighlightQueued(show.liveId)) return '这场公演已经在切片了，进度在下载队列里';
+  if (isHighlightQueued(show.liveId) || isHighlightQueued(pickKey(show))) return '这场公演已经在找爆点或者切片了，进度在下载队列里';
 
   const unavailable: string | undefined = highlightUnavailable();
 

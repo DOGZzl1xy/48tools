@@ -282,7 +282,10 @@ export function shortName(member: string): string {
 export function postTitle(member: string, date: string, title: string, people: Array<string> = [], more: Array<string> = []): string {
   const names: Array<string> = [shortName(member), ...people].filter((name: string): boolean => name !== '');
   const day: string = date.replace(/\D/g, '');
-  const titles: Array<string> = [title, ...more].map((item: string): string => item.trim()).filter((item: string): boolean => item !== '');
+  // 和主标题说的是同一句话的不接（「在台上给自己跳笑是什么体验 | 在台上给自己跳笑」）
+  const others: Array<string> = more.map((item: string): string => item.trim())
+    .filter((item: string): boolean => item !== '' && !title.includes(item) && !(title.trim() && item.includes(title.trim())));
+  const titles: Array<string> = [title.trim(), ...others].filter((item: string): boolean => item !== '');
 
   return `${ names.length > 0 ? `【${ names.join('&') }】` : '' }${ titles.join(' | ') } | ${ day ? `${ day } ` : '' }直播切片`;
 }

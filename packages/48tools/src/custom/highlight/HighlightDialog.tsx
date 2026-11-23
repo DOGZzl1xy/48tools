@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import type { ReactElement } from 'react';
 import { useNavigate, type NavigateFunction } from 'react-router';
-import { App, Button, Input, Modal, Segmented, Space, Typography } from 'antd';
+import { Alert, App, Button, Input, Modal, Segmented, Space, Typography } from 'antd';
 import type { useAppProps } from 'antd/es/app/context';
 import { FolderOpenOutlined as IconFolderOpenOutlined } from '@ant-design/icons';
 import { showOpenDialog } from '../../utils/remote/dialog';
@@ -9,15 +9,18 @@ import { useSettingOverrides, resolveSetting, setSetting, type CustomSettings } 
 import { resolveLocalDir } from '../download/defaultSaveDir';
 import { setQueueOpen } from '../shell/shellStore';
 import { useHighlightDialogRecord, closeHighlightDialog } from './highlightDialogStore';
-import { startHighlight, type HighlightRecord } from './highlightTask';
+import { startHighlight, highlightJobOf, type HighlightRecord } from './highlightTask';
+import { readShowInfoSync, type ShowInfo } from './highlightShow';
+import { selectShow } from './showStore';
 import { highlightDefaults } from './highlightGemini';
 import { AUTO_SCORE } from './highlightTime';
 import { agyDefaults } from './highlightAgy';
 import type { HighlightCount } from './highlightTypes';
 
 /**
- * 「自动切片」对话框：在录播列表里点一场直播的「自动切片」后打开。选做几个（或者自动）、保存到哪里，
- * 点开始后任务进下载队列（见 ./highlightTask）。
+ * 「自动切片」对话框：在录播列表里点一场直播的「自动切片」后打开。选默认推荐几个（或者自动）、保存到哪里，
+ * 点开始后任务进下载队列（见 ./highlightTask）：先找爆点，找完在切片页面（./HighlightsPage）挑好再切。
+ * 这场以前找过的可以直接去挑，也可以重新找一遍。
  * 由 custom/shell/AppShell 渲染一次；用 ./highlightDialogStore 的 openHighlightDialog 打开。
  */
 const countOptions: Array<{ label: string; value: HighlightCount }> = [
@@ -43,6 +46,16 @@ function HighlightDialog(props: {}): ReactElement {
   const ownDir: string | undefined = resolveLocalDir(resolveSetting(overrides, 'highlightDir'));
   const downloadDir: string | undefined = resolveLocalDir(resolveSetting(overrides, 'downloadDir'));
   const baseDir: string | undefined = ownDir ?? (downloadDir ? path.join(downloadDir, OUT_FOLDER) : undefined);
+
+  // 这场以前找过爆点：它的切片文件夹和清单
+  const oldDir: string | undefined = record && baseDir ? highlightJobOf(record, count, baseDir).outDir : undefined;
+  const old: ShowInfo | undefined = oldDir ? readShowInfoSync(oldDir) : undefined;
+
+  function handleShowClick(): void {
+    closeHighlightDialog();
+    selectShow(oldDir);
+    navigate('/48/Highlights');
+  }
 
   async function handleChooseDirClick(): Promise<void> {
     const result: { canceled: boolean; filePaths?: Array<string> } = await showOpenDialog({
@@ -79,7 +92,7 @@ function HighlightDialog(props: {}): ReactElement {
     <Modal title="自动切片"
       open={ record !== null }
       width={ 560 }
-      okText="开始"
+      okText={ old ? '重新找一遍' : '开始找爆点' }
       cancelText="取消"
       okButtonProps={{ disabled: !hasKey || !baseDir }}
       destroyOnHidden={ true }
@@ -90,8 +103,17 @@ function HighlightDialog(props: {}): ReactElement {
         record ? (
           <Space className="w-full" direction="vertical" size={ 16 }>
             <Typography.Text strong={ true }>{ record.userInfo.nickname } { record.title }</Typography.Text>
+            {
+              old ? (
+                <Alert type="info"
+                  showIcon={ true }
+                  message={ `这场找过爆点了（${ old.items.length } 个）。重新找一遍会换掉清单和改过的文字，做好的切片不动。` }
+                  action={ <Button size="small" type="primary" onClick={ handleShowClick }>去挑爆点</Button> }
+                />
+              ) : null
+            }
             <div>
-              <div className="mb-[6px]">做几个切片</div>
+              <div className="mb-[6px]">默认推荐切几个</div>
               <Segmented options={ countOptions }
                 value={ count }
                 onChange={ (value: HighlightCount): void => setSetting('highlightCount', value === 'auto' ? undefined : value) }
@@ -99,8 +121,8 @@ function HighlightDialog(props: {}): ReactElement {
               <Typography.Text className="block mt-[6px] text-[12px]" type="secondary">
                 {
                   count === 'auto'
-                    ? `只做爆点分 ${ resolveSetting(overrides, 'highlightAutoScore') ?? AUTO_SCORE } 分以上的（门槛在设置页「录播切片」里改），最多 8 个。`
-                    : '按爆点分从高到低做；找到的不够就有几个做几个。'
+                    ? `推荐爆点分 ${ resolveSetting(overrides, 'highlightAutoScore') ?? AUTO_SCORE } 分以上的（门槛在设置页「录播切片」里改），最多 8 个。`
+                    : '按爆点分从高到低推荐；找到的不够就有几个推荐几个。'
                 }
               </Typography.Text>
             </div>
@@ -115,8 +137,8 @@ function HighlightDialog(props: {}): ReactElement {
               </Typography.Text>
             </div>
             <Typography.Text className="block text-[12px]" type="secondary">
-              会先把整场录播下载下来（做完自动删除），再把音频和弹幕内容（不含粉丝昵称）{ viaAgy ? `通过本机的 agy 交给 Gemini（${ resolveSetting(overrides, 'highlightAgyModel') || agyDefaults.model }，用订阅额度）` : `发给 Google Gemini（${ model }，按量付费）` }找爆点、写字幕。
-              一小时的录播大约要 15 分钟，进度在下载队列和录播列表里看。可以连着加几场：前一场开始切片时，后一场就开始下载。
+              会先把整场录播下载下来（切完自动删除），再把音频和弹幕内容（不含粉丝昵称）{ viaAgy ? `通过本机的 agy 交给 Gemini（${ resolveSetting(overrides, 'highlightAgyModel') || agyDefaults.model }，用订阅额度）` : `发给 Google Gemini（${ model }，按量付费）` }找爆点。找完停下来，你在「切片」页面挑好要切哪些、改好标题和说明，再写字幕、剪片。
+              进度在下载队列和录播列表里看。可以连着加几场：前一场开始找爆点时，后一场就开始下载。
             </Typography.Text>
             {
               hasKey ? null : (

@@ -7,6 +7,7 @@ import AutoGrabOptionsPage from '../../custom/live/AutoGrabOptionsPage'; // 新�
 import Pocket48Record from './Pocket48/Pocket48Record/Pocket48Record';
 import InLive from './Live48/InLive/InLive';
 import InVideo from './Live48/InVideo/InVideo';
+import HighlightsPage from '../../custom/highlight/HighlightsPage'; // 录播切片：挑爆点
 import RoomPage from '../../custom/room/RoomPage'; // 聊天风格的新房间页，原版是 ./RoomMessage/loader
 import Voice from './Voice/Voice';
 import Friends from './Friends/Friends';
@@ -21,6 +22,7 @@ function Index(props: {}): ReactElement | null {
     { path: 'InLive', element: <InLive /> },
     { path: 'InVideo', element: <InVideo /> },
     { path: 'RoomMessage', element: <RoomPage /> },
+    { path: 'Highlights', element: <HighlightsPage /> },
     { path: 'Voice', element: <Voice /> },
     { path: 'Friends', element: <Friends /> },
     { path: 'Qingchunshike', element: <QingchunshikeDynamic /> }

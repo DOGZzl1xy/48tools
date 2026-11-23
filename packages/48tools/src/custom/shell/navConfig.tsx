@@ -20,6 +20,7 @@ import {
   PictureOutlined as IconPictureOutlined,
   StarOutlined as IconStarOutlined,
   ScissorOutlined as IconScissorOutlined,
+  HighlightOutlined as IconHighlightOutlined,
   MergeCellsOutlined as IconMergeCellsOutlined,
   CodeOutlined as IconCodeOutlined
 } from '@ant-design/icons';
@@ -67,6 +68,7 @@ export const shellNavGroups: Array<ShellNavGroup> = [
         icon: <IconVideoCameraOutlined />,
         match: /^\/48\/LiveOptions/
       },
+      { key: '48-highlights', label: '切片', title: '录播切片', to: '/48/Highlights', icon: <IconHighlightOutlined /> },
       { key: '48-inlive', label: '公演直播', title: '官方公演直播抓取', to: '/48/InLive', icon: <IconDesktopOutlined /> },
       { key: '48-invideo', label: '公演录播', title: '官方公演录播下载', to: '/48/InVideo', icon: <IconPlayCircleOutlined /> },
       { key: '48-voice', label: '房间电台', title: '口袋房间电台', to: '/48/Voice', icon: <IconCustomerServiceOutlined /> },

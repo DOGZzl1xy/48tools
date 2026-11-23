@@ -17,6 +17,7 @@ export interface Highlight {
   quote: string;
   reason: string;
   score: number; // 1 ~ 10
+  edited?: boolean; // 标题或说明被挑片的人改过（./highlightShow）：写字幕时以改过的为准
   first?: string; // 开头、结尾的原话：只有走 agy 时才要（它说的时间不准，用原话到本地识别的结果里找时间，见 ./highlightQuotes）
   last?: string;
   // 下面这些只有公演切片有（见 ./highlightStage）

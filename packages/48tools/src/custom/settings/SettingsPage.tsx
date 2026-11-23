@@ -161,7 +161,7 @@ function SettingsPage(props: {}): ReactElement {
         </Row>
         <Row label="B 站公演自动录制并切片"
           hint={ '程序开着时，在北京时间 13:30、18:30 前后看口袋48的公演有没有开播；SNH48 SII、NII、HII、X 的公演开播了，'
-            + '就录 B 站 SNH48 直播间的视频和弹幕（要先在 B 站下载里登录才能录原画），录完自动做公演切片（MC 爆点、失误、组合特别的歌）。'
+            + '就录 B 站 SNH48 直播间的视频和弹幕（要先在 B 站下载里登录才能录原画），录完自动找爆点（MC 爆点、失误、组合特别的歌），等你在「切片」页面挑好再切。'
             + '录像放在直播录制文件夹下面的「B站公演」里，切片在每一场的「切片」文件夹里。' }
         >
           <Switch checked={ resolveSetting(overrides, 'gongyanAuto') !== false }

@@ -27,6 +27,7 @@ interface Fake {
   saved: Array<GrabEntry>;
   clock: number;
   finishClip?: (outcome: GrabOutcome, text: string) => void;
+  found?: () => void;
   startReason?: string;
 }
 
@@ -56,11 +57,12 @@ function fake(saved: Array<GrabEntry> = []): Fake {
         : { file: `${ base }.mp4`, danmuFile: `${ base }.lrc` };
     },
     canClip: (item: GrabRecord): boolean => [1, 2].includes(Number(item.liveType)),
-    startClip(item: GrabRecord, file: string, danmuFile: string | undefined, onEnd: (outcome: GrabOutcome, text: string) => void): string | undefined {
+    startClip(item: GrabRecord, file: string, danmuFile: string | undefined, onEnd: (outcome: GrabOutcome, text: string) => void, onFound: () => void): string | undefined {
       if (f.startReason) return f.startReason;
 
       f.started.push({ liveId: item.liveId, file, danmuFile });
       f.finishClip = onEnd;
+      f.found = onFound;
 
       return undefined;
     },
@@ -137,7 +139,12 @@ describe('ReplayGrabber', (): void => {
     await settle();
 
     expect(f.started).toEqual([{ liveId: '1', file: 'D:/下载/录播1.mp4', danmuFile: 'D:/下载/录播1.lrc' }]);
-    expect(f.tasks.get(TASK)?.detail).toContain('正在切片');
+    expect(f.tasks.get(TASK)?.detail).toContain('正在找爆点');
+
+    // 找好了等人挑：录播先留着
+    f.found!();
+    expect(f.tasks.get(TASK)?.detail).toContain('等你在「切片」页面挑好');
+    expect(f.removed).toEqual([]);
 
     f.finishClip!('done', '做了 2 个切片：甲、乙');
     await settle();

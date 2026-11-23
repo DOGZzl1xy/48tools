@@ -5,8 +5,9 @@
  *   1. 盯着的成员开播了：记下这场（存在本机），下载队列里挂一项「直播中，结束后…」
  *   2. 每隔几分钟查一次录播出来没有（直播地址变成录播的 m3u8，说明直播结束了）；从开播算起最多等 12 小时
  *   3. 录播出来了：下载完整的录播和弹幕。电台只存录音（.m4a）和电台封面（这场直播的封面图，.jpg），录播的画面只是口袋48的占位图
- *   4. 勾了「切片」：用下好的录播和弹幕做切片（数量「自动」；电台也切，2026-11-23 起）；没勾「完整直播」的，
- *      切完删掉录播、弹幕（和电台的封面），只留切片。切片失败、停止、不能切（没设置好 Gemini）时，录播照样留着
+ *   4. 勾了「切片」：用下好的录播和弹幕找爆点（电台也找，2026-11-23 起），找完等人在切片页面挑好再切（用户 2026-11-23 定的），
+ *      等的时候录播留着；没勾「完整直播」的，切完删掉录播、弹幕（和电台的封面），只留切片。
+ *      不切了、切片失败、停止、不能切（没设置好 Gemini）时，录播照样留着
  * 还没做完的存在本机，重启程序后接着等、接着下、接着切（下到一半的分片不用重下）。
  * 旧版「录制并自动切片」留下的待办由 ./replayGrab 转成这里的（只切片，切完连同当时录的录像一起删掉）。
  */
@@ -20,7 +21,7 @@ export interface GrabRecord {
 
 export interface GrabActions {
   full: boolean;       // 留下完整的录播（和弹幕）
-  clip: boolean;       // 做切片
+  clip: boolean;       // 找爆点、切片
 }
 
 export interface GrabEntry {
@@ -43,8 +44,10 @@ export interface GrabDeps {
   // 下载完整的录播和弹幕（电台还有封面）；percent 是 0 ~ 100
   download(entry: GrabEntry, report: (percent: number, detail: string) => void, signal: AbortSignal): Promise<GrabFiles>;
   canClip(record: GrabRecord): boolean;
-  // 用下好的录播做切片；不能开始时返回原因。切完（或停止、失败）后调用 onEnd
-  startClip(record: GrabRecord, file: string, danmuFile: string | undefined, onEnd: (outcome: GrabOutcome, text: string) => void): string | undefined;
+  // 用下好的录播找爆点、切片；不能开始时返回原因。找好爆点、等人挑时调用 onFound；切完（或不切了、停止、失败）后调用 onEnd
+  startClip(
+    record: GrabRecord, file: string, danmuFile: string | undefined, onEnd: (outcome: GrabOutcome, text: string) => void, onFound: () => void
+  ): string | undefined;
   remove(file: string): Promise<void>;
   load(): Array<GrabEntry>;
   save(entries: Array<GrabEntry>): void;
@@ -257,10 +260,12 @@ export class ReplayGrabber {
     }
 
     // 切片；只要切片的，切完删掉录播
-    this.deps.taskProgress(id, 100, '录播下好了，正在切片（进度看下载队列里「切片」那一项）…');
+    this.deps.taskProgress(id, 100, '录播下好了，正在找爆点（进度看下载队列里「找爆点」那一项）…');
 
     const reason: string | undefined = this.deps.startClip(entry.record, file, entry.danmuFile, (outcome: GrabOutcome, text: string): void => {
       void this.afterClip(entry, outcome, text);
+    }, (): void => {
+      this.deps.taskProgress(id, 100, '找好爆点了，等你在「切片」页面挑好要切哪些；录播先留着');
     });
 
     if (reason) this.finish(entry, 'error', `没有切片（${ reason }），录播保留着`);
@@ -270,7 +275,7 @@ export class ReplayGrabber {
     const ended: boolean = this.entries.get(entry.record.liveId) === entry; // 在下载队列里重试切片时这一项已经结束了
 
     if (outcome !== 'done') {
-      if (ended) this.finish(entry, outcome, '切片没有做完，录播保留着（可以在下载队列里重试切片，做完后照样按勾选的处理录播）');
+      if (ended) this.finish(entry, outcome, '没有切片，录播保留着（在「切片」页面或者下载队列里还可以接着切，切完照样按勾选的处理录播）');
 
       return;
     }

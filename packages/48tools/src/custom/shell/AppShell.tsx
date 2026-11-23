@@ -32,6 +32,7 @@ import { useQueueTasks, type QueueTask } from '../downloadQueue/downloadQueue';
 import { useProxyState, proxyStateText } from '../pocket48Proxy/useProxyState';
 import type { ProxyState } from '../pocket48Api/apiErrorText';
 import RoomUnreadBadge from '../room/RoomUnreadBadge';
+import HighlightsBadge from '../highlight/HighlightsBadge';
 import { startUnreadWatcher } from '../room/unreadWatcher';
 import { autoStartAutoGrab } from '../live/autoGrabRunner';
 import { resumeReplayGrabs } from '../live/replayGrab';
@@ -49,6 +50,7 @@ import { purgeOldAudio } from '../transcribe/transcriptCache';
  */
 const CLOSED_GROUPS_KEY: string = 'SHELL_CLOSED_GROUPS';
 const ROOM_NAV_KEY: string = '48-room-message';
+const HIGHLIGHTS_NAV_KEY: string = '48-highlights';
 const LIVE_NAV_KEY: string = 'pocket48-live';
 const AUTO_GRAB_DELAY: number = 6_000;   // 启动后等几秒再开始自动抓取（等登录状态、代理、数据库准备好）
 const AUDIO_PURGE_DELAY: number = 30_000;
@@ -93,6 +95,7 @@ function NavLinkItem(props: { item: ShellNavItem; active: boolean; collapsed: bo
       { item.icon }
       <span className="shell-item-label">{ item.label }</span>
       { item.key === ROOM_NAV_KEY ? <RoomUnreadBadge /> : null }
+      { item.key === HIGHLIGHTS_NAV_KEY ? <HighlightsBadge /> : null }
       { item.key === LIVE_NAV_KEY && grabbing ? <span className="shell-item-live" title="自动抓取运行中" /> : null }
     </Link>
   );

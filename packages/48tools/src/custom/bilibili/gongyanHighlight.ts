@@ -6,6 +6,7 @@ import { teamColors, type Team } from '../theme/accent';
 import { membersPrompt } from '../highlight/highlightMembers';
 import { readGlossaryFile } from '../highlight/glossaryFile';
 import { highlightGeminiConfig, highlightUnavailable, enqueueHighlight, isHighlightQueued } from '../highlight/highlightTask';
+import { pickKey } from '../highlight/highlightShow';
 import { getMemberDirectory, loadMemberDirectory } from '../room/memberDirectory';
 import { DOWNLOAD_END, type HighlightJob, type HighlightProgress, type PreparedSource } from '../highlight/highlightPipeline';
 import type { GongyanManifest } from './gongyanRecorder';
@@ -70,7 +71,7 @@ export async function startGongyanHighlight(manifestFile: string): Promise<strin
 
   const key: string = `gongyan-${ manifest.show.liveId }`;
 
-  if (isHighlightQueued(key)) return '这场公演已经在切片了，进度在下载队列里';
+  if (isHighlightQueued(key) || isHighlightQueued(pickKey(manifest.show))) return '这场公演已经在找爆点或者切片了，进度在下载队列里';
 
   const unavailable: string | undefined = highlightUnavailable();
 

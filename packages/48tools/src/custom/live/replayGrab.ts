@@ -100,8 +100,10 @@ const grabber: ReplayGrabber = new ReplayGrabber({
   },
   download,
   canClip: canHighlight,
-  startClip(record: GrabRecord, file: string, danmuFile: string | undefined, onEnd: (outcome: GrabOutcome, text: string) => void): string | undefined {
-    return startHighlightFromFile(record, file, danmuFile, onEnd);
+  startClip(
+    record: GrabRecord, file: string, danmuFile: string | undefined, onEnd: (outcome: GrabOutcome, text: string) => void, onFound: () => void
+  ): string | undefined {
+    return startHighlightFromFile(record, file, danmuFile, onEnd, onFound);
   },
   remove: removeFile,
   load,

@@ -128,7 +128,7 @@ function InVideo(props: {}): ReactElement {
     if (reason) {
       messageApi.warning(reason);
     } else {
-      messageApi.success('加到下载队列了：先下载公演录播，再做公演切片（口袋48 的公演录播没有弹幕）');
+      messageApi.success('加到下载队列了：先下载公演录播，再找爆点，找完在「切片」页面挑（口袋48 的公演录播没有弹幕）');
     }
   }
 
