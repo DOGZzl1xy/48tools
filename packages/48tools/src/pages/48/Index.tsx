@@ -11,7 +11,6 @@ import RoomPage from '../../custom/room/RoomPage'; // 聊天风格的新房间�
 import Voice from './Voice/Voice';
 import Friends from './Friends/Friends';
 import QingchunshikeDynamic from './Qingchunshike/loader';
-import AngelPage from '../../custom/angel/AngelPage'; // 临时功能：守护天使推理（游戏结束后删掉）
 
 /* 直播和录播下载 */
 function Index(props: {}): ReactElement | null {
@@ -24,8 +23,7 @@ function Index(props: {}): ReactElement | null {
     { path: 'RoomMessage', element: <RoomPage /> },
     { path: 'Voice', element: <Voice /> },
     { path: 'Friends', element: <Friends /> },
-    { path: 'Qingchunshike', element: <QingchunshikeDynamic /> },
-    { path: 'Angel', element: <AngelPage /> }
+    { path: 'Qingchunshike', element: <QingchunshikeDynamic /> }
   ]);
 
   return <Content className={ style.content }>{ routes }</Content>;

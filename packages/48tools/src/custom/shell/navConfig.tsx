@@ -21,8 +21,7 @@ import {
   StarOutlined as IconStarOutlined,
   ScissorOutlined as IconScissorOutlined,
   MergeCellsOutlined as IconMergeCellsOutlined,
-  CodeOutlined as IconCodeOutlined,
-  HeartOutlined as IconHeartOutlined
+  CodeOutlined as IconCodeOutlined
 } from '@ant-design/icons';
 
 /**
@@ -78,9 +77,7 @@ export const shellNavGroups: Array<ShellNavGroup> = [
         to: '/48/RoomMessage',
         icon: <IconMessageOutlined />,
         match: /^\/48\/(Friends|Qingchunshike)/
-      },
-      // 临时功能：守护天使推理（游戏结束后删掉，见 custom/angel/angelConfig.ts）
-      { key: '48-angel', label: '守护天使', title: 'Team NII 守护天使推理', to: '/48/Angel', icon: <IconHeartOutlined /> }
+      }
     ]
   },
   {
