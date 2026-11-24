@@ -20,7 +20,6 @@ import { Button, message, Modal, Pagination, Space } from 'antd';
 import type { DefaultOptionType } from 'rc-select/es/Select';
 import type { LabeledValue, UseMessageReturnType } from '@48tools-types/antd';
 import Icon, { Html5Filled as IconHtml5Filled, FileImageOutlined as IconFileImageOutlined } from '@ant-design/icons';
-import * as dayjs from 'dayjs';
 import {
   requestServerSearch,
   requestServerJump,
@@ -50,6 +49,7 @@ import LocalMessage from '../LocalMessage/LocalMessage';
 import { showSaveDialog } from '../../../../utils/remote/dialog';
 import { getFilePath } from '../../../../utils/utils';
 import { source } from '../../../../utils/snh48';
+import { showTimeWithZone } from '../../../../custom/time/appTime'; // 按设置里的时区
 import IconJSONSvgComponent from '../../images/JSON.component.svg';
 import type { QueryRecord, FormatCustomMessage, SendDataItem } from '../../types';
 
@@ -122,7 +122,7 @@ function SearchMessage(props: {}): ReactElement {
       await fsP.mkdir(result.filePath);
     }
 
-    const time: string = dayjs().format('YYYY-MM-DD HH:mm:ss');
+    const time: string = showTimeWithZone(Date.now());
 
     // 创建html文件
     for (let i: number = 0, j: number = homeMessageRaw.length, page: number = 1; i < j; i += PAGE_SIZE, page++) {

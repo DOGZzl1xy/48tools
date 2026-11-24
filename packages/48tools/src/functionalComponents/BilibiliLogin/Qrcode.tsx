@@ -4,10 +4,10 @@ import { Fragment, useMemo, useEffect, useRef, type ReactElement, type RefObject
 import { Button, Alert, App } from 'antd';
 import type { useAppProps } from 'antd/es/app/context';
 import { toCanvas } from 'qrcode/lib/browser';
-import * as dayjs from 'dayjs';
 import { requestLoginUrl, requestLoginInfo, type LoginUrl, type LoginInfo } from '@48tools-api/bilibili/login';
 import style from './qrcode.sass';
 import { warningNativeMessage } from '../../utils/remote/nativeMessage';
+import { showSavedTime } from '../../custom/time/appTime';
 
 const toCanvasPromise: (e: HTMLCanvasElement, u: string) => Promise<void> = promisify(toCanvas);
 
@@ -45,7 +45,7 @@ function Qrcode(props: { onCancel: Function }): ReactElement {
     const [res, cookieArr]: [LoginInfo, Array<string>] = await requestLoginInfo(oauthKey!);
 
     if (res.data.code === 0) {
-      const time: string = dayjs().format('YYYY-MM-DD HH:mm:ss');
+      const time: string = new Date().toISOString();
       const cookie: string = cookieArr.map((o: string): string => o.split(/;\s*/)[0]).join('; ');
 
       localStorage.setItem(BILIBILI_COOKIE_KEY, JSON.stringify({ time, cookie }));
@@ -102,7 +102,7 @@ function Qrcode(props: { onCancel: Function }): ReactElement {
       <div className="text-center">
         <Button type="text" danger={ true } onClick={ handleClearBilibiliCookieClick }>清除Cookie</Button>
         <Button className="ml-[16px]" type="text" onClick={ handleResetCreateQrcodeClick }>刷新二维码</Button>
-        <p className="mt-[8px]">上次登陆时间：{ bilibiliCookie?.time ?? '无' }</p>
+        <p className="mt-[8px]">上次登陆时间：{ showSavedTime(bilibiliCookie?.time) || '无' }</p>
       </div>
     </Fragment>
   );

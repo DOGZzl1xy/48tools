@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactElement, type RefObject, type ChangeEvent, type Dispatch as D, type SetStateAction as S } from 'react';
-import { DatePicker, Drawer, Empty, Input, Spin } from 'antd';
+import { Drawer, Empty, Input, Spin } from 'antd';
 import { SearchOutlined as IconSearchOutlined } from '@ant-design/icons';
 import type { Dayjs } from 'dayjs';
 import type { CustomMessageV2 } from '@48tools-api/48';
@@ -8,7 +8,9 @@ import { getAllTranscripts } from '../transcribe/transcriptCache';
 import { searchRoomCache, firstCachedSince, type RoomStream } from './roomCache';
 import { keyOf, type RoomMember } from './roomStore';
 import { matchMessage, messageText, senderName, snippet, voiceReplyOf, type VoiceReply } from './roomSearchText';
-import { roomClock, dayStart, type RoomClock } from './roomTime';
+import ZonedDatePicker from '../time/ZonedDatePicker';
+import { dayStart } from '../time/timeZone';
+import { roomClock, type RoomClock } from './roomTime';
 
 /**
  * 在一个房间的本地消息里搜索，或者跳到某一天（从右边滑出的面板）。
@@ -23,7 +25,7 @@ interface RoomSearchProps {
   open: boolean;
   member: RoomMember;
   mode: RoomStream;
-  beijing: boolean; // 时间是不是按北京时间显示
+  zone: string; // 时间按哪个时区
   onJump: (raw: CustomMessageV2) => void;
   onClose: () => void;
 }
@@ -61,7 +63,7 @@ interface ResultRow {
 }
 
 function RoomSearch(props: RoomSearchProps): ReactElement {
-  const { open, member, mode, beijing, onJump, onClose }: RoomSearchProps = props;
+  const { open, member, mode, zone, onJump, onClose }: RoomSearchProps = props;
   const [keyword, setKeyword]: [string, D<S<string>>] = useState('');
   const [rows, setRows]: [Array<ResultRow> | null, D<S<Array<ResultRow> | null>>] = useState<Array<ResultRow> | null>(null);
   const [searching, setSearching]: [boolean, D<S<boolean>>] = useState(false);
@@ -99,7 +101,7 @@ function RoomSearch(props: RoomSearchProps): ReactElement {
       setRows(found.map((raw: CustomMessageV2): ResultRow => ({
         raw,
         key: keyOf(raw),
-        clock: roomClock(raw.msgTime, beijing),
+        clock: roomClock(raw.msgTime, zone),
         name: senderName(raw),
         text: snippet(messageText(raw, transcriptOf(raw)) || `[${ raw.msgType }]`, word)
       })));
@@ -107,7 +109,7 @@ function RoomSearch(props: RoomSearchProps): ReactElement {
     }, 400);
 
     return (): void => window.clearTimeout(timer);
-  }, [keyword, open, mode, member.ownerId, beijing]);
+  }, [keyword, open, mode, member.ownerId, zone]);
 
   async function handleDateChange(value: Dayjs | null): Promise<void> {
     setDateHint('');
@@ -115,7 +117,7 @@ function RoomSearch(props: RoomSearchProps): ReactElement {
     if (!value) return;
 
     const dateText: string = value.format('YYYY-MM-DD');
-    const raw: CustomMessageV2 | undefined = await firstCachedSince(mode, member.ownerId, dayStart(dateText, beijing));
+    const raw: CustomMessageV2 | undefined = await firstCachedSince(mode, member.ownerId, dayStart(dateText, zone));
 
     if (!raw) {
       setDateHint('这一天和之后，本机都没有存下来的消息。');
@@ -123,7 +125,7 @@ function RoomSearch(props: RoomSearchProps): ReactElement {
       return;
     }
 
-    const found: string = roomClock(raw.msgTime, beijing).date;
+    const found: string = roomClock(raw.msgTime, zone).date;
 
     setDateHint(found === dateText ? '' : `${ dateText } 没有消息，已经跳到之后最近的一条（${ found }）。`);
     onJump(raw);
@@ -139,7 +141,7 @@ function RoomSearch(props: RoomSearchProps): ReactElement {
     >
       <div className="room-find">
         <div className="room-find-label">跳到某一天</div>
-        <DatePicker className="w-full" allowClear={ true } placeholder="选择日期" onChange={ handleDateChange } />
+        <ZonedDatePicker className="w-full" allowClear={ true } placeholder="选择日期" onChange={ handleDateChange } />
         { dateHint ? <p className="room-find-hint">{ dateHint }</p> : null }
         <div className="room-find-label">搜索消息</div>
         <Input allowClear={ true }

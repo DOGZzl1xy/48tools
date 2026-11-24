@@ -18,7 +18,6 @@ import { Button, Table, message, Alert, Space } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { UseMessageReturnType } from '@48tools-types/antd';
 import filenamify from 'filenamify/browser';
-import * as dayjs from 'dayjs';
 import { requestGetVideoRedirectUrl } from '@48tools-api/toutiao/douyin';
 import style from './douyin.sass';
 import { showSaveDialog } from '../../../utils/remote/dialog';
@@ -34,7 +33,7 @@ import {
   setDownloadProgress,
   type DouyinDownloadInitialState
 } from '../reducers/douyinDownload';
-import { fileTimeFormat, getFilePath } from '../../../utils/utils';
+import { getFilePath, getFileTime } from '../../../utils/utils';
 import { ProgressNative, type ProgressSet } from '../../../components/ProgressNative/index';
 import type { DownloadItem } from '../types';
 
@@ -130,7 +129,7 @@ function Douyin(props: {}): ReactElement {
 
     try {
       if (selectedDownloadList.length) {
-        const defaultDir: string = `[抖音]下载合集_${ dayjs().format(fileTimeFormat) }`;
+        const defaultDir: string = `[抖音]下载合集_${ getFileTime() }`;
         const result: SaveDialogReturnValue = await showSaveDialog({
           properties: ['createDirectory'],
           defaultPath: defaultDir

@@ -1,6 +1,6 @@
 import type { CustomMessageV2 } from '@48tools-api/48';
 import { emojiText } from './emojiText';
-import { roomClock, dayStart, beijingDate } from './roomTime';
+import { roomClock } from './roomTime';
 import { searchDirectory, teamLabel, type DirectoryMember } from './memberSearch';
 import { messageText, matchMessage, senderName, snippet, voiceReplyOf } from './roomSearchText';
 
@@ -28,39 +28,26 @@ describe('emojiText', function(): void {
 describe('roomTime', function(): void {
   const noonUtc: number = Date.UTC(2026, 10, 19, 12, 30, 5); // 2026-11-19 12:30:05 UTC = 北京时间 20:30:05
 
-  test('beijing time does not depend on the computer time zone', function(): void {
-    expect(roomClock(noonUtc, true)).toEqual({
+  test('beijing time by default, does not depend on the computer time zone', function(): void {
+    expect(roomClock(noonUtc)).toEqual({
       day: '2026年11月19日 星期四',
       date: '2026-11-19',
       time: '20:30',
       full: '2026-11-19 20:30:05（北京时间）'
     });
     // 北京时间过了零点：日期也跟着变
-    expect(roomClock(Date.UTC(2026, 10, 19, 17, 0, 0), true).date).toBe('2026-11-20');
-    expect(roomClock(Date.UTC(2026, 10, 19, 17, 0, 0), true).day).toBe('2026年11月20日 星期五');
+    expect(roomClock(Date.UTC(2026, 10, 19, 17, 0, 0)).date).toBe('2026-11-20');
+    expect(roomClock(Date.UTC(2026, 10, 19, 17, 0, 0)).day).toBe('2026年11月20日 星期五');
   });
 
-  test('beijingDate: 切片、音频信息里的日期按北京时间，和电脑的时区无关；时间不对时是空的', function(): void {
-    // 北京时间 2026-11-22 上午 10 点的直播：电脑在美国东部时是 11-21 晚上，日期也要写 11-22
-    expect(beijingDate(Date.UTC(2026, 10, 22, 2, 0, 0))).toBe('2026-11-22');
-    expect(beijingDate(Date.UTC(2026, 10, 21, 15, 59, 59))).toBe('2026-11-21'); // 北京时间 23:59:59
-    expect(beijingDate(Date.UTC(2026, 10, 21, 16, 0, 0))).toBe('2026-11-22');   // 北京时间 0 点
-    expect(beijingDate(Number('abc'))).toBe('');
-    expect(beijingDate(0)).toBe('');
-  });
-
-  test('local time uses the computer time zone', function(): void {
-    const local: Date = new Date(noonUtc);
-
-    expect(roomClock(noonUtc, false).time).toBe(`${ String(local.getHours()).padStart(2, '0') }:${ String(local.getMinutes()).padStart(2, '0') }`);
-    expect(roomClock(noonUtc, false).full).not.toContain('北京时间');
-  });
-
-  test('dayStart is the first moment of that day', function(): void {
-    expect(dayStart('2026-11-20', true)).toBe(Date.UTC(2026, 10, 19, 16, 0, 0));
-    expect(roomClock(dayStart('2026-11-20', true), true).full).toBe('2026-11-20 00:00:00（北京时间）');
-    expect(roomClock(dayStart('2026-11-20', true) - 1, true).date).toBe('2026-11-19');
-    expect(roomClock(dayStart('2026-03-08', false), false).full).toBe('2026-03-08 00:00:00');
+  test('another time zone', function(): void {
+    expect(roomClock(noonUtc, 'America/New_York')).toEqual({
+      day: '2026年11月19日 星期四',
+      date: '2026-11-19',
+      time: '07:30',
+      full: '2026-11-19 07:30:05（纽约时间）'
+    });
+    expect(roomClock(Number.NaN).time).toBe('');
   });
 });
 

@@ -2,7 +2,6 @@ import * as fs from 'node:fs';
 import { promises as fsP } from 'node:fs';
 import * as path from 'node:path';
 import type { SaveDialogReturnValue } from 'electron';
-import * as dayjs from 'dayjs';
 import type { MessageInstance } from 'antd/es/message/interface';
 import { requestRoomInfo, requestDownloadFileByStream, type RoomInfo, type CustomMessageV2 } from '@48tools-api/48';
 import { formatSendData } from '../../pages/48/RoomMessage/utils/formatData';
@@ -12,6 +11,7 @@ import { getFilePath } from '../../utils/utils';
 import { source } from '../../utils/snh48';
 import type { SendDataItem } from '../../pages/48/types';
 import { getAllTranscripts } from '../transcribe/transcriptCache';
+import { showTimeWithZone } from '../time/appTime';
 import { readAllCached, type RoomMember, type RoomStream } from './roomStore';
 import { voiceReplyOf, type VoiceReply } from './roomSearchText';
 
@@ -84,7 +84,7 @@ export async function exportRoom(member: RoomMember, mode: RoomStream, type: 'ht
     if (!fs.existsSync(result.filePath)) await fsP.mkdir(result.filePath);
 
     const transcripts: Map<string, string> = await getAllTranscripts();
-    const time: string = dayjs().format('YYYY-MM-DD HH:mm:ss');
+    const time: string = showTimeWithZone(Date.now());
     const pageSize: number = type === 'html' ? HTML_PAGE_SIZE : JSON_PAGE_SIZE;
     let page: number = 1;
     let transcribed: number = 0;

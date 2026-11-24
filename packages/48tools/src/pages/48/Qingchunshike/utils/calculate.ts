@@ -1,4 +1,3 @@
-import * as dayjs from 'dayjs';
 import type { Dispatch } from '@reduxjs/toolkit';
 import type { QChatMessage } from 'nim-web-sdk-ng/dist/QCHAT_BROWSER_SDK/QChatMsgServiceInterface';
 import type { ChatRoomMessage } from 'node-nim';
@@ -6,6 +5,7 @@ import { store } from '../../../../store/store';
 import QChatSocket from './QChatSocket';
 import NodeNimChatroomSocket from '../../../PlayerWindow/sdk/NodeNimChatroomSocket';
 import { setLog } from '../../reducers/qingchunshike';
+import { showTime } from '../../../../custom/time/appTime'; // 按设置里的时区
 import type { QingchunshikeUserItem, GiftResult, GiftText } from '../../types';
 
 function filterLive(data: Array<ChatRoomMessage>, st: number): { nextData: Array<GiftText['attach']>; isBreak: boolean } {
@@ -87,11 +87,11 @@ async function qchatCalculate(user: QingchunshikeUserItem, st: number, et: numbe
 
       allHistoryMessage.push(...nextData);
       dispatch(setLog(`QChat -> 抓取page: ${ pageNum++ } endTime: ${
-        dayjs(endTime).format('YYYY-MM-DD HH:mm:ss')
+        showTime(endTime)
       } endTime - st: ${ endTime - st }`));
     } else {
       dispatch(setLog(`QChat -> 抓取结束: ${ pageNum++ } endTime: ${
-        dayjs(endTime).format('YYYY-MM-DD HH:mm:ss')
+        showTime(endTime)
       } endTime - st: ${ endTime - st }`));
       break;
     }
@@ -134,7 +134,7 @@ async function liveCalculate(appDataDir: string, user: QingchunshikeUserItem, st
 
       allLiveHistoryMessage.push(...nextData);
       dispatch(setLog(`NIM -> 抓取page: ${ livePageNum++ } endTime: ${
-        dayjs(liveEndTime).format('YYYY-MM-DD HH:mm:ss')
+        showTime(liveEndTime)
       } endTime - st: ${ liveEndTime - st }`));
 
       if (isBreak) break;

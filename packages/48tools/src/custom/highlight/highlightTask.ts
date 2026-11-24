@@ -27,7 +27,7 @@ import { safeFileName, parseLrc } from './highlightTime';
 import { downloadReplay, type DownloadProgress } from './highlightDownload';
 import { membersPrompt } from './highlightMembers';
 import { getMemberDirectory, loadMemberDirectory } from '../room/memberDirectory';
-import { beijingDate } from '../room/roomTime';
+import { beijingDate } from '../time/timeZone';
 import { sleep } from '../common/util';
 import type { HighlightCount } from './highlightTypes';
 import { getLiveRecordDir } from '../live/liveRecording';

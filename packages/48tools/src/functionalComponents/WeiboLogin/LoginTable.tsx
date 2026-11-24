@@ -19,6 +19,7 @@ import Follow from './Follow/Follow';
 import { handleOpenWeiboClick } from './function/weiboHelper';
 import type { WeiboAccount } from '../../commonTypes';
 import TeamTag from '../../custom/theme/TeamTag';
+import { showSavedTime } from '../../custom/time/appTime'; // 按设置里的时区
 
 dayjs.extend(customParseFormat);
 
@@ -157,7 +158,7 @@ function LoginTable(props: {}): ReactElement {
   const columns: ColumnsType<WeiboAccount> = [
     { title: 'ID', dataIndex: 'id', width: 110 },
     { title: '昵称', dataIndex: 'username' },
-    { title: '上次登陆时间', dataIndex: 'lastLoginTime', width: 110 },
+    { title: '上次登陆时间', dataIndex: 'lastLoginTime', width: 110, render: (value: string): string => showSavedTime(value) },
     {
       title: '抓包参数',
       key: 'app',

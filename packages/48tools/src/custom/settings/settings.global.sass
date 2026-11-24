@@ -48,6 +48,25 @@
   flex: 1
   min-width: 0
 
+// 控件下面的一行小字
+.settings-note
+  display: block
+  margin-top: 6px
+  color: var(--shell-text-secondary)
+  font-size: 12.5px
+  font-variant-numeric: tabular-nums
+
+// 选时区的下拉列表：左边是名字，右边是 UTC+8（下拉列表不在设置页面里面，用不了 --shell 的颜色）
+.settings-zone
+  display: flex
+  align-items: center
+  justify-content: space-between
+  gap: 12px
+
+  small
+    font-size: 12px
+    opacity: .6
+
 .settings-colors
   display: flex
   gap: 10px

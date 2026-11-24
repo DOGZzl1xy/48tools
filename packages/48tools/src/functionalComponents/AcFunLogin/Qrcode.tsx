@@ -3,7 +3,6 @@ import type { CancelableRequest, Response as GotResponse } from 'got';
 import { useState, useEffect, useMemo, type ReactElement, type Dispatch as D, type SetStateAction as S, type MouseEvent } from 'react';
 import { Button, Empty, App } from 'antd';
 import type { useAppProps } from 'antd/es/app/context';
-import * as dayjs from 'dayjs';
 import {
   requestPcDirectQr,
   requestPcDirectScanResult,
@@ -13,6 +12,7 @@ import {
   type AcceptResult
 } from '@48tools-api/acfun/login';
 import { warningNativeMessage } from '../../utils/remote/nativeMessage';
+import { showSavedTime } from '../../custom/time/appTime';
 
 export const ACFUN_COOKIE_KEY: string = 'ACFUN_COOKIE';
 let scanResultRequest: CancelableRequest<GotResponse<ScanResult>> | null = null,
@@ -89,7 +89,7 @@ function Qrcode(props: { onCancel: Function }): ReactElement {
       acceptResultRequest = null;
 
       if (resAcceptResult.body.result === 0) {
-        const time: string = dayjs().format('YYYY-MM-DD HH:mm:ss');
+        const time: string = new Date().toISOString();
         const cookie: string = resAcceptResult.headers['set-cookie']!
           .map((o: string): string => o.split(/;\s*/)[0]).join('; ');
 
@@ -123,7 +123,7 @@ function Qrcode(props: { onCancel: Function }): ReactElement {
       <div className="text-center">
         <Button type="text" danger={ true } onClick={ handleClearAcFunCookieClick }>清除Cookie</Button>
         <Button className="ml-[16px]" type="text" onClick={ handleResetCreateQrcodeClick }>刷新二维码</Button>
-        <p className="mt-[8px]">上次登陆时间：{ acFunCookie?.time ?? '无' }</p>
+        <p className="mt-[8px]">上次登陆时间：{ showSavedTime(acFunCookie?.time) || '无' }</p>
       </div>
     </div>
   );

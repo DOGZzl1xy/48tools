@@ -30,7 +30,7 @@ import { messageText } from '../room/roomSearchText';
 import { emojiText } from '../room/emojiText';
 import { roomClock, type RoomClock } from '../room/roomTime';
 import { useMemberDirectory, loadMemberDirectory, teamOf, type DirectoryState } from '../room/memberDirectory';
-import { useSettingOverrides, type CustomSettings } from '../settings/settingsStore';
+import { useTimeZone } from '../time/appTime';
 
 /**
  * 首页：常用功能的大卡片；关注的成员（未读数、最新一条消息，点一下进房间）；现在谁在直播（自动抓取是否在运行）；
@@ -76,7 +76,7 @@ function FollowedMembers(props: {}): ReactElement {
   const room: RoomState = useRoomState();
   const unread: UnreadState = useUnreadState();
   const directory: DirectoryState = useMemberDirectory();
-  const settings: CustomSettings = useSettingOverrides();
+  const zone: string = useTimeZone();
   const [cached, setCached]: [Record<number, CustomMessageV2>, D<S<Record<number, CustomMessageV2>>>] = useState({});
 
   // 没打开过的房间：从本地缓存里读最新的一条
@@ -119,7 +119,7 @@ function FollowedMembers(props: {}): ReactElement {
         room.follows.map((member: RoomMember): ReactElement => {
           const loaded: CustomMessageV2 | undefined = room.rooms[member.ownerId]?.items.at(-1)?.raw;
           const raw: CustomMessageV2 | undefined = loaded ?? cached[member.ownerId];
-          const clock: RoomClock | undefined = raw ? roomClock(raw.msgTime, settings.roomBeijingTime === true) : undefined;
+          const clock: RoomClock | undefined = raw ? roomClock(raw.msgTime, zone) : undefined;
           const team: { label: string; title: string } | undefined = teamOf(directory, member.ownerId);
 
           return (

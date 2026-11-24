@@ -22,7 +22,6 @@ import { Button, message, Table, Popconfirm, Modal, Input, Space } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { MessageInstance } from 'antd/es/message/interface';
 import type { UseModalReturnType, UseMessageReturnType, ModuleFuncReturn } from '@48tools-types/antd';
-import * as dayjs from 'dayjs';
 import { Onion } from '@bbkkbkk/q';
 import { requestLiveRoomInfo, type LiveInfo, type LiveRoomInfo } from '@48tools-api/48';
 import { WinIpcChannel } from '@48tools/main/src/channelEnum';
@@ -50,6 +49,7 @@ import AutoGrabActionsForm from '../../../../custom/live/AutoGrabActionsForm';
 import { highlightUnavailable } from '../../../../custom/highlight/highlightTask';
 import RowActions from '../../../../custom/table/RowActions';
 import MediaTitleCell from '../../../../custom/table/MediaTitleCell';
+import { showTime } from '../../../../custom/time/appTime'; // 按设置里的时区
 import {
   netMediaServerInit,
   getNetMediaServerPort,
@@ -368,7 +368,7 @@ function Pocket48Live(props: {}): ReactElement {
       title: '时间',
       dataIndex: 'ctime',
       width: 170,
-      render: (value: string, record: LiveInfo, index: number): string => dayjs(Number(value)).format('YYYY-MM-DD HH:mm:ss')
+      render: (value: string, record: LiveInfo, index: number): string => showTime(value)
     },
     {
       title: '操作',

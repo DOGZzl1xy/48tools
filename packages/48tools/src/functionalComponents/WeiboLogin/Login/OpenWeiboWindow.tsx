@@ -4,7 +4,6 @@ import { useDispatch, useSelector } from 'react-redux';
 import type { Dispatch } from '@reduxjs/toolkit';
 import { Button, Alert, Space, App, Modal, Form, Input, Divider, type FormInstance } from 'antd';
 import type { useAppProps } from 'antd/es/app/context';
-import * as dayjs from 'dayjs';
 import { requestUid, requestUserInfo, type UserInfo } from '@48tools-api/weibo/login';
 import { WeiboLoginChannel } from '@48tools/main/src/channelEnum';
 import { IDBSaveAccount, type WeiboLoginInitialState } from '../reducers/weiboLogin';
@@ -91,7 +90,7 @@ function OpenWeiboWindow(props: { onCancel?: Function }): ReactElement {
         id: uid,
         username: resUserInfo.data.user.screen_name ?? uid,
         cookie: cookieStr,
-        lastLoginTime: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+        lastLoginTime: new Date().toISOString(),
         s: sValue?.s,
         from: sValue?.from,
         c: sValue?.c

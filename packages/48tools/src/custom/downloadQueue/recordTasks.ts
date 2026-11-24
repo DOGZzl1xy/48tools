@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { queueTaskStart, queueTaskProgress, queueTaskEnd } from './downloadQueue';
-import { beijingDate } from '../room/roomTime';
+import { beijingDate } from '../time/timeZone';
 import { formatProgressDetail, type ProgressStats } from '../download/formatProgress';
 import { startInSlot, cancelWaitingInSlot } from './slotTasks';
 

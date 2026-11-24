@@ -22,7 +22,7 @@ export interface WeiboAccount {
   id: string;
   username: string;
   cookie: string;
-  lastLoginTime: string; // 最后登陆时间
+  lastLoginTime: string; // 最后登陆时间（ISO；以前存的是电脑时区的 YYYY-MM-DD HH:mm:ss）
   s: string | undefined;
   from: string | undefined;
   c: string | undefined;

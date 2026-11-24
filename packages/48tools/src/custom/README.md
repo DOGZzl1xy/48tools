@@ -68,7 +68,8 @@
 | 房间消息的界面固定在内容面板里：绝对定位贴满面板（不占面板的滚动高度），消息列表、成员列表滚到头以后滚轮不传给外面（`overscroll-behavior: contain`）。以前按「整页高度」撑开，和面板差几十像素时，消息列表滚到底后会接着滚整个面板，顶部的工具栏被推出去点不到（2026-11-23 用户报的） | `room/room.global.sass`（`.room`、`.room-scroll`、`.room-side-list`） | `shell/shell.global.sass`（去掉不再用的 `--shell-page-height`） |
 | 成员的队伍和拼音：房间的成员栏、标题、别的成员串门发的消息、首页都显示队伍（沈馨 → NII）；搜索成员可以输入名字、拼音（全拼，或姓和名的首字母）、成员 ID、队伍。数据是原版就在用的公开成员名单（`services/48/jsdelivrCDN` 的 `roomId.json`），存在本机，一天更新一次，请求里不带账号信息 | `room/memberDirectory.ts`、`room/memberSearch.ts` | `room/MemberPanel.tsx`、`room/ChatView.tsx`、`home/HomeDashboard.tsx`、`live/AutoGrabOptionsPage.tsx` |
 | 在房间里查找：搜索本机存下来的消息（文字、回复、翻牌、发送者名字、语音转好的文字），或者跳到某一天；点结果会把那里到现在的消息读出来并滚过去 | `room/RoomSearch.tsx`、`room/roomSearchText.ts`、`room/roomCache.ts`（`searchRoomCache`、`firstCachedSince`）、`room/roomStore.ts`（`loadBackTo`） | `room/ChatView.tsx`（标题栏的放大镜） |
-| 房间消息的时间可以按北京时间显示（「更多」菜单里，设置项 `roomBeijingTime`）；鼠标放到时间上显示完整日期和时间；`[太阳]` 这类文字表情显示成 emoji；清除房间缓存前先确认；成员栏可以收起成一列头像（窗口窄时默认收起） | `room/roomTime.ts`、`room/emojiText.ts`、`room/ChatView.tsx`、`room/MemberPanel.tsx` | `room/MessageBubble.tsx` |
+| 整个程序的时间按北京时间，和这台电脑的时区无关（用户 2026-11-23 定的；以前列表、文件名、导出按电脑时区，切片、公演按北京时间，混着用），设置页「时间」里可以换时区（设置项 `timeZone`，也可以跟随这台电脑）。按它走的：房间消息、首页、直播 / 录播 / 公演列表的时间，下载、录制、导出的文件名里的时间，导出的房间消息（开头写明是哪里的时间），`pocket48_live_log.txt`，青春时刻的起止时间和选择器，各平台「上次登陆时间」（改成存 ISO；以前存的是电脑时区的文字，按电脑时区换算）。固定北京时间、不跟着设置变的：切片、公演、音频信息里的日期（`beijingDate`，写在画面、发布标题和文件夹名上；文件夹名还用来认出是不是同一场）、公演自动录制查开播的时段、打包写的日期。改之前存下来的文件不改名。新加的代码不要直接 `dayjs().format`、`getHours`（`timeZone.spec.ts` 会扫出来） | `time/timeZone.ts`（换算，不读设置）、`time/appTime.ts`（`showTime`、`showNow`、`useTimeZone` 等）、`time/ZonedDatePicker.tsx`（选日期）、`time/TimeZoneOption.tsx`（设置页） | `utils/utils.ts`（`getFileTime`）、`InVideo.tsx`、`Pocket48Live.tsx`、`Pocket48Record.tsx`、`utils/autoGrab.ts`、`RoomMessage/utils/formatData.ts`、`SearchMessage.tsx`、`Qingchunshike/`、`Douyin.tsx`、`WeiboLogin/`、`BilibiliLogin/Qrcode.tsx`、`AcFunLogin/Qrcode.tsx`、`room/roomTime.ts`、`room/roomExport.ts`、`room/RoomSearch.tsx`、`home/HomeDashboard.tsx`、`settings/SettingsPage.tsx`、`scripts/custom/packWin64.mjs` |
+| 鼠标放到房间消息的时间上显示完整日期和时间（按设置里的时区，以前「更多」菜单里的「按北京时间显示」去掉了）；`[太阳]` 这类文字表情显示成 emoji；清除房间缓存前先确认；成员栏可以收起成一列头像（窗口窄时默认收起） | `room/roomTime.ts`、`room/emojiText.ts`、`room/ChatView.tsx`、`room/MemberPanel.tsx` | `room/MessageBubble.tsx` |
 | 语音播放条换成自己画的（跟着主题变色，没播放也显示时长，同一时间只播一条）；转好的文字可以复制；重新转失败时原来的文字不丢；参考内容按语音所在的房间找；导出房间消息时带上转好的文字；转过的语音文件只保留 6 个月（启动后自动清理，文字一直保留，缓存数据库升到版本 2） | `transcribe/VoicePlayer.tsx`、`transcribe/VoiceMessage.tsx`、`transcribe/transcribeStore.ts`、`transcribe/transcriptCache.ts`（`purgeOldAudio`、`getAllTranscripts`）、`room/roomExport.ts` | `room/MessageBubble.tsx`、`shell/AppShell.tsx`（启动后清理）、`pages/48/RoomMessage/utils/HTMLComponents.tsx`（导出的 HTML 里显示 `transcript`） |
 | API key 加密保存：存进 localStorage 之前用系统的加密功能（Windows 的 DPAPI，绑定当前 Windows 用户）加密，以前明文保存的会在下次启动时自动换成加密的；换电脑或换用户后解不开，需要重新填 | `settings/secretBox.ts`、`settings/settingsStore.ts`、`packages/main/src/custom/secretStore.mts`、`packages/main/src/custom/secretChannel.ts` | `packages/main/src/main.mts`（`registerSecretStore`） |
 | 自动抓取随程序启动：启动几秒后自动开始监听（设置里可以关：`autoGrabAutoStart`），要什么（完整直播、切片）用上次手动开始时勾的（`autoGrabActions`）；运行时侧边栏「直播抓取」上有绿点，首页也显示状态 | `live/autoGrabRunner.ts` | `shell/AppShell.tsx`（启动）、`Pocket48Live.tsx`（手动开始时记住勾选） |
@@ -105,7 +106,7 @@
 
 ## 测试
 
-- 单元测试：`custom/` 下的 `*.spec.ts`（44 个文件，364 个测试），在 `packages/48tools` 目录运行 `node --run test`。
+- 单元测试：`custom/` 下的 `*.spec.ts`（46 个文件，377 个测试），在 `packages/48tools` 目录运行 `node --run test`。
   其中 `highlight/highlightPipeline.spec.ts` 最后一组测试是真的把录播切片跑一遍（下载、问 Gemini、合成；也可以只下载），平时跳过，
   要跑时按那个文件开头的说明设置环境变量。
   `bilibili/gongyanSource.spec.ts`（把几段录像接起来）和 `highlight/highlightStagePipeline.spec.ts`（公演切片完整走一遍：假的 Gemini、

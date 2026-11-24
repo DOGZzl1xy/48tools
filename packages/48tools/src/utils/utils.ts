@@ -3,10 +3,10 @@ import * as net from 'node:net';
 import type { Server as NetServer } from 'node:net';
 import * as os from 'node:os';
 import { chromium, firefox, webkit, type BrowserType } from 'playwright-core';
-import * as dayjs from 'dayjs';
 import filenamify from 'filenamify/browser';
 import { BILIBILI_COOKIE_KEY, type BilibiliCookie } from '../functionalComponents/BilibiliLogin/Qrcode';
 import { ACFUN_COOKIE_KEY, type AcFunCookie } from '../functionalComponents/AcFunLogin/Qrcode';
+import { showNow, showTime } from '../custom/time/appTime'; // 按设置里的时区
 
 /* 获取ffmpeg的地址 */
 export function getFFmpeg(): string {
@@ -68,9 +68,9 @@ export const fileTimeFormat: string = 'YYYY-MM-DD~HH.mm.ss';
  */
 export function getFileTime(value?: number | string): string {
   if (value) {
-    return dayjs(typeof value === 'string' ? Number(value) : value).format(fileTimeFormat);
+    return showTime(value, fileTimeFormat);
   } else {
-    return dayjs().format(fileTimeFormat);
+    return showNow(fileTimeFormat);
   }
 }
 

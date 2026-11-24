@@ -8,8 +8,7 @@ import {
   MoreOutlined as IconMoreOutlined,
   SearchOutlined as IconSearchOutlined,
   ArrowUpOutlined as IconArrowUpOutlined,
-  ArrowDownOutlined as IconArrowDownOutlined,
-  CheckOutlined as IconCheckOutlined
+  ArrowDownOutlined as IconArrowDownOutlined
 } from '@ant-design/icons';
 import type { CustomMessageV2 } from '@48tools-api/48';
 import MessageBubble from './MessageBubble';
@@ -19,7 +18,7 @@ import { exportRoom, downloadRoomBackground } from './roomExport';
 import { roomClock, type RoomClock } from './roomTime';
 import { useMemberDirectory, teamOf, type DirectoryState } from './memberDirectory';
 import { teamLabel } from './memberSearch';
-import { useSettingOverrides, setSetting, type CustomSettings } from '../settings/settingsStore';
+import { useTimeZone } from '../time/appTime';
 import {
   loadOlder,
   loadBackTo,
@@ -36,7 +35,7 @@ import {
 
 /**
  * 房间页面右边：一个房间的消息（从 RoomPage 里拆出来的）。
- * 标题栏：成员（名字后面是队伍）、「只看成员 / 全部消息」、关注、查找、刷新、更多（导出、背景图、时间按北京时间显示、清除缓存）。
+ * 标题栏：成员（名字后面是队伍）、「只看成员 / 全部消息」、关注、查找、刷新、更多（导出、背景图、清除缓存）。
  * 消息列表的滚动（只画一段、保持阅读位置、跳到某一条）在 ./useChatScroll；导出在 ./roomExport；查找面板是 ./RoomSearch。
  * 列表上面浮着两个按钮：右上「N 条新消息」（跳到「以下是新消息」那条线），右下「回到底部」。
  * 换房间、切换「只看成员 / 全部消息」时这个组件会整个重新挂载（RoomPage 里给了 key），所以滚动位置等都从头开始。
@@ -59,8 +58,7 @@ function ChatView(props: ChatViewProps): ReactElement {
   const { member, room, mode, followed, divider }: ChatViewProps = props;
   const { message: messageApi, modal: modalApi }: useAppProps = App.useApp();
   const directory: DirectoryState = useMemberDirectory();
-  const settings: CustomSettings = useSettingOverrides();
-  const beijing: boolean = settings.roomBeijingTime === true;
+  const zone: string = useTimeZone();
   const allItems: Array<RoomMessageItem> = room.items;
   const chat: ChatScroll = useChatScroll({
     allItems,
@@ -176,8 +174,6 @@ function ChatView(props: ChatViewProps): ReactElement {
       downloadRoomBackground(room.channelId, messageApi);
     } else if (info.key === 'reset') {
       handleResetClick();
-    } else if (info.key === 'beijing') {
-      setSetting('roomBeijingTime', beijing ? undefined : true);
     } else {
       exportRoom(member, mode, info.key as 'html' | 'json', messageApi);
     }
@@ -226,8 +222,6 @@ function ChatView(props: ChatViewProps): ReactElement {
               { key: 'json', label: `导出本地已有的${ exportName }（JSON）`, disabled: allItems.length === 0 },
               { key: 'bg', label: '下载房间背景图' },
               { type: 'divider' },
-              { key: 'beijing', label: '时间按北京时间显示', icon: beijing ? <IconCheckOutlined /> : <span className="room-menu-blank" /> },
-              { type: 'divider' },
               { key: 'reset', label: '清除这个房间的本地缓存…', danger: true }
             ],
             onClick: handleMenuClick
@@ -253,7 +247,7 @@ function ChatView(props: ChatViewProps): ReactElement {
             </div>
             {
               items.map((item: RoomMessageItem): ReactElement => {
-                const clock: RoomClock = roomClock(item.raw.msgTime, beijing);
+                const clock: RoomClock = roomClock(item.raw.msgTime, zone);
                 const showDay: boolean = clock.day !== lastDay;
                 const senderId: number | undefined = item.message.user?.userId;
                 const isMember: boolean = item.message.user?.roleId === 3; // 成员（房主，或者来串门的别的成员）；其他的是粉丝
@@ -310,7 +304,7 @@ function ChatView(props: ChatViewProps): ReactElement {
       <RoomSearch open={ searchOpen }
         member={ member }
         mode={ mode }
-        beijing={ beijing }
+        zone={ zone }
         onJump={ handleJump }
         onClose={ (): void => setSearchOpen(false) }
       />

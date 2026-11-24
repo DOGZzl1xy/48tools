@@ -4,10 +4,9 @@ import { Fragment, useEffect, type ReactElement, type MouseEvent } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import type { Dispatch } from '@reduxjs/toolkit';
 import { createStructuredSelector, type Selector } from 'reselect';
-import { Card, Alert, Form, DatePicker, Select, Button, Space, message, type FormInstance } from 'antd';
+import { Card, Alert, Form, Select, Button, Space, message, type FormInstance } from 'antd';
 import type { DefaultOptionType } from 'rc-select/es/Select';
 import type { UseMessageReturnType } from '@48tools-types/antd';
-import * as dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import classNames from 'classnames';
 import style from './createResult.sass';
@@ -20,7 +19,10 @@ import {
   type QingchunshikeInitialState
 } from '../../reducers/qingchunshike';
 import dbConfig from '../../../../utils/IDB/IDBConfig';
-import { fileTimeFormat } from '../../../../utils/utils';
+import { getFileTime } from '../../../../utils/utils';
+import ZonedDatePicker, { pickedTime } from '../../../../custom/time/ZonedDatePicker'; // 按设置里的时区选
+import { showTimeWithZone, useTimeZone } from '../../../../custom/time/appTime';
+import { zoneName } from '../../../../custom/time/timeZone';
 import {
   selectorsObject as pocket48LoginSelectorsObject,
   type Pocket48LoginInitialState
@@ -47,6 +49,7 @@ function CreateResult(props: {}): ReactElement {
   const dispatch: Dispatch = useDispatch();
   const [messageApi, messageContextHolder]: UseMessageReturnType = message.useMessage();
   const [form]: [FormInstance] = Form.useForm();
+  const zone: string = useTimeZone();
 
   // 生成数据
   async function handleCreateResultClick(event: MouseEvent): Promise<void> {
@@ -87,7 +90,7 @@ function CreateResult(props: {}): ReactElement {
     if (!userItem) return;
 
     const filename: string = `${ userItem.description }_${ userItem.serverId }_${ userItem.channelId }_${ userItem.liveRoomId }_${
-      dayjs().format(fileTimeFormat)
+      getFileTime()
     }.txt`;
     const result: SaveDialogReturnValue = await showSaveDialog({
       defaultPath: filename
@@ -100,8 +103,8 @@ function CreateResult(props: {}): ReactElement {
     try {
       const calculateResult: CalculateResult = await calculate({
         user: userItem,
-        st: formValue.startTime.valueOf(),
-        et: formValue.endTime.valueOf(),
+        st: pickedTime(formValue.startTime),
+        et: pickedTime(formValue.endTime),
         accid: userInfo.accid,
         pwd: userInfo.pwd,
         appDataDir
@@ -112,7 +115,7 @@ function CreateResult(props: {}): ReactElement {
 liveRoomId: ${ userItem.liveRoomId }
 ============================================
 ${ userItem.description }
-${ formValue.startTime.format('YYYY-MM-DD HH:mm:ss') } - ${ formValue.endTime.format('YYYY-MM-DD HH:mm:ss') }
+${ showTimeWithZone(pickedTime(formValue.startTime)) } - ${ showTimeWithZone(pickedTime(formValue.endTime)) }
 
 【数据统计可能不准确，仅供参考。】
 ============================================
@@ -175,7 +178,7 @@ ${ calculateResult.nimCalculateResult.tpNumList.map(([a, b]: [string, number]): 
         <Alert className="mb-[16px]" type="error" message={ <div className="text-[18px]">请不要在观看口袋直播时生成数据！会出现问题！</div> } />
         <Alert className="mb-[16px]" type="warning" message={
           <Fragment>
-            <div>数据统计可能不准确，仅供参考。开始时间和结束时间请选择青春时刻期间。最长时间不超过6个月。</div>
+            <div>数据统计可能不准确，仅供参考。开始时间和结束时间请选择青春时刻期间（{ zoneName(zone) }）。最长时间不超过6个月。</div>
             <div>直播弹幕的历史由于只能保存5900条数据，如果当天不统计就可能会丢失！请注意！</div>
           </Fragment>
         } />
@@ -189,10 +192,10 @@ ${ calculateResult.nimCalculateResult.tpNumList.map(([a, b]: [string, number]): 
             </Space>
           </Form.Item>
           <Form.Item className={ style.formItem } label="开始时间" name="startTime" rules={ [{ required: true, message: '请选择开始时间' }] }>
-            <DatePicker showTime={ true } />
+            <ZonedDatePicker showTime={ true } />
           </Form.Item>
           <Form.Item className={ style.formItem } label="结束时间" name="endTime" rules={ [{ required: true, message: '请选择结束时间' }] }>
-            <DatePicker showTime={ true } />
+            <ZonedDatePicker showTime={ true } />
           </Form.Item>
         </Form>
       </Card>

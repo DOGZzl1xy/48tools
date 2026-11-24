@@ -27,7 +27,6 @@ import type { ColumnsType } from 'antd/es/table';
 import type { DefaultOptionType } from 'rc-select/es/Select';
 import type { UseModalReturnType, UseMessageReturnType } from '@48tools-types/antd';
 import { LoadingOutlined as IconLoadingOutlined } from '@ant-design/icons';
-import * as dayjs from 'dayjs';
 import { WinIpcChannel } from '@48tools/main/src/channelEnum';
 import {
   requestLiveList,
@@ -63,6 +62,7 @@ import { getPocket48Proxy } from '../../../../custom/pocket48Proxy/pocket48Proxy
 import { pickAudioResume } from '../../../../custom/download/audioResume';
 import RowActions from '../../../../custom/table/RowActions';
 import MediaTitleCell from '../../../../custom/table/MediaTitleCell';
+import { showTime } from '../../../../custom/time/appTime'; // 按设置里的时区
 import {
   recordTaskStart, recordTaskProgress, recordTaskEnd, recordTaskStopping, recordTaskQueue, recordTaskCancelWaiting, audioMetaOf
 } from '../../../../custom/downloadQueue/recordTasks';
@@ -521,7 +521,7 @@ function Pocket48Record(props: {}): ReactElement {
       dataIndex: 'ctime',
       width: 165,
       render: (value: string, record: LiveInfo, index: number): string => {
-        return dayjs(Number(value)).format('YYYY-MM-DD HH:mm:ss');
+        return showTime(value);
       }
     },
     {

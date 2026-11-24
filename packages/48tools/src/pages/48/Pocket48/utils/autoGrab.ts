@@ -4,8 +4,6 @@ import * as path from 'node:path';
 import { promises as fsP } from 'node:fs';
 import type { Store } from '@reduxjs/toolkit';
 import type { MessageInstance } from 'antd/es/message/interface';
-import * as dayjs from 'dayjs';
-import type { Dayjs } from 'dayjs';
 import { requestLiveList, type LiveData, type LiveInfo, type UserInfo } from '@48tools-api/48';
 import { store } from '../../../../store/store';
 import { setLiveList } from '../../reducers/pocket48';
@@ -13,6 +11,7 @@ import { createMemberMatcher, createErrorNotifier } from '../../../../custom/liv
 import { getLiveRecordDir } from '../../../../custom/live/liveRecording';
 import { trackLive, isTrackedLive } from '../../../../custom/live/replayGrab';
 import { actionsText, type GrabActions } from '../../../../custom/live/replayGrabCore';
+import { showTimeWithZone } from '../../../../custom/time/appTime';
 import { pocket48ErrorText, pocket48FailText } from '../../../../custom/pocket48Api/apiErrorText';
 
 /* 轮询出错时提示（同样的错误 10 分钟内只提示一次） */
@@ -61,16 +60,14 @@ async function autoGrab(messageApi: MessageInstance, configDir: string, usersArr
 
     if (!isTargetMember(nickname, userId) || isTrackedLive(item.liveId)) continue;
 
-    const cTimeDay: Dayjs = dayjs(Number(item.ctime));
-
     try {
       // 追加 log
       await fsP.writeFile(path.join(dir, 'pocket48_live_log.txt'), `直播标题：${ item.title }
 直播ID：${ item.liveId }
 直播人：${ item.userInfo.nickname }
-直播时间：${ cTimeDay.format('YYYY-MM-DD HH:mm:ss') }
+直播时间：${ showTimeWithZone(item.ctime) }
 直播结束后：${ actionsText(actions) }
-记下时间：${ dayjs().format('YYYY-MM-DD HH:mm:ss') }\n\n`, { encoding: 'utf8', flag: 'a' });
+记下时间：${ showTimeWithZone(Date.now()) }\n\n`, { encoding: 'utf8', flag: 'a' });
     } catch (err) {
       console.error(err);
     }

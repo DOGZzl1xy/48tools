@@ -1,14 +1,14 @@
-import * as dayjs from 'dayjs';
 import type { CustomMessageV2 } from '@48tools-api/48';
 import { source, mp4Source } from '../../../../utils/snh48';
 import { rStr } from '../../../../utils/utils';
+import { showTime } from '../../../../custom/time/appTime'; // 按设置里的时区
 import type { FormatCustomMessage, VIDEOMessageV2, AUDIOMessageV2, IMAGEMessageV2, UserV2, SendDataItem } from '../../types';
 
 /* 将数据格式化 */
 export function FormatData(item: CustomMessageV2): FormatCustomMessage {
   const extInfoJson: Record<string, any> = JSON.parse(item.extInfo);
   const user: UserV2 = extInfoJson.user;
-  const time: string = dayjs(item.msgTime).format('YYYY-MM-DD HH:mm:ss');
+  const time: string = showTime(item.msgTime);
   const id: string = `${ item.msgIdClient }@${ rStr(50) }`;
 
   user.avatar = source(user.avatar);
@@ -143,7 +143,7 @@ export function formatSendData(data: Array<CustomMessageV2>, keepAll: boolean = 
       bodys,
       extInfo,
       msgType: o.msgType,
-      msgTime: dayjs(o.msgTime).format('YYYY-MM-DD HH:mm:ss')
+      msgTime: showTime(o.msgTime)
     });
   });
 

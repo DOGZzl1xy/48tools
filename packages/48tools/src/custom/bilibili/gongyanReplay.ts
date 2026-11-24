@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import { promises as fsP } from 'node:fs';
 import * as path from 'node:path';
 import { requestLiveOne, type LiveOne, type LiveOnePlayStreams } from '@48tools-api/48';
-import { beijingDate } from '../room/roomTime';
+import { beijingDate } from '../time/timeZone';
 import { getMemberDirectory, loadMemberDirectory } from '../room/memberDirectory';
 import { safeFileName } from '../highlight/highlightTime';
 import { mediaDuration } from '../highlight/highlightFfmpeg';

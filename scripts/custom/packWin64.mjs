@@ -99,8 +99,7 @@ async function checkDelayRequireInLoopHead() {
 /* 当前提交的信息，写进程序目录，窗口标题用 */
 function gitBuildInfo() {
   const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
-  const now = new Date();
-  const date = `${ now.getFullYear() }-${ String(now.getMonth() + 1).padStart(2, '0') }-${ String(now.getDate()).padStart(2, '0') }`;
+  const date = new Date(Date.now() + (8 * 3_600_000)).toISOString().slice(0, 10); // 北京时间的日期，和电脑的时区无关
 
   try {
     return { commit: git(['rev-parse', '--short', 'HEAD']), date, dirty: git(['status', '--porcelain']) !== '' };

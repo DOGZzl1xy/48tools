@@ -13,7 +13,6 @@ import { Select, Button, Table, message, Space, Popconfirm, type TablePagination
 import type { ColumnsType } from 'antd/es/table';
 import type { DefaultOptionType } from 'rc-select/es/Select';
 import type { UseMessageReturnType } from '@48tools-types/antd';
-import * as dayjs from 'dayjs';
 import {
   requestDownloadFile,
   requestOpenLiveList,
@@ -45,6 +44,7 @@ import { queueTaskStart, queueTaskProgress, queueTaskEnd } from '../../../../cus
 import { startInSlot, cancelWaitingInSlot } from '../../../../custom/downloadQueue/slotTasks';
 import { formatProgressDetail } from '../../../../custom/download/formatProgress';
 import { startStageReplayHighlight, stageReplayTeam } from '../../../../custom/bilibili/gongyanReplay';
+import { showTime } from '../../../../custom/time/appTime'; // 按设置里的时区
 
 /* 公演录播下载在下载队列里的 id；点了停止的记在 inVideoStopping 里（worker 停止和正常结束发的是同一种消息） */
 function inVideoTaskId(liveId: string): string {
@@ -335,7 +335,7 @@ function InVideo(props: {}): ReactElement {
       dataIndex: 'stime',
       width: 165,
       render: (value: string, record: OpenLiveInfo, index: number): string => {
-        return dayjs(Number(value)).format('YYYY-MM-DD HH:mm:ss');
+        return showTime(value);
       }
     },
     {

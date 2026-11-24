@@ -25,7 +25,7 @@ export interface CustomSettings {
   sttOpenaiModel?: string;
   sttOpenaiBaseUrl?: string;
   sttHints?: boolean;                 // 语音转文字：把语音前后的文字一起发给接口当参考（默认开，只有关掉时才保存成 false）
-  roomBeijingTime?: boolean;          // 房间消息的时间按北京时间显示（默认按这台电脑的时区）
+  timeZone?: string;                  // 整个程序的时间按哪个时区（IANA 的名字，或者 'system' 跟随这台电脑；默认北京时间，见 custom/time）
   autoGrabAutoStart?: boolean;        // 程序启动后自动开始「自动抓取」（默认开，只有关掉时才保存成 false）
   autoGrabMode?: AutoGrabMode;        // 旧版：自动抓取用哪种方式录。现在只在没有 autoGrabActions 时用来换算（「录制并切片」→ 只切片，别的 → 只要完整直播）
   autoGrabActions?: { full: boolean; clip: boolean }; // 自动抓取：直播结束后要完整录播、切片，还是都要（上次开始时勾的，见 custom/live/replayGrabCore）
