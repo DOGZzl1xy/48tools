@@ -61,8 +61,8 @@ describe('下载分片', (): void => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  test('同时最多下 4 个，全部按顺序放好，进度一直往前走并且带速度', async (): Promise<void> => {
-    const playlist: ReplayPlaylist = playlistOf(10);
+  test('同时最多下 8 个，全部放好，进度一直往前走并且带速度', async (): Promise<void> => {
+    const playlist: ReplayPlaylist = playlistOf(20);
     const progress: Array<DownloadProgress> = [];
     let running: number = 0;
     let most: number = 0;
@@ -77,24 +77,26 @@ describe('下载分片', (): void => {
 
     await downloadSegments({ onProgress: (item: DownloadProgress): number => progress.push(item) }, playlist, fetchSegment, dir);
 
-    expect(most).toBe(4);
+    expect(most).toBe(8);
     expect(fs.readdirSync(dir).sort()).toEqual(playlist.segments.map((item: { file: string }): string => item.file));
     expect(fs.readFileSync(path.join(dir, '000009.ts'), 'utf8')).toBe('https://example.invalid/fragments/9.ts');
     expect(progress.map((item: DownloadProgress): number => item.part)).toEqual(
       [...progress].map((item: DownloadProgress): number => item.part).sort((a: number, b: number): number => a - b));
     expect(progress[progress.length - 1].part).toBeCloseTo(0.97);
-    expect(progress[progress.length - 1].detail).toMatch(/^下载录播 100% · .+\/s · .*已下载 380 B$/);
-    expect(progress[4].detail).toMatch(/^下载录播 50% · .+\/s · 剩余 /);
+    expect(progress[progress.length - 1].detail).toMatch(/^下载录播 100% · .+\/s · .*已下载 770 B$/);
+    expect(progress[9].detail).toMatch(/^下载录播 50% · .+\/s · 剩余 /);
   });
 
-  test('上次下好的不重新下', async (): Promise<void> => {
+  test('上次下好的不重新下，只下缺的', async (): Promise<void> => {
     const playlist: ReplayPlaylist = playlistOf(6);
     const fetched: Array<string> = [];
     const progress: Array<DownloadProgress> = [];
 
     fs.writeFileSync(path.join(dir, '000000.ts'), 'a');
     fs.writeFileSync(path.join(dir, '000001.ts'), 'b');
-    fs.writeFileSync(path.join(dir, '000003.ts'), 'd'); // 中间缺了第 3 个，后面的都要重新下
+    fs.writeFileSync(path.join(dir, '000003.ts'), 'd'); // 中间缺了第 3 个（它停住时后面的先下好了）
+    fs.writeFileSync(path.join(dir, '000004.ts'), ''); // 空的不算
+    fs.writeFileSync(path.join(dir, '_prefetch_000005.ts'), '下了一半'); // 没下完的不算
     await downloadSegments({ onProgress: (item: DownloadProgress): number => progress.push(item) }, playlist,
       async (uri: string, file: string): Promise<number> => {
         fetched.push(path.basename(new URL(uri).pathname));
@@ -103,8 +105,9 @@ describe('下载分片', (): void => {
         return 1;
       }, dir);
 
-    expect(fetched.sort()).toEqual(['2.ts', '3.ts', '4.ts', '5.ts']);
-    expect(progress[0].detail).toContain('接着上次的下，已下载 2/6 个分片');
+    expect(fetched.sort()).toEqual(['2.ts', '4.ts', '5.ts']);
+    expect(progress[0].detail).toContain('接着上次的下，已下载 3/6 个分片');
+    expect(fs.readdirSync(dir).some((name: string): boolean => name.startsWith('_prefetch_'))).toBe(false);
     expect(fs.readFileSync(path.join(dir, '000001.ts'), 'utf8')).toBe('b');
   });
 
@@ -129,6 +132,57 @@ describe('下载分片', (): void => {
     expect(fs.readdirSync(dir)).toHaveLength(3);
     expect(progress.some((item: DownloadProgress): boolean => item.detail.includes('正在重试（第 1 次）'))).toBe(true);
   }, 10_000);
+
+  test('一个分片停住时，后面的照常往前下，进度照样走', async (): Promise<void> => {
+    const playlist: ReplayPlaylist = playlistOf(120);
+    const progress: Array<DownloadProgress> = [];
+    let release!: () => void;
+    const stuck: Promise<void> = new Promise((resolve: () => void): void => {
+      release = resolve;
+    });
+    const all: Promise<void> = downloadSegments({ onProgress: (item: DownloadProgress): number => progress.push(item) }, playlist,
+      async (uri: string, file: string): Promise<number> => {
+        uri.endsWith('/1.ts') && await stuck;
+        fs.writeFileSync(file, 'x');
+
+        return 1;
+      }, dir);
+
+    for (let wait: number = 0; wait < 100 && progress.length < 119; wait++) await sleep(50);
+
+    expect(progress).toHaveLength(119); // 除了停住的那个都下完了
+    expect(progress[118].detail).toContain('下载录播 99%');
+    release();
+    await all;
+    expect(fs.readdirSync(dir)).toHaveLength(120);
+  }, 15_000);
+
+  test('有一个怎么都下不来：报错，别的也停下，下好的留着', async (): Promise<void> => {
+    const playlist: ReplayPlaylist = playlistOf(60);
+    const controller: AbortController = new AbortController();
+
+    // 重试前等的时间不真的等
+    const realSetTimeout: typeof setTimeout = globalThis.setTimeout;
+    const spy: jest.SpyInstance = jest.spyOn(globalThis, 'setTimeout')
+      .mockImplementation(((fn: () => void, ms: number): unknown => realSetTimeout(fn, ms >= 1_000 ? 1 : ms)) as typeof setTimeout);
+
+    try {
+      await expect(downloadSegments({ onProgress: (): void => undefined, signal: controller.signal }, playlist,
+        async (uri: string, file: string): Promise<number> => {
+          if (uri.endsWith('/30.ts')) throw new Error('断了');
+
+          fs.writeFileSync(file, 'x');
+
+          return 1;
+        }, dir)).rejects.toThrow('第 31/60 个分片失败（已重试 8 次）：断了');
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(fs.existsSync(path.join(dir, '000030.ts'))).toBe(false);
+    expect(fs.readdirSync(dir).length).toBeGreaterThan(30);
+    expect(fs.readdirSync(dir).every((name: string): boolean => /^\d{6}\.ts$/.test(name))).toBe(true);
+  }, 30_000);
 
   test('中途点停止：报「已停止」，不再下新的分片，下好的留着', async (): Promise<void> => {
     const playlist: ReplayPlaylist = playlistOf(40);

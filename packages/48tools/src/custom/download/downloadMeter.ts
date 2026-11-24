@@ -1,24 +1,43 @@
 import type { ProgressStats } from './formatProgress';
 
 /**
- * 根据最近几个分片的耗时计算下载速度和剩余时间。
- * 耗时包含下载、解析和写入，所以剩余时间是整体的预计时间；按分片的播放时长加权，分片长短不一时也比较准。
+ * 根据最近一段时间下完的分片计算下载速度和剩余时间。
+ * 按时间取最近 WINDOW_MS（不够 MIN_SAMPLES 个分片时往前多取一些）：分片是同时下的，一批一批地完成，
+ * 前面的停住时后面的会攒着一起处理，只看最近几个分片的间隔的话，速度会忽高忽低。
+ * 剩余时间按还没下的播放时长算（分片长短不一时也比较准），分片不按顺序完成也可以。
  */
+const WINDOW_MS: number = 30_000;
+const MIN_SAMPLES: number = 12;
+const MIN_FOR_ETA: number = 3; // 至少有几个分片的数据再估算剩余时间，避免开头跳动太大
+
+interface Sample {
+  bytes: number;
+  media: number;
+  time: number;
+}
+
 class DownloadMeter {
-  static readonly windowSize: number = 12;
   readonly #segments: Array<{ duration: number }>;
-  readonly #remainingMedia: Array<number>; // 每个分片之后剩余的播放时长
-  #window: Array<{ bytes: number; ms: number; media: number }> = [];
-  #lastTime: number = performance.now();
+  readonly #now: () => number;
+  #samples: Array<Sample> = [];
+  #since: number;          // 最早那个样本是从什么时候开始算的
+  #remainingMedia: number; // 还没下的播放时长
+  #remaining: number;      // 还没下的分片数
   downloaded: number = 0;
 
-  constructor(segments: Array<{ duration: number }>) {
-    this.#segments = segments;
-    this.#remainingMedia = new Array(segments.length).fill(0);
+  /**
+   * @param { Array<{ duration: number }> } segments - 整场的分片
+   * @param { Array<number> } [pending] - 要下的是哪几个（断点续传时只有没下过的），默认全部
+   * @param { () => number } [now] - 测试时换掉
+   */
+  constructor(segments: Array<{ duration: number }>, pending?: Array<number>, now: () => number = (): number => performance.now()) {
+    const list: Array<{ duration: number }> = pending ? pending.map((index: number): { duration: number } => segments[index]) : segments;
 
-    for (let index: number = segments.length - 2; index >= 0; index--) {
-      this.#remainingMedia[index] = this.#remainingMedia[index + 1] + segments[index + 1].duration;
-    }
+    this.#segments = segments;
+    this.#now = now;
+    this.#since = now();
+    this.#remaining = list.length;
+    this.#remainingMedia = list.reduce((sum: number, item: { duration: number }): number => sum + item.duration, 0);
   }
 
   /**
@@ -27,38 +46,32 @@ class DownloadMeter {
    * @param { number } bytes - 分片大小
    */
   tick(index: number, bytes: number): ProgressStats {
-    const now: number = performance.now();
+    const now: number = this.#now();
+    const media: number = this.#segments[index].duration;
 
     this.downloaded += bytes;
-    this.#window.push({ bytes, ms: now - this.#lastTime, media: this.#segments[index].duration });
-    this.#lastTime = now;
+    this.#remaining = Math.max(0, this.#remaining - 1);
+    this.#remainingMedia = Math.max(0, this.#remainingMedia - media);
+    this.#samples.push({ bytes, media, time: now });
 
-    if (this.#window.length > DownloadMeter.windowSize) this.#window.shift();
-
-    let sumBytes: number = 0,
-      sumMs: number = 0,
-      sumMedia: number = 0;
-
-    for (const item of this.#window) {
-      sumBytes += item.bytes;
-      sumMs += item.ms;
-      sumMedia += item.media;
+    while (this.#samples.length > MIN_SAMPLES && now - this.#samples[0].time > WINDOW_MS) {
+      this.#since = this.#samples[0].time;
+      this.#samples.shift();
     }
 
+    const ms: number = now - this.#since;
     const stats: ProgressStats = { downloaded: this.downloaded, stage: 'download' };
 
-    if (sumMs <= 0) return stats;
+    if (ms <= 0) return stats;
 
-    stats.speed = sumBytes / sumMs * 1000;
+    stats.speed = this.#samples.reduce((sum: number, item: Sample): number => sum + item.bytes, 0) / ms * 1000;
 
-    // 至少有 3 个分片的数据再估算剩余时间，避免开头跳动太大
-    if (this.#window.length >= 3) {
-      const remainingSegments: number = this.#segments.length - index - 1;
-      const remainingMedia: number = this.#remainingMedia[index];
+    if (this.#samples.length >= MIN_FOR_ETA) {
+      const sampleMedia: number = this.#samples.reduce((sum: number, item: Sample): number => sum + item.media, 0);
 
-      stats.eta = sumMedia > 0 && remainingMedia > 0
-        ? remainingMedia * (sumMs / sumMedia) / 1000
-        : remainingSegments * (sumMs / this.#window.length) / 1000;
+      stats.eta = sampleMedia > 0 && this.#remainingMedia > 0
+        ? this.#remainingMedia * (ms / sampleMedia) / 1000
+        : this.#remaining * (ms / this.#samples.length) / 1000;
     }
 
     return stats;

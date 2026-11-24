@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import * as fs from 'node:fs';
-import { promises as fsP, type Stats } from 'node:fs';
+import { promises as fsP } from 'node:fs';
 import * as path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 // @ts-expect-error
@@ -23,6 +23,7 @@ import DownloadMeter from '../../../../../custom/download/downloadMeter';
 import { createAudio, type AudioWorkerDeps } from '../../../../../custom/download/audioExtract';
 import type { ProgressStats } from '../../../../../custom/download/formatProgress';
 import { SEGMENT_TIMEOUT, withRetry, segmentViaProxy } from '../../../../../custom/download/segmentRetry';
+import { fetchSegmentFile } from '../../../../../custom/download/segmentFetch';
 import { pocket48Agent, setPocket48ProxyForWorker } from '../../../../../custom/pocket48Proxy/pocket48Proxy';
 import { SegmentPrefetcher, trackSegmentRequest, abortSegmentRequests, closeSegmentPrefetchers } from '../../../../../custom/download/segmentPrefetcher';
 
@@ -298,33 +299,37 @@ async function probeSegment(ffprobe: string, file: string): Promise<SegmentProbe
   }
 }
 
-async function downloadSegment(uri: string, file: string, attempt: number = 0): Promise<number> {
+async function downloadSegment(uri: string, file: string, attempt: number = 0, signal?: AbortSignal): Promise<number> {
   const url: URL = new URL(uri);
-  const request: GotRequest = got.stream(uri, {
-    headers: {
-      'Host': url.hostname,
-      'User-Agent': 'SNH48 ENGINE'
-    },
-    timeout: SEGMENT_TIMEOUT, // 卡住时断开，交给 downloadSegmentWithRetry 重试
-    // 直连失败两次以后改走口袋48代理（个别分片从美国的 CDN 节点每次都下不来，见 custom/download/segmentRetry）
-    agent: segmentViaProxy(attempt) ? pocket48Agent() : undefined
-  });
 
-  activeRequest = request;
-  trackSegmentRequest(request); // 并行下载时停止要取消所有请求
   try {
-    await pipeline(request, fs.createWriteStream(file));
+    // 停住 10 秒就从断点走口袋48代理补完（custom/download/segmentFetch）
+    return await fetchSegmentFile({
+      file,
+      attempt,
+      signal,
+      isStopped: (): boolean => isStopped,
+      hasProxy: pocket48Agent() !== undefined,
+      open(viaProxy: boolean, headers: Record<string, string>): GotRequest {
+        const request: GotRequest = got.stream(uri, {
+          headers: {
+            'Host': url.hostname,
+            'User-Agent': 'SNH48 ENGINE',
+            ...headers
+          },
+          timeout: SEGMENT_TIMEOUT, // 卡住时断开，交给 downloadSegmentWithRetry 重试
+          agent: viaProxy ? pocket48Agent() : undefined
+        });
+
+        activeRequest = request;
+        trackSegmentRequest(request); // 并行下载时停止要取消所有请求
+
+        return request;
+      }
+    });
   } finally {
     activeRequest = null;
   }
-
-  const fileStat: Stats = await fsP.stat(file);
-
-  if (fileStat.size === 0) {
-    throw new Error(`TS分片下载为空：${ uri }`);
-  }
-
-  return fileStat.size;
 }
 
 /* 分片下载失败时重试（custom/download/segmentRetry） */
@@ -335,9 +340,10 @@ function downloadSegmentWithRetry(
   onRetry?: (attempt: number) => void,
   signal?: AbortSignal
 ): Promise<number> {
-  return withRetry((attempt: number): Promise<number> => downloadSegment(uri, file, attempt), {
+  return withRetry((attempt: number): Promise<number> => downloadSegment(uri, file, attempt, signal), {
     label,
     isStopped: (): boolean => isStopped || Boolean(signal?.aborted),
+    signal,
     onRetry
   });
 }

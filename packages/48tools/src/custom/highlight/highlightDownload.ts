@@ -1,7 +1,7 @@
 import { promises as fsP } from 'node:fs';
 import * as path from 'node:path';
 import DownloadMeter from '../download/downloadMeter';
-import { SegmentPrefetcher } from '../download/segmentPrefetcher';
+import { SEGMENT_CONCURRENCY } from '../download/segmentPrefetcher';
 import { withRetry, segmentViaProxy } from '../download/segmentRetry';
 import { formatProgressDetail } from '../download/formatProgress';
 import { withDownloadSlot, DownloadWaitStopped } from '../download/downloadSlot';
@@ -11,9 +11,10 @@ import { clock } from './highlightTime';
 
 /**
  * 录播自动切片里下载整场录播的部分。
- * 录播是一个 m3u8（一千来个几秒钟的分片）。和普通的录播下载一样同时下 4 个分片（custom/download/segmentPrefetcher），
- * 卡住或失败的分片自动重试；全部下完后在本机合成一个 mp4（不重新编码，几秒钟的事）。
- * 分片放在「工作文件夹/segments」里，中途停止后再来时已经下好的不用重新下。
+ * 录播是一个 m3u8（一千来个几秒钟的分片）。和普通的录播下载一样同时下 8 个分片（custom/download/segmentPrefetcher 的 SEGMENT_CONCURRENCY），
+ * 停住的分片从断点走代理补（../download/segmentFetch），失败的自动重试；哪个先下完就先放好，一个停住时后面的照常往前下。
+ * 全部下完后在本机合成一个 mp4（不重新编码，几秒钟的事）。
+ * 分片放在「工作文件夹/segments」里，中途停止后再来时已经下好的不用重新下（先下到临时文件，下完才改成正式的名字，所以有这个名字的都是完整的）。
  * 不是普通 m3u8 的（很早以前的录播是一个 mp4、加密的、或者调用的地方没给下载分片的函数）让 ffmpeg 直接下载，只有一条连接。
  * 和所有录播下载共用一个下载位（../download/downloadSlot）：前面有别的在下时排队，下完分片就让给下一场（合并在本机做）。
  * 接入点：./highlightPipeline 的 prepareHighlight、./highlightTask 的 downloadStream。
@@ -60,6 +61,11 @@ function segmentFile(index: number): string {
   return `${ String(index).padStart(6, '0') }.ts`;
 }
 
+/* 还没下完的分片 */
+function tempFile(index: number): string {
+  return `_prefetch_${ segmentFile(index) }`;
+}
+
 /**
  * 读 m3u8：每个分片的地址（相对地址补全）和时长，以及换成本机文件名后的 m3u8。
  * 没有分片、加密（#EXT-X-KEY）或者分片要先读一个头（#EXT-X-MAP）时返回 undefined，这几种交给 ffmpeg 自己下载
@@ -103,29 +109,27 @@ export function readPlaylist(text: string, baseUrl: string): ReplayPlaylist | un
   return segments.length > 0 ? { segments, local: `${ local.join('\n') }\n` } : undefined;
 }
 
-/* 已经下好的分片：从头数连续有多少个，一共多大（下载是按顺序放进文件夹的，中间不会有空缺） */
-async function downloadedSegments(dir: string, segments: Array<PlaylistSegment>): Promise<{ count: number; bytes: number }> {
-  let count: number = 0;
+/* 还没下的分片是哪几个，已经下好的一共多大 */
+async function pendingSegments(dir: string, segments: Array<PlaylistSegment>): Promise<{ pending: Array<number>; bytes: number }> {
+  const pending: Array<number> = [];
   let bytes: number = 0;
 
-  while (count < segments.length) {
+  for (const [index, segment] of segments.entries()) {
     let size: number = 0;
 
     try {
-      size = (await fsP.stat(path.join(dir, segments[count].file))).size;
+      size = (await fsP.stat(path.join(dir, segment.file))).size;
     } catch { /* 没有这个文件 */ }
 
-    if (size === 0) break;
-
+    size === 0 && pending.push(index);
     bytes += size;
-    count++;
   }
 
-  return { count, bytes };
+  return { pending, bytes };
 }
 
 /**
- * 把所有分片下载到 dir 里（同时下几个，按顺序放好）；dir 里已经有的不重新下
+ * 把所有分片下载到 dir 里（同时下几个，哪个先下完先放好）；dir 里已经有的不重新下
  * @param { Pick<ReplayDownload, 'signal' | 'onProgress'> } job
  * @param { ReplayPlaylist } playlist
  * @param { SegmentFetcher } fetchSegment
@@ -137,68 +141,71 @@ export async function downloadSegments(
   const { segments }: ReplayPlaylist = playlist;
   const { signal, onProgress }: Pick<ReplayDownload, 'signal' | 'onProgress'> = job;
   const total: number = segments.length;
-  const have: { count: number; bytes: number } = await downloadedSegments(dir, segments);
-  const meter: DownloadMeter = new DownloadMeter(segments);
-  let retrying: number = 0; // 正在重试的分片数，重试时不让别的分片的进度把提示盖掉
+  const { pending, bytes }: { pending: Array<number>; bytes: number } = await pendingSegments(dir, segments);
+  const meter: DownloadMeter = new DownloadMeter(segments, pending);
+  const controller: AbortController = new AbortController(); // 点了停止，或者有一个分片怎么都下不来
+  let done: number = total - pending.length;
+  let next: number = 0;
 
-  meter.downloaded = have.bytes;
+  meter.downloaded = bytes;
 
-  function report(done: number, text: string): void {
+  function report(text: string): void {
     const part: number = done / total;
 
     onProgress({ part: part * MERGE_PART, detail: `下载录播 ${ Math.floor(part * 100) }%${ text ? ` · ${ text }` : '' }` });
   }
 
-  const prefetcher: SegmentPrefetcher = new SegmentPrefetcher(total, dir, async (index: number, file: string, inner: AbortSignal): Promise<number> => {
-    let retried: boolean = false;
+  async function downloadOne(index: number): Promise<void> {
+    const temp: string = path.join(dir, tempFile(index));
 
     try {
-      return await withRetry((attempt: number): Promise<number> => fetchSegment(segments[index].uri, file, inner, attempt), {
+      const size: number = await withRetry((attempt: number): Promise<number> => fetchSegment(segments[index].uri, temp, controller.signal, attempt), {
         label: `第 ${ index + 1 }/${ total } 个分片`,
-        isStopped: (): boolean => inner.aborted,
-        onRetry(attempt: number): void {
-          if (!retried) retrying++;
-
-          retried = true;
-          report(index, formatProgressDetail({ stage: 'retry', retry: attempt, viaProxy: segmentViaProxy(attempt) }));
-        }
+        isStopped: (): boolean => controller.signal.aborted,
+        signal: controller.signal,
+        // 别的分片照常在下，它们的进度马上会把这句话盖掉；全都下不动时（断网）能看到
+        onRetry: (attempt: number): void => report(formatProgressDetail({ stage: 'retry', retry: attempt, viaProxy: segmentViaProxy(attempt) }))
       });
+
+      await fsP.rename(temp, path.join(dir, segments[index].file));
+      done++;
+      report(formatProgressDetail(meter.tick(index, size)));
     } finally {
-      if (retried) retrying--;
+      await fsP.rm(temp, { force: true });
     }
-  }, undefined, have.count);
+  }
 
-  let closing: Promise<void> | undefined;
+  /* 一条下载线：下完一个接着下一个 */
+  async function line(): Promise<void> {
+    while (!controller.signal.aborted && next < pending.length) {
+      try {
+        await downloadOne(pending[next++]);
+      } catch (err) {
+        controller.abort(err); // 别的也停下（已经中止过的话，原因还是第一次的）
 
-  /* 停掉还在下的分片、删掉下了一半的；点停止和正常结束都会走到，只做一次 */
-  function close(): Promise<void> {
-    closing ??= prefetcher.close().catch((): void => undefined);
-
-    return closing;
+        return;
+      }
+    }
   }
 
   function handleAbort(): void {
-    close();
+    controller.abort(new HighlightStopped());
   }
+
+  if (signal?.aborted) throw new HighlightStopped();
 
   signal?.addEventListener('abort', handleAbort, { once: true });
-  have.count > 0 && report(have.count, `接着上次的下，已下载 ${ have.count }/${ total } 个分片`);
+  done > 0 && report(`接着上次的下，已下载 ${ done }/${ total } 个分片`);
 
   try {
-    for (let index: number = have.count; index < total; index++) {
-      if (signal?.aborted) throw new HighlightStopped();
-
-      const bytes: number = await prefetcher.take(index, path.join(dir, segments[index].file));
-      const text: string = formatProgressDetail(meter.tick(index, bytes));
-
-      retrying === 0 && report(index + 1, text);
-    }
-  } catch (err) {
-    throw signal?.aborted ? new HighlightStopped() : err;
+    await Promise.all(Array.from({ length: Math.min(SEGMENT_CONCURRENCY, pending.length) }, line));
   } finally {
     signal?.removeEventListener('abort', handleAbort);
-    await close();
   }
+
+  if (signal?.aborted) throw new HighlightStopped();
+
+  if (controller.signal.aborted) throw controller.signal.reason;
 }
 
 /* 电台只留声音：合成时不要画面 */

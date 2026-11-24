@@ -155,7 +155,7 @@ export async function createAudio(workerData: AudioWorkerData, workDir: string, 
   }
 
   const output: fs.WriteStream = fs.createWriteStream(aacFile, { flags: startIndex > 0 ? 'a' : 'w' });
-  const meter: DownloadMeter = new DownloadMeter(segments);
+  const meter: DownloadMeter = new DownloadMeter(segments, segments.map((segment: HlsSegment, index: number): number => index).slice(startIndex));
   const prefetcher: SegmentPrefetcher = new SegmentPrefetcher(segments.length, workDir, // 并行下载，按顺序提取音频
     (i: number, file: string, signal: AbortSignal): Promise<number> => deps.downloadSegment(segments[i].uri, file,
       `第 ${ i + 1 }/${ segments.length } 个分片`,

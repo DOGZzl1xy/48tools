@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import { promises as fsP } from 'node:fs';
 import * as path from 'node:path';
-import { pipeline } from 'node:stream/promises';
+import type { Readable } from 'node:stream';
 // @ts-expect-error
 import got from 'got';
 import { requestLiveRoomInfo, requestDownloadFile, type LiveRoomInfo } from '@48tools-api/48';
@@ -9,7 +9,8 @@ import { getFFmpeg } from '../../utils/utils';
 import { engineUserAgent, source } from '../../utils/snh48';
 import { getSetting } from '../settings/settingsStore';
 import { resolveLocalDir } from '../download/defaultSaveDir';
-import { SEGMENT_TIMEOUT, segmentViaProxy } from '../download/segmentRetry';
+import { SEGMENT_TIMEOUT } from '../download/segmentRetry';
+import { fetchSegmentFile } from '../download/segmentFetch';
 import { pocket48Agent } from '../pocket48Proxy/pocket48Proxy';
 import { queueTaskStart, queueTaskProgress, queueTaskEnd } from '../downloadQueue/downloadQueue';
 import {
@@ -153,24 +154,21 @@ export function endWaiting(liveId: string, outcome: QueueOutcome, text: string):
 }
 
 /**
- * 下载录播的一个分片：和普通录播下载用同样的请求头和超时（卡住就断开，由调用的地方重试）。
- * 直连失败两次以后改走口袋48代理（个别分片从美国的 CDN 节点每次都下不来，走国内节点就好，见 ../download/segmentRetry）
+ * 下载录播的一个分片：和普通录播下载用同样的请求头和超时，停住 10 秒就从断点走口袋48代理补完（见 ../download/segmentFetch），
+ * 失败由调用的地方重试
  */
-async function fetchSegment(uri: string, file: string, signal: AbortSignal, attempt: number = 0): Promise<number> {
-  await pipeline(
-    got.stream(uri, {
-      headers: { Host: new URL(uri).hostname, 'User-Agent': engineUserAgent },
+function fetchSegment(uri: string, file: string, signal: AbortSignal, attempt: number = 0): Promise<number> {
+  return fetchSegmentFile({
+    file,
+    attempt,
+    signal,
+    hasProxy: pocket48Agent() !== undefined,
+    open: (viaProxy: boolean, headers: Record<string, string>): Readable => got.stream(uri, {
+      headers: { Host: new URL(uri).hostname, 'User-Agent': engineUserAgent, ...headers },
       timeout: SEGMENT_TIMEOUT,
-      agent: segmentViaProxy(attempt) ? pocket48Agent() : undefined
-    }),
-    fs.createWriteStream(file),
-    { signal });
-
-  const size: number = (await fsP.stat(file)).size;
-
-  if (size === 0) throw new Error('下载到的分片是空的');
-
-  return size;
+      agent: viaProxy ? pocket48Agent() : undefined
+    })
+  });
 }
 
 /* 下载一张图（电台封面）：先写到旁边的临时文件，是图片才换上去（不会把兜底的那一帧换成一个网页） */
