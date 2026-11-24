@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { runFfmpeg, mediaDuration, hasVideoStream, detectSilences, readPcm, pickFonts, PCM_RATE } from './highlightFfmpeg';
 import { downloadReplay, type DownloadProgress, type SegmentFetcher } from './highlightDownload';
 import {
-  geminiJson, findRequest, readFound, scriptRequest, readScript, coverRequest, HighlightStopped, ContentRefused,
+  geminiJson, findRequest, readFound, scriptRequest, readScript, stageTitlesRequest, readTitles, coverRequest, HighlightStopped, ContentRefused,
   type GeminiConfig, type LiveMeta
 } from './highlightGemini';
 import {
@@ -115,7 +115,8 @@ export interface HighlightProgress {
 
 export interface ClipResult {
   index: number;
-  title: string;       // 模型取的短标题（画面和封面上用）
+  title: string;       // 画面、封面、文件名上的标题：挑片的人自己取的，没取就用 Gemini 的
+  ownTitle?: boolean;  // title 是挑片的人自己取的
   postTitle: string;   // 发布时用的标题：【沈馨】短标题 | 20261115 直播切片（有其他主角时是【沈馨&徐佳琳】）
   otherTitles: Array<string>; // 另外两个风格的标题（也是发布用的完整写法），想换的时候用
   description: string;
@@ -206,7 +207,7 @@ export function coverTimes(lines: Array<CaptionLine>, segments: Array<Segment>, 
 export function clipInfoText(job: Pick<HighlightJob, 'member' | 'title' | 'date'>, clip: ClipInfo): string {
   return [
     `标题：${ clip.postTitle }`,
-    ...(clip.otherTitles.length > 0 ? ['备选标题（另外两种风格，画面和封面上用的是上面那个）：', ...clip.otherTitles.map((title: string): string => `  ${ title }`)] : []),
+    ...(clip.otherTitles.length > 0 ? [clip.ownTitle ? '备选标题（另外两种风格）：' : '备选标题（另外两种风格，画面和封面上用的是上面那个）：', ...clip.otherTitles.map((title: string): string => `  ${ title }`)] : []),
     '',
     `简介：${ clip.description }`,
     '',
@@ -361,6 +362,28 @@ async function scriptAndCut(
   return { window, script, lines, timing, segments, total };
 }
 
+/* 公演里唱歌、失误的片段写的东西：用找爆点时给的；挑片的人自己取了标题时，发布用的标题另外问一次 Gemini，问不到就用他取的 */
+async function stageClipScript(context: ClipContext, highlight: Highlight): Promise<ClipScript> {
+  const { job, deps, signal, meta, glossary }: ClipContext = context;
+  const script: ClipScript = stageScript(highlight);
+
+  if (!highlight.coverTitle || !job.stage) return script;
+
+  try {
+    const answer: { titles?: unknown } = await geminiJson<{ titles?: unknown }>(
+      job.gemini, stageTitlesRequest(meta, highlight, job.stage), signal, deps.fetchImpl);
+    const titles: Array<string> = readTitles(answer.titles).map((title: string): string => applyGlossary(title, glossary));
+
+    return titles.length > 0 ? { ...script, title: titles[0], titles } : script;
+  } catch (err) {
+    if (err instanceof HighlightStopped) throw err;
+
+    console.warn('起发布用的标题失败，用挑片的人取的', err);
+
+    return script;
+  }
+}
+
 /**
  * 做一个切片。剪完的长度不在 45 秒到 5 分钟之间（重做一次也不行）时返回原因（字符串），换下一个爆点
  * @param { ClipContext } context
@@ -389,7 +412,7 @@ async function makeClip(
 
     cut = {
       window,
-      script: stageScript(highlight),
+      script: await stageClipScript(context, highlight),
       lines: [],
       timing: `${ kind === 'song' ? '整首歌，没有字幕（舞台上有歌词）' : '失误的片段，没有字幕' }${ highlight.timing ? `；${ highlight.timing }` : '' }`,
       segments: [{ from: 0, to: -1, start: 0, end: window.length, out: 0 }],
@@ -419,6 +442,7 @@ async function makeClip(
   }
 
   const { script, lines, timing, segments, total }: ClipCut = cut;
+  const title: string = highlight.coverTitle ?? script.title; // 画面和封面上的；发布用的标题（.txt）用 script 里 Gemini 起的
   const clipStart: number = cut.window.start;
   const clipLength: number = cut.window.length;
 
@@ -426,9 +450,9 @@ async function makeClip(
   const placed: Array<PlacedDanmu> = placeDanmu(danmu, clipStart, segments, total);
 
   await fsP.writeFile(path.join(clipDir, 'overlay.ass'), job.stage
-    ? buildStageVideoAss({ stage: job.stage, title: script.title, lines, segments, total, danmu: placed, fonts })
+    ? buildStageVideoAss({ stage: job.stage, title, lines, segments, total, danmu: placed, fonts })
     : buildVideoAss({
-      title: script.title,
+      title,
       tag: `${ job.member }  ${ job.date }`.trim(),
       lines,
       segments,
@@ -484,9 +508,9 @@ async function makeClip(
   // 两个比例各做一张：wide 是 16:9，standard 是 4:3
   for (const [shape, width] of Object.entries(COVER_WIDTHS)) {
     await fsP.writeFile(path.join(clipDir, `cover-${ shape }.ass`), job.stage
-      ? buildStageCoverAss({ stage: job.stage, lines: stageCoverLines(highlight, script.title), fonts, width })
+      ? buildStageCoverAss({ stage: job.stage, lines: stageCoverLines(highlight, title), fonts, width })
       : buildCoverAss({
-        title: script.title,
+        title,
         tag: `${ job.member }  直播切片  ${ job.date }`.trim(),
         points: script.points,
         fonts,
@@ -500,15 +524,16 @@ async function makeClip(
   }
 
   // 放进输出文件夹
-  const name: string = `${ String(index).padStart(2, '0') }-${ safeFileName(script.title) }`;
+  const name: string = `${ String(index).padStart(2, '0') }-${ safeFileName(title) }`;
   const info: ClipInfo = {
     index,
-    title: script.title,
+    title,
+    ...(highlight.coverTitle ? { ownTitle: true } : {}),
     postTitle: job.stage ? stagePostTitle(job.stage, script.title, script.people) : postTitle(job.member, job.date, script.title, script.people, script.more),
-    otherTitles: (script.titles ?? []).filter((title: string): boolean => title !== script.title)
-      .map((title: string): string => (job.stage
-        ? stagePostTitle(job.stage, title, script.people)
-        : postTitle(job.member, job.date, title, script.people, script.more))),
+    otherTitles: (script.titles ?? []).filter((other: string): boolean => other !== script.title)
+      .map((other: string): string => (job.stage
+        ? stagePostTitle(job.stage, other, script.people)
+        : postTitle(job.member, job.date, other, script.people, script.more))),
     people: script.people ?? [],
     description: script.description,
     points: script.points,

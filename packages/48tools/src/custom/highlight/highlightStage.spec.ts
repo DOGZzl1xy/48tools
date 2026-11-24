@@ -79,6 +79,13 @@ describe('公演切片：文案', (): void => {
     expect(stageCoverLines(highlight({}), '新标题')).toEqual(['新标题', '封面的话']);
   });
 
+  test('自己取了标题：封面只写它（唱歌的也是），太长分两行，带【】的不拆', (): void => {
+    expect(stageCoverLines(highlight({ coverTitle: '我取的标题' }), '我取的标题')).toEqual(['我取的标题']);
+    expect(stageCoverLines(highlight({ kind: 'song', song: '示例歌', coverTitle: '我取的标题' }), '我取的标题')).toEqual(['我取的标题']);
+    expect(stageCoverLines(highlight({ coverTitle: '这一个标题有点长，一行放不下要分开' }), '')).toEqual(['这一个标题有点长', '一行放不下要分开']);
+    expect(stageCoverLines(highlight({ coverTitle: '这一个标题有点长【但是自己标了色块】' }), '')).toEqual(['这一个标题有点长【但是自己标了色块】']);
+  });
+
   test('唱歌的封面只写歌名（一个色块）；歌名不知道时从标题、理由里找《》，再没有就和别的一样', (): void => {
     expect(stageCoverLines(highlight({ kind: 'song', song: '示例歌', coverLines: ['甲【好绝】'] }), '标题')).toEqual(['【《示例歌》】']);
     expect(stageCoverLines(highlight({ kind: 'song', song: '《示例歌》' }), '标题')).toEqual(['【《示例歌》】']);

@@ -18,6 +18,7 @@ export interface Highlight {
   reason: string;
   score: number; // 1 ~ 10
   edited?: boolean; // 标题或说明被挑片的人改过（./highlightShow）：写字幕时以改过的为准
+  coverTitle?: string; // 挑片的人自己取的标题：画面、封面、文件名照它写，发布用的标题（.txt）还是 Gemini 起（用户 2026-11-24 定的）
   first?: string; // 开头、结尾的原话：只有走 agy 时才要（它说的时间不准，用原话到本地识别的结果里找时间，见 ./highlightQuotes）
   last?: string;
   // 下面这些只有公演切片有（见 ./highlightStage）
@@ -44,7 +45,7 @@ export interface CaptionLine {
 /* 模型给一个片段写的东西：逐句字幕、标题、简介、封面上的看点 */
 export interface ClipScript {
   lines: Array<CaptionLine>;
-  title: string;           // 画面和封面上用的标题（titles 的第一个）
+  title: string;           // 发布用的标题（titles 的第一个）；画面和封面上也用它，挑片的人自己取了标题（coverTitle）的除外
   titles?: Array<string>;  // 模型给的三个不同风格的标题，让发视频的人挑；以前存下来的结果里没有这一项
   more?: Array<string>;    // 片段里另外的爆点的短标题（最多两个），发布用的标题里接在主标题后面
   description: string;

@@ -3,7 +3,7 @@
  * 录播自动切片里问 Gemini 的部分：提示里给了什么、结果怎么读、接口出错时怎么办。接口换成假的。
  */
 import {
-  geminiJson, findRequest, readFound, scriptRequest, readScript, coverRequest, cleanTitle, ContentRefused, PRONOUN,
+  geminiJson, findRequest, readFound, scriptRequest, readScript, stageTitlesRequest, readTitles, quoteTitle, isQuoteTitle, ownTitleFirst, coverRequest, cleanTitle, ContentRefused, PRONOUN,
   type GeminiConfig, type GeminiAsk
 } from './highlightGemini';
 import type { Highlight } from './highlightTypes';
@@ -278,6 +278,94 @@ describe('片段的字幕、标题、简介', (): void => {
     expect(found).toContain('不要只写「反差感拉满」');
     expect(script(highlight)).not.toContain('挑片的人核对');
     expect(script({ ...highlight, title: '改过的标题', reason: '她说的是乙', edited: true })).toContain('主题是：「改过的标题」。\n挑片的人核对、改过这一段的标题和说明，说明是：「她说的是乙」');
+  });
+
+  test('想不出标题时截成员的原话：直播和电台的两步提示里都说了，只能截不能改；公演不说', (): void => {
+    const meta: { member: string; title: string } = { member: 'SNH48 测试成员', title: '测试' };
+    const stage: Parameters<typeof scriptRequest>[6] = { team: 'X', teamColor: '#a9ca27', show: '《示例公演》', date: '2026.11.21' };
+    const found: string = findRequest(meta, { start: 0, length: 600 }, '', []).parts[0].text!;
+    const script: string = scriptRequest(meta, highlight, 60, '', []).parts[0].text!;
+
+    expect(found).toContain('先自己想一个有梗、有态度的');
+    expect(found).toContain('不要硬编，才直接截一句她的原话当标题');
+    expect(found).toContain('想不出来时也可以这样截一句原话');
+    expect(script).toContain('截原话的只当备选：三个里最多一个，不放第一个');
+    expect(script).toContain('截SNH48 测试成员的原话');
+    expect(script).not.toContain('想不出好标题');
+    [found, script].forEach((text: string): void => expect(text).toContain('只能掐头去尾，不换词、不调顺序、不补字'));
+
+    const mc: string = scriptRequest(meta, highlight, 60, '', [], undefined, stage).parts[0].text!;
+
+    expect(mc).toContain('截原话的只当备选');
+    expect(mc).not.toContain('只能掐头去尾');
+  });
+
+  test('没给标题：从原话里截一小段，字不变；连原话都没有的不要', (): void => {
+    expect(quoteTitle('我不是，我没有，你别瞎说啊我跟你讲')).toBe('我不是我没有');
+    expect(quoteTitle('「你怎么不去当阿凡达呢？」')).toBe('你怎么不去当阿凡达呢');
+    expect(quoteTitle('一二三四五六七八九十一二三四五六七八九十')).toBe('一二三四五六七八九十一二三四五六');
+    expect(quoteTitle(' ')).toBe('');
+
+    const at: { start: string; end: string; reason: string; score: number } = { start: '00:10', end: '01:10', reason: '', score: 8 };
+    const titles: Array<string> = readFound({
+      highlights: [{ ...at, title: '', quote: '我要退网了，真的' }, { ...at, title: '', quote: '' }, { ...at, title: '', quote: '第一句歌词', kind: 'song' }]
+    }, { start: 0, length: 600 }).highlights.map((item: Highlight): string => item.title);
+
+    expect(titles).toEqual(['我要退网了真的']);
+  });
+
+  test('截原话的标题不放第一个：后面有自己想的就换到前面，全是原话的不动', (): void => {
+    const spoken: string = '然后我就说，你急什么呀又没说你，她就不说话了';
+
+    expect(isQuoteTitle('你急什么呀又没说你', spoken)).toBe(true);
+    expect(isQuoteTitle('你急什么呀，又没说她', spoken)).toBe(true);      // 8 个字以上容许错一个字
+    expect(isQuoteTitle('你急什么又没说她', spoken)).toBe(false);          // 少了字、又错了字
+    expect(isQuoteTitle('不说话', spoken)).toBe(false);                    // 太短的不算
+    expect(isQuoteTitle('她就不说话了', spoken)).toBe(true);
+    expect(isQuoteTitle('她就不讲话了', spoken)).toBe(false);
+    expect(isQuoteTitle('她就不说话了后来呢然后呢', '她就不说话了')).toBe(false);
+
+    expect(ownTitleFirst(['你急什么呀又没说你', '全队最急的人', '又没说你'], [spoken])).toEqual(['全队最急的人', '你急什么呀又没说你', '又没说你']);
+    expect(ownTitleFirst(['全队最急的人', '你急什么呀又没说你'], [spoken])).toEqual(['全队最急的人', '你急什么呀又没说你']);
+    expect(ownTitleFirst(['你急什么呀又没说你', '她就不说话了'], [spoken])).toEqual(['你急什么呀又没说你', '她就不说话了']);
+    expect(ownTitleFirst([], [spoken])).toEqual([]);
+
+    // 写字幕的结果：原话跨两句字幕也认得出；字幕里没有、只在最关键的那句话里的也认
+    const line: { start: number; end: number; keep: boolean } = { start: 0, end: 1, keep: true };
+    const script: ReturnType<typeof readScript> = readScript({
+      lines: [{ ...line, text: '你急什么呀' }, { ...line, text: '又没说你' }], titles: ['你急什么呀又没说你', '我已经说服了我自己', '全队最急的人']
+    }, { ...highlight, quote: '我已经说服了我自己，真的' });
+
+    expect([script.title, script.titles]).toEqual(['全队最急的人', ['全队最急的人', '你急什么呀又没说你', '我已经说服了我自己']]);
+  });
+
+  test('自己取了封面标题：告诉模型发布用的标题另外想；没取的不说', (): void => {
+    const meta: { member: string; title: string } = { member: 'SNH48 测试成员', title: '测试' };
+    const own: Highlight = { ...highlight, title: '我取的标题', cover: '', edited: true, coverTitle: '我取的标题' };
+    const script: string = scriptRequest(meta, own, 60, '', []).parts[0].text!;
+    const plain: string = scriptRequest(meta, { ...highlight, edited: true }, 60, '', []).parts[0].text!;
+
+    expect(script).toContain('封面上的标题挑片的人已经取好了：「我取的标题」。titles 是发布视频时用的标题，要你自己另外想');
+    expect(script).toContain('第一个放你最满意的（发布时用它）');
+    expect(script).toContain('封面上已经有标题（「我取的标题」）了');
+    expect(plain).not.toContain('挑片的人已经取好了');
+    expect(plain).toContain('第一个放你最满意的（画面和封面上用它）');
+    expect(plain).toContain('封面上已经有标题了');
+  });
+
+  test('公演唱歌、失误自己取了封面标题：另外问发布用的标题', (): void => {
+    const stage: Parameters<typeof stageTitlesRequest>[2] = { team: 'X', teamColor: '#a9ca27', show: '《示例公演》', date: '2026.11.21' };
+    const meta: { member: string; title: string } = { member: 'SNH48 TEAM X', title: '《示例公演》' };
+    const song: Highlight = { ...highlight, kind: 'song', song: '《示例歌》', singers: ['甲', '乙'], coverTitle: '我取的标题' };
+    const prompt: string = stageTitlesRequest(meta, song, stage).parts[0].text!;
+
+    expect(prompt).toContain('一首歌《示例歌》，演唱的是甲、乙');
+    expect(prompt).toContain('说明是：「理由」');
+    expect(prompt).toContain('「我取的标题」。titles 是发布视频时用的标题');
+    expect(prompt).toContain('最长 16 个字');
+    expect(stageTitlesRequest(meta, { ...song, kind: 'mistake' }, stage).parts[0].text).toContain('表演中的一个失误或意外');
+    expect(readTitles([' 一。', '一', '', '二', '三', '四'])).toEqual(['一', '二', '三']);
+    expect(readTitles(undefined)).toEqual([]);
   });
 
   test('找爆点的提示里要求严格打分', (): void => {

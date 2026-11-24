@@ -1,6 +1,7 @@
 import { audioPart, knowledge, DANMU_TEXT_LENGTH, REASON_RULE, TASTE, type GeminiAsk, type LiveMeta } from './highlightGemini';
 import { clock, danmuHeat, isGiftDanmu, CLIP_MIN_SECONDS, CLIP_MAX_SECONDS, type ClipWindow } from './highlightTime';
 import type { AudioWindow, ClipScript, DanmuLine, Highlight, StageKind } from './highlightTypes';
+import { splitTitle, textWidth } from './highlightAss';
 import { stageShowLabel, type StageInfo } from './highlightStageAss';
 
 /**
@@ -32,6 +33,8 @@ export const STAGE_QUOTA: Record<StageKind, { max: number; below: number }> = {
   song: { max: 2, below: 0 },
   mistake: { max: 2, below: 0 }
 };
+
+const OWN_LINE_WIDTH: number = 12; // 自己取的封面标题，一行最多这么多字
 
 const STAGE_KINDS: Array<StageKind> = ['mc', 'song', 'mistake'];
 const STAGE_FALLBACK_SCORE: number = 7; // 一个够分的都没有时，最高的那个不低于它也做一个
@@ -127,12 +130,20 @@ export function songNameOf(highlight: Highlight): string | undefined {
   return undefined;
 }
 
+/* 自己取的标题：一行放得下就一行，太长分两行；带【】的照他标的来，不拆 */
+function ownCoverLines(title: string): Array<string> {
+  return textWidth(title) > OWN_LINE_WIDTH && !title.includes('【') ? splitTitle(title) : [title];
+}
+
 /**
- * 封面上的大字：模型给的 cover_lines；没有就用标题和封面的话。
+ * 封面上的大字：挑片的人自己取了标题就只写它（用户 2026-11-24 定的，唱歌的也是；太长分两行）；
+ * 没有就用模型给的 cover_lines；再没有就用标题和封面的话。
  * 唱歌的片段只写歌名（用户 2026-11-23 定的，照《轨迹》那张）：一行「《歌名》」放在团队色的色块里，字比平常大（见 ./highlightStageAss）；
  * 认不出歌名时和别的片段一样
  */
 export function stageCoverLines(highlight: Highlight, title: string): Array<string> {
+  if (highlight.coverTitle) return ownCoverLines(highlight.coverTitle);
+
   const song: string | undefined = stageKindOf(highlight) === 'song' ? songNameOf(highlight) : undefined;
 
   if (song) return [`【《${ song }》】`];

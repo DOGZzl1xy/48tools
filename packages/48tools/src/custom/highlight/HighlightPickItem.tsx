@@ -32,6 +32,15 @@ export function lengthText(seconds: number): string {
   return minute > 0 ? `${ minute } 分${ total % 60 > 0 ? ` ${ total % 60 } 秒` : '' }` : `${ total } 秒`;
 }
 
+/* 改过的会怎么用：标题写在画面和封面上，发布用的标题（.txt）还是 Gemini 起 */
+function editedText(item: ShowItem): string {
+  if (item.clip && !item.cut) return '改过了，打开「重切」才会用上';
+
+  return item.original && item.original.title !== item.title
+    ? '画面和封面用你的标题，.txt 里的标题还是 Gemini 起'
+    : '改过了，会按改过的切';
+}
+
 interface DraftField {
   value: string;
   onChange(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>): void;
@@ -187,7 +196,7 @@ function HighlightPickItem(props: HighlightPickItemProps): ReactElement {
           {
             item.original ? (
               <div className="picks-note">
-                <span>{ item.clip && !item.cut ? '改过了，打开「重切」才会用上' : '改过了，会按改过的切' }</span>
+                <span>{ editedText(item) }</span>
                 <Button type="link" size="small" disabled={ locked } onClick={ (): Promise<unknown> => onEdit({ ...item.original }) }>恢复原来的</Button>
               </div>
             ) : null

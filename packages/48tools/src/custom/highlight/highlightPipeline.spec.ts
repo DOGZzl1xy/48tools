@@ -81,6 +81,18 @@ describe('封面候选和说明文字', (): void => {
     expect(text).toContain('成片长度：75 秒');
     expect(text).toContain('字幕时间：本地模型打轴（100 个字里对上 90 个）');
   });
+
+  test('自己取的封面标题：说明里的标题还是 Gemini 的，不说画面和封面上用的是它', (): void => {
+    const text: string = clipInfoText({ member: '测试成员', title: '测试直播', date: '2026.11.15' }, {
+      index: 1, title: '我取的标题', ownTitle: true, postTitle: '【测试成员】模型的标题 | 20261115 直播切片', otherTitles: ['【测试成员】第二个 | 20261115 直播切片'],
+      description: '', points: [], people: [], score: 9, start: 0, end: 60, duration: 60, timing: ''
+    });
+
+    expect(text).toContain('标题：【测试成员】模型的标题 | 20261115 直播切片');
+    expect(text).toContain('备选标题（另外两种风格）：');
+    expect(text).not.toContain('我取的标题');
+    expect(text).not.toContain('画面和封面上用的是上面那个');
+  });
 });
 
 describe('电台封面', (): void => {

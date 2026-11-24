@@ -77,7 +77,8 @@ describe('改标题和说明', (): void => {
     const titled: Highlight = highlightOf(editItem(item, { title: '新标题' }));
 
     expect(reasonOnly).toMatchObject({ reason: '新说明', edited: true, coverLines: ['原来的大字'] });
-    expect(titled).toMatchObject({ title: '新标题', edited: true, cover: '' });
+    expect(titled).toMatchObject({ title: '新标题', edited: true, cover: '', coverTitle: '新标题' }); // 封面用改过的标题
+    expect(reasonOnly.coverTitle).toBeUndefined(); // 只改说明：封面还是 Gemini 的
     expect(titled.coverLines).toBeUndefined();
     expect(Object.keys(titled)).not.toEqual(expect.arrayContaining(['cut', 'recommended', 'original']));
   });

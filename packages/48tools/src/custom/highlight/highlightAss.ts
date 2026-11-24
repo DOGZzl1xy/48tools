@@ -483,16 +483,10 @@ export function wordBoundaries(text: string): Array<number> {
   return out;
 }
 
-/**
- * 封面上的标题：超过 7 个字分两行，尽量在标点后面断；中间附近没有标点时在词和词之间断
- * （以前在正中间硬断，出现过「真到自己这 / 儿也没招」把「这儿」拆开，2026-11-23 用户看到的），第二行不以「的」「了」这类字开头
- */
-export function splitTitle(title: string): Array<string> {
+/* 在 part（占全长的几分之几）附近找合适的地方断成两行 */
+function splitAt(title: string, part: number): Array<string> {
   const chars: Array<string> = Array.from(title);
-
-  if (textWidth(title) <= 7) return [title];
-
-  const middle: number = Math.ceil(chars.length / 2);
+  const middle: number = Math.ceil(chars.length * part);
   const spots: Array<number> = []; // 可以断开的位置：标点后面、左括号前面（「北大不比北芭差」/「（bushi）」）
 
   chars.forEach((ch: string, index: number): void => {
@@ -525,6 +519,21 @@ export function splitTitle(title: string): Array<string> {
   at ??= middle;
 
   return [chars.slice(0, at).join('').replace(/[，,\s]+$/, ''), chars.slice(at).join('').trim()].filter((row: string): boolean => row !== '');
+}
+
+/**
+ * 封面上的标题：超过 7 个字分两行，尽量在标点后面断；中间附近没有标点时在词和词之间断
+ * （以前在正中间硬断，出现过「真到自己这 / 儿也没招」把「这儿」拆开，2026-11-23 用户看到的），第二行不以「的」「了」这类字开头。
+ * 很长的（超过 20 个字，自己取的标题才会有）分三行，不然字比看点还小
+ */
+export function splitTitle(title: string): Array<string> {
+  if (textWidth(title) <= 7) return [title];
+
+  if (textWidth(title) <= 20) return splitAt(title, 1 / 2);
+
+  const [first, rest]: Array<string> = splitAt(title, 1 / 3);
+
+  return [first, ...(rest ? splitAt(rest, 1 / 2) : [])];
 }
 
 export interface CoverInput {
