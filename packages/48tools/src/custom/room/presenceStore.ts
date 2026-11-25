@@ -8,8 +8,9 @@ import {
   type PresenceKind
 } from './presenceCache';
 import { readJson, writeJson } from '../common/util';
+import { roomClock } from './roomTime';
 import type { RoomMessageItem } from './roomStore';
-import type { PresenceEventsResponse, PresenceResponse } from './presenceApi';
+import type { ListPendingMember, PresenceEventsResponse, PresenceResponse } from './presenceApi';
 
 export type { PresenceEvent, PresenceKind } from './presenceCache';
 
@@ -18,13 +19,12 @@ export type { PresenceEvent, PresenceKind } from './presenceCache';
  *
  * 三态展示规则：
  *   - online：服务端明确在线且未过期（头像右下角显示主题色圆点）
- *   - offline：服务端明确离线且未过期（头像右下角显示灰色实心圆点）
- *   - unknown：stale=true、link.connected=false、since=null 或尚未连上服务（显示灰色空心环，不误判为离线，也不写入下线记录）
- *
- * 界面上只说三句话：在线 / 离线 / 状态未知（presenceLabel）。状态未知时的原因另外给（presenceReason），放在房间标题的提示里。
+ *   - offline：服务端明确离线且未过期（头像右下角显示灰色圆点）
+ *   - unknown：stale=true、link.connected=false、since=null 或服务不可用（灰色圆点 + 问号，不误标为离线，不写假下线）
  *
  * 隔离约束：
  *   - 与未读统计（./unreadStore）完全隔离，上下线记录不会触发未读数字、「以下是新消息」分隔线或「有新消息」提示
+ *   - 直接用服务端返回的 ownerId 映射回本地成员，客户端不需要维护 accid 映射
  */
 export type PresenceStatus = 'online' | 'offline' | 'unknown';
 
@@ -50,7 +50,7 @@ export interface PresenceState {
   byOwner: Record<number, MemberPresence>;
   events: Record<number, Array<PresenceEvent>>;
   loaded: Record<number, boolean>;
-  unresolved: Record<number, boolean>; // 关注了、但查不到云信账号的成员（服务端没法跟踪她，状态一直是未知）
+  unresolved: Record<number, string>; // POST /list 返回的 pending 成员（暂未解析出 accid，服务端会自动重试）
 }
 
 export type ChatTimelineItem =
@@ -64,32 +64,9 @@ interface ConfirmedRecord {
 
 const LAST_CONFIRMED_KEY: string = 'ROOM_PRESENCE_LAST';
 const EVENTS_CURSOR_KEY: string = 'ROOM_PRESENCE_EVENTS_CURSOR';
-const PENDING_EVENTS_KEY: string = 'ROOM_PRESENCE_PENDING_EVENTS';
-const PENDING_EVENTS_MAX: number = 500;
-const PENDING_EVENTS_KEEP_MS: number = 8 * 86_400_000; // 服务端只留 7 天，本地多留一天就够了
 const DEDUPE_WINDOW_MS: number = 5_000;
 const listeners: Set<() => void> = new Set();
 const loadingOwners: Set<number> = new Set();
-
-function loadEventsCursor(): number {
-  if (typeof localStorage === 'undefined') return 0;
-
-  const value: unknown = readJson<unknown>(EVENTS_CURSOR_KEY, 0);
-
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
-}
-
-function saveEventsCursor(cursor: number): void {
-  if (typeof localStorage === 'undefined') return;
-
-  writeJson(EVENTS_CURSOR_KEY, cursor);
-}
-
-let eventsCursor: number = loadEventsCursor();
-
-export function getPresenceEventsCursor(): number {
-  return eventsCursor;
-}
 
 function loadLastConfirmed(): Record<number, ConfirmedRecord> {
   if (typeof localStorage === 'undefined') return {};
@@ -121,43 +98,32 @@ function saveLastConfirmed(next: Record<number, ConfirmedRecord>): void {
   writeJson(LAST_CONFIRMED_KEY, next);
 }
 
-/**
- * 还对不上本地成员的历史记录：补档（GET /events）时，某个账号暂时不知道是哪个成员（成员名单还没取到、
- * 身份还没关联上），先按账号存在这里；等对应关系有了再放进时间线。以前这种记录是直接跳过的，
- * 而补档的进度照样往前走，结果就再也补不回来了。
- */
-interface PendingEvent {
-  accid: string;
-  time: number;
-  kind: PresenceKind;
+function loadEventsCursors(): Record<string, number> {
+  if (typeof localStorage === 'undefined') return {};
+
+  const saved: unknown = readJson<unknown>(EVENTS_CURSOR_KEY, null);
+
+  if (typeof saved === 'number' && Number.isFinite(saved) && saved > 0) return { default: saved };
+
+  if (!saved || typeof saved !== 'object') return {};
+
+  const out: Record<string, number> = {};
+
+  for (const [k, v] of Object.entries(saved as Record<string, unknown>)) {
+    if (typeof v === 'number' && Number.isFinite(v) && v > 0) out[k] = v;
+  }
+
+  return out;
 }
 
-function loadPendingEvents(): Array<PendingEvent> {
-  if (typeof localStorage === 'undefined') return [];
-
-  const saved: unknown = readJson<unknown>(PENDING_EVENTS_KEY, []);
-
-  if (!Array.isArray(saved)) return [];
-
-  return saved.filter((item: PendingEvent): boolean => Boolean(item)
-    && typeof item.accid === 'string'
-    && typeof item.time === 'number'
-    && (item.kind === 'online' || item.kind === 'offline'));
-}
-
-let pendingEvents: Array<PendingEvent> = loadPendingEvents();
-
-function savePendingEvents(): void {
+function saveEventsCursors(cursors: Record<string, number>): void {
   if (typeof localStorage === 'undefined') return;
 
-  writeJson(PENDING_EVENTS_KEY, pendingEvents);
-}
-
-export function getPendingPresenceEventCount(): number {
-  return pendingEvents.length;
+  writeJson(EVENTS_CURSOR_KEY, cursors);
 }
 
 let lastConfirmed: Record<number, ConfirmedRecord> = loadLastConfirmed();
+let eventsCursors: Record<string, number> = loadEventsCursors();
 let state: PresenceState = {
   service: { configured: false, connected: false },
   byOwner: {},
@@ -175,32 +141,89 @@ function setState(patch: Partial<PresenceState>): void {
   emit();
 }
 
+export function getPresenceEventsCursor(userId: string = 'default'): number {
+  return eventsCursors[userId] ?? 0;
+}
+
 export function presenceEventKey(event: PresenceEvent): string {
   return `presence:${ event.ownerId }:${ event.time }:${ event.kind }`;
 }
 
-/* 界面上显示的状态：只有这三种说法（头像圆点的提示、房间标题里的文字都用它） */
-export function presenceLabel(presence: MemberPresence | undefined): string {
-  if (presence?.status === 'online') return '在线';
+/* 格式化持续时长（根据服务端 serverTime - since 计算，不受本机时钟偏差影响） */
+export function formatPresenceDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '';
 
-  if (presence?.status === 'offline') return '离线';
+  const minutes: number = Math.floor(ms / 60_000);
 
-  return '状态未知';
+  if (minutes < 1) return '不到 1 分钟';
+
+  if (minutes < 60) return `${ minutes } 分钟`;
+
+  const hours: number = Math.floor(minutes / 60);
+  const rem: number = minutes % 60;
+
+  return rem > 0 ? `${ hours } 小时 ${ rem } 分钟` : `${ hours } 小时`;
 }
 
-/* 状态未知时的原因（房间标题里鼠标放到「状态未知」上时显示）；状态明确时没有 */
+/* 头像圆点的悬停提示文字（严格区分在线 / 离线 / 未知） */
+export function presenceLabel(
+  presence: MemberPresence | undefined,
+  zone?: string,
+  service?: PresenceServiceState
+): string {
+  if (!presence || presence.status === 'unknown') {
+    if (service?.configured && !service.connected) return '状态未知 · 服务未连接';
+
+    return '状态未知';
+  }
+
+  const timeRef: number | undefined = presence.since ?? presence.changedAt;
+  const clockTime: string = timeRef !== undefined ? roomClock(timeRef, zone).time : '';
+
+  if (presence.status === 'online') {
+    const duration: string = presence.since !== undefined && presence.serverTime !== undefined
+      ? formatPresenceDuration(Math.max(0, presence.serverTime - presence.since))
+      : '';
+
+    if (duration && clockTime) return `在线 · 已在线 ${ duration }（${ clockTime } 上线）`;
+
+    if (clockTime) return `在线 · ${ clockTime } 上线`;
+
+    return '在线';
+  }
+
+  return clockTime ? `离线 · ${ clockTime } 下线` : '离线';
+}
+
+/* 状态说明（供聊天页标题栏悬停显示「为什么是未知 / 暂未解析」） */
 export function presenceReason(
   presence: MemberPresence | undefined,
-  service: PresenceServiceState | undefined,
-  unresolved: boolean
+  service?: PresenceServiceState,
+  unresolved?: boolean | string
 ): string | undefined {
-  if (presence?.status === 'online' || presence?.status === 'offline') return undefined;
+  if (typeof unresolved === 'string' && unresolved) return unresolved;
 
-  if (service?.configured && !service.connected) return '在线状态服务暂时没有连上，连上后会自动恢复';
+  if (unresolved) return '服务端暂未解析到该成员（可能无口袋房间），将自动重试';
 
-  if (unresolved) return '成员名单里还没有她的账号信息，暂时查不到她的在线状态';
+  if (presence && presence.status !== 'unknown') return undefined;
 
-  return '还没有拿到她的状态，稍等一会儿';
+  if (service && !service.configured) return '尚未配置在线状态服务';
+
+  if (service && !service.connected) return service.error ? `在线状态服务未连接：${ service.error }` : '在线状态服务未连接，正在自动重连';
+
+  return '正在等待服务端轮询更新';
+}
+
+export function setPresencePending(pending: Array<ListPendingMember>): void {
+  const next: Record<number, string> = {};
+
+  for (const item of pending) {
+    if (Number.isFinite(item.ownerId) && item.ownerId > 0) {
+      next[item.ownerId] = item.reason || '服务端暂未解析到该成员，将自动重试';
+    }
+  }
+
+  setState({ unresolved: next });
 }
 
 /* 合并两组上下线记录并去重，结果按时间从旧到新 */
@@ -266,19 +289,6 @@ export function appendPresenceEvent(event: PresenceEvent): void {
   void writePresenceEvent(event);
 }
 
-/* 哪些关注的成员查不到账号（由 ./presenceWatcher 算出来）；没有变化时不通知界面 */
-export function setPresenceUnresolved(ownerIds: Array<number>): void {
-  const next: Record<number, boolean> = {};
-
-  for (const ownerId of ownerIds) next[ownerId] = true;
-
-  const prevKeys: Array<string> = Object.keys(state.unresolved);
-
-  if (prevKeys.length === ownerIds.length && prevKeys.every((key: string): boolean => next[Number(key)])) return;
-
-  setState({ unresolved: next });
-}
-
 export function setPresenceServiceConfigured(configured: boolean): void {
   if (state.service.configured === configured) return;
 
@@ -299,102 +309,47 @@ export function markPresenceServiceDown(error: string): void {
   });
 }
 
-/* 把一批已经知道是谁的记录放进时间线（去重），返回新增了多少条 */
-function acceptEvents(incomingByOwner: Map<number, Array<PresenceEvent>>): number {
-  let nextEvents: Record<number, Array<PresenceEvent>> = state.events;
-  const toPersist: Array<PresenceEvent> = [];
+export interface PresenceFallbackLookup {
+  byAccid?: Map<string, number>;
+  byName?: Map<string, number>;
+}
 
-  for (const [ownerId, batch] of incomingByOwner) {
-    const existing: Array<PresenceEvent> = nextEvents[ownerId] ?? [];
-    const accepted: Array<PresenceEvent> = [];
-    let merged: Array<PresenceEvent> = existing;
+function resolveOwnerId(
+  rawOwnerId: number | null | undefined,
+  accid: string | undefined,
+  name: string | undefined,
+  fallback?: PresenceFallbackLookup
+): number | undefined {
+  const direct: number = Number(rawOwnerId);
 
-    for (const ev of batch) {
-      const duplicate: boolean = merged.some(
-        (cur: PresenceEvent): boolean => cur.time === ev.time
-          || (cur.kind === ev.kind && Math.abs(cur.time - ev.time) <= DEDUPE_WINDOW_MS)
-      );
+  if (Number.isFinite(direct) && direct > 0) return direct;
 
-      if (duplicate) continue;
+  if (accid && fallback?.byAccid?.has(accid)) return fallback.byAccid.get(accid);
 
-      accepted.push(ev);
-      merged = mergeEvents(merged, [ev]);
-    }
+  if (name && fallback?.byName?.has(name)) return fallback.byName.get(name);
 
-    if (accepted.length > 0) {
-      if (nextEvents === state.events) nextEvents = { ...state.events };
-
-      nextEvents[ownerId] = merged;
-      toPersist.push(...accepted);
-    }
-  }
-
-  if (toPersist.length > 0) {
-    setState({ events: nextEvents });
-    void writePresenceEvents(toPersist);
-  }
-
-  return toPersist.length;
+  return undefined;
 }
 
 /**
- * 之前对不上成员的记录，现在能对上的就放进时间线；太旧的（服务端也早就不留了）丢掉。
- * @param { Map<string, number> } accidToOwner
- * @param { number } [now] - 现在的时间。调用的地方传服务端的时间（记录的时间也是服务端的），不受本机时钟影响
- * @return { number } 这次放进时间线的条数
- */
-export function flushPendingEvents(accidToOwner: Map<string, number>, now: number = Date.now()): number {
-  if (pendingEvents.length === 0) return 0;
-
-  const incomingByOwner: Map<number, Array<PresenceEvent>> = new Map();
-  const rest: Array<PendingEvent> = [];
-
-  for (const item of pendingEvents) {
-    const ownerId: number | undefined = accidToOwner.get(item.accid);
-
-    if (ownerId !== undefined) {
-      const list: Array<PresenceEvent> = incomingByOwner.get(ownerId) ?? [];
-
-      list.push({ ownerId, time: item.time, kind: item.kind });
-      incomingByOwner.set(ownerId, list);
-    } else if (now - item.time < PENDING_EVENTS_KEEP_MS) {
-      rest.push(item);
-    }
-  }
-
-  if (rest.length === pendingEvents.length) return 0;
-
-  pendingEvents = rest;
-  savePendingEvents();
-
-  return acceptEvents(incomingByOwner);
-}
-
-/**
- * 消费服务端 GET /presence 的完整响应：
- *   - link.connected === false 或 member.stale === true 或 member.since === null → status='unknown'（不记录下线）
+ * 消费服务端 GET /presence?userId=... 的完整响应（直接按 ownerId 映射；旧数据缺 ownerId 时按内存表兜底）：
+ *   - link.connected === false 或 member.stale === true 或 member.since === null → status='unknown'（灰+问号，不写假下线）
  *   - 否则 status='online'|'offline'，仅当与上次确认状态发生切换时写入本地时间线缓存
  */
-export function applyServerPresence(
-  response: PresenceResponse,
-  accidToOwner: Map<string, number>
-): void {
+export function applyServerPresence(response: PresenceResponse, fallback?: PresenceFallbackLookup): void {
   const linkConnected: boolean = Boolean(response.link?.connected);
   const serverTime: number = Number(response.serverTime) || Date.now();
-
-  flushPendingEvents(accidToOwner, serverTime);
-
-  const nextByOwner: Record<number, MemberPresence> = { ...state.byOwner };
+  const nextByOwner: Record<number, MemberPresence> = {};
   let nextEvents: Record<number, Array<PresenceEvent>> = state.events;
   let confirmedChanged: boolean = false;
   const nextConfirmed: Record<number, ConfirmedRecord> = { ...lastConfirmed };
 
   for (const item of response.members ?? []) {
-    const ownerId: number | undefined = accidToOwner.get(item.accid);
+    const ownerId: number | undefined = resolveOwnerId(item.ownerId, item.accid, item.name, fallback);
 
     if (ownerId === undefined) continue;
 
-    const prev: MemberPresence | undefined = nextByOwner[ownerId];
+    const prev: MemberPresence | undefined = state.byOwner[ownerId];
     const isUnknown: boolean = !linkConnected || Boolean(item.stale) || item.since === null;
 
     if (isUnknown) {
@@ -414,7 +369,7 @@ export function applyServerPresence(
     const since: number = Number(item.since);
     const prevConfirmed: ConfirmedRecord | undefined = nextConfirmed[ownerId];
 
-    // 只有之前已有确认态、且状态确实发生了切换时才写入时间线记录（避免服务重启或程序首次打开时刷一排历史状态）
+    // 只有之前已有确认态、且状态确实发生了切换时才写入时间线记录
     if (prevConfirmed && prevConfirmed.status !== nextStatus) {
       const eventTime: number = Number.isFinite(since) && since > 0 ? since : serverTime;
       const prevList: Array<PresenceEvent> = nextEvents[ownerId] ?? [];
@@ -445,11 +400,13 @@ export function applyServerPresence(
     };
   }
 
-  // 如果整条云信链路断开，但 members 里未包含的旧条目也一并标为未知
+  // 云信链路断开时，已跟踪但本次响应没带回来的旧条目也保留为「未知」
   if (!linkConnected) {
-    for (const [k, cur] of Object.entries(nextByOwner)) {
-      if (cur.status !== 'unknown') {
-        nextByOwner[Number(k)] = { ...cur, status: 'unknown', online: false, stale: true, serverTime };
+    for (const [k, cur] of Object.entries(state.byOwner)) {
+      const id: number = Number(k);
+
+      if (!nextByOwner[id]) {
+        nextByOwner[id] = { ...cur, status: 'unknown', online: false, stale: true, serverTime };
       }
     }
   }
@@ -472,63 +429,79 @@ export function applyServerPresence(
 }
 
 /**
- * 消费服务端 GET /events?since=... 的历史上下线事件（按时间升序），用于补齐程序关闭/电脑休眠/断网期间的空档。
- * 写入本地 IndexedDB 缓存并更新游标，完全不影响未读数。
- * 暂时对不上本地成员的记录不丢：先存起来（见上面的 PendingEvent），以后对上了再补进时间线。
- * @return { number } 本次新增写入的事件条数
+ * 消费服务端 GET /events?since=...&userId=... 的历史上下线事件（直接按 ownerId 映射，按 t 升序），
+ * 用于补齐程序关闭/电脑休眠/断网期间的空档；游标保存为「上次最大 t」，完全不影响未读数。
  */
 export function applyServerEvents(
   response: PresenceEventsResponse,
-  accidToOwner: Map<string, number>
+  userId: string = 'default',
+  fallback?: PresenceFallbackLookup
 ): number {
-  const flushed: number = flushPendingEvents(accidToOwner, Number(response.serverTime) || Date.now());
   const incomingByOwner: Map<number, Array<PresenceEvent>> = new Map();
-  const known: Set<string> = new Set(pendingEvents.map((item: PendingEvent): string => `${ item.accid }:${ item.time }`));
-  let maxTime: number = eventsCursor;
-  let pendingChanged: boolean = false;
+  const prevCursor: number = eventsCursors[userId] ?? 0;
+  let maxEventTime: number = 0;
 
   for (const raw of response.events ?? []) {
     const time: number = Number(raw.t);
 
     if (!Number.isFinite(time) || time <= 0) continue;
 
-    if (time > maxTime) maxTime = time;
+    if (time > maxEventTime) maxEventTime = time;
 
-    const kind: PresenceKind = raw.online ? 'online' : 'offline';
-    const ownerId: number | undefined = accidToOwner.get(raw.accid);
+    const ownerId: number | undefined = resolveOwnerId(raw.ownerId, raw.accid, raw.name, fallback);
 
-    if (ownerId === undefined) {
-      if (typeof raw.accid === 'string' && raw.accid !== '' && !known.has(`${ raw.accid }:${ time }`)) {
-        known.add(`${ raw.accid }:${ time }`);
-        pendingEvents.push({ accid: raw.accid, time, kind });
-        pendingChanged = true;
-      }
-
-      continue;
-    }
+    if (ownerId === undefined) continue;
 
     const list: Array<PresenceEvent> = incomingByOwner.get(ownerId) ?? [];
 
-    list.push({ ownerId, time, kind });
+    list.push({ ownerId, time, kind: raw.online ? 'online' : 'offline' });
     incomingByOwner.set(ownerId, list);
   }
 
-  if (pendingChanged) {
-    // 只留最新的一部分，免得一直对不上的账号把它撑大
-    if (pendingEvents.length > PENDING_EVENTS_MAX) pendingEvents = pendingEvents.slice(pendingEvents.length - PENDING_EVENTS_MAX);
+  let nextEvents: Record<number, Array<PresenceEvent>> = state.events;
+  const toPersist: Array<PresenceEvent> = [];
 
-    savePendingEvents();
+  for (const [ownerId, batch] of incomingByOwner) {
+    const existing: Array<PresenceEvent> = nextEvents[ownerId] ?? [];
+    const accepted: Array<PresenceEvent> = [];
+    let merged: Array<PresenceEvent> = existing;
+
+    for (const ev of batch) {
+      const duplicate: boolean = merged.some(
+        (cur: PresenceEvent): boolean => cur.time === ev.time
+          || (cur.kind === ev.kind && Math.abs(cur.time - ev.time) <= DEDUPE_WINDOW_MS)
+      );
+
+      if (duplicate) continue;
+
+      accepted.push(ev);
+      merged = mergeEvents(merged, [ev]);
+    }
+
+    if (accepted.length > 0) {
+      if (nextEvents === state.events) nextEvents = { ...state.events };
+
+      nextEvents[ownerId] = merged;
+      toPersist.push(...accepted);
+    }
   }
 
-  const added: number = acceptEvents(incomingByOwner);
-  const nextCursor: number = Math.max(maxTime, Number(response.serverTime) || 0);
+  // 有事件时游标推进到最大 t；首次拉取且无历史事件时推进到 serverTime，避免以后每次都查 since=0
+  const nextCursor: number = maxEventTime > 0
+    ? Math.max(prevCursor, maxEventTime)
+    : (prevCursor === 0 && Number.isFinite(response.serverTime) && response.serverTime > 0 ? response.serverTime : prevCursor);
 
-  if (nextCursor > eventsCursor) {
-    eventsCursor = nextCursor;
-    saveEventsCursor(eventsCursor);
+  if (nextCursor > prevCursor) {
+    eventsCursors = { ...eventsCursors, [userId]: nextCursor };
+    saveEventsCursors(eventsCursors);
   }
 
-  return flushed + added;
+  if (toPersist.length > 0) {
+    setState({ events: nextEvents });
+    void writePresenceEvents(toPersist);
+  }
+
+  return toPersist.length;
 }
 
 /**
@@ -577,17 +550,15 @@ export async function clearMemberPresence(ownerId: number): Promise<void> {
   const nextByOwner: Record<number, MemberPresence> = { ...state.byOwner };
   const nextEvents: Record<number, Array<PresenceEvent>> = { ...state.events };
   const nextLoaded: Record<number, boolean> = { ...state.loaded };
-  const nextUnresolved: Record<number, boolean> = { ...state.unresolved };
   const nextConfirmed: Record<number, ConfirmedRecord> = { ...lastConfirmed };
 
   delete nextByOwner[ownerId];
   delete nextEvents[ownerId];
   delete nextLoaded[ownerId];
-  delete nextUnresolved[ownerId];
   delete nextConfirmed[ownerId];
   lastConfirmed = nextConfirmed;
   saveLastConfirmed(nextConfirmed);
-  setState({ byOwner: nextByOwner, events: nextEvents, loaded: nextLoaded, unresolved: nextUnresolved });
+  setState({ byOwner: nextByOwner, events: nextEvents, loaded: nextLoaded });
   await clearPresenceCache(ownerId);
 }
 
@@ -661,8 +632,7 @@ export function mergeChatTimeline(
 /* 测试用 */
 export function resetPresenceStoreForTest(): void {
   lastConfirmed = {};
-  eventsCursor = 0;
-  pendingEvents = [];
+  eventsCursors = {};
   state = {
     service: { configured: false, connected: false },
     byOwner: {},

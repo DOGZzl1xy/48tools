@@ -1,95 +1,119 @@
+import { Pocket48Login } from '../../functionalComponents/Pocket48Login/enum';
+import type { UserInfo } from '../../functionalComponents/Pocket48Login/types';
 import { getMemberDirectory, loadMemberDirectory, type DirectoryState } from './memberDirectory';
 import { getRoomState, onFollowChange, type RoomMember } from './roomStore';
+import { getChannel } from './unreadStore';
 import {
   getPresenceConfig,
+  pushFollowList,
   fetchPresence,
   fetchPresenceEvents,
-  fetchRoster,
-  addRosterMember,
-  removeRosterMember,
+  type ListMemberInput,
+  type ListSyncResponse,
   type PresenceClientConfig,
   type PresenceEventsResponse,
-  type PresenceResponse,
-  type RosterResponse
+  type PresenceResponse
 } from './presenceApi';
-import {
-  buildAccidToOwnerMap,
-  getSavedIdentity,
-  linkServerRoster,
-  resolveMemberIdentity,
-  type MemberIdentity
-} from './presenceIdentity';
 import {
   applyServerEvents,
   applyServerPresence,
   getPresenceEventsCursor,
   markPresenceServiceDown,
+  setPresencePending,
   setPresenceServiceConfigured,
-  setPresenceUnresolved
+  type PresenceFallbackLookup
 } from './presenceStore';
 
 /**
- * 远端在线状态服务的后台同步器：
- *   - 程序启动时若本机 local/pocket48.json 配置了服务地址和密钥，自动启动定时轮询（每 30 秒拉一次 GET /presence）
- *   - 启动时、断线恢复后以及电脑休眠唤醒后，自动拉取 GET /events?since=... 补齐期间错过的上下线记录
- *   - 启动时与服务端 GET /roster 对账：把本地已关注但服务端名单里还没有的成员自动 POST /roster 补上
- *   - 本地新增关注时 POST /roster 通知服务端追加；取消关注时 DELETE /roster/{accid}
- *   - 远端未启动、断网或云信断线时静默标为「未知」，不弹报错打扰用户，等服务恢复后自动接上
- *   - 查不到账号的成员（成员名单还没收录的新成员）加不进服务端名单：记下来告诉界面（「状态未知」的原因），
- *     每 10 分钟对账时再试一次，不会每 30 秒都去试
- *   - 测试窗口（TEST=true 启动的那种）只读：照常取状态和历史记录，但不对账、不增删服务端名单。
- *     测试窗口用的是另一份数据，里面关注的成员和平时用的不一样，不能让它改到线上的名单
+ * 远端在线状态服务的纯 HTTP 后台同步器：
+ *   - userId 取本机已登录口袋48账号的 accid（稳定、每人唯一）
+ *   - 启动时 & 每次本地关注列表变化（加/删）时，把完整关注清单全量推给 POST /list（服务端自行 diff 与解析）
+ *   - 每 30 秒拉一次 GET /presence?userId=<accid>，直接按响应里的 ownerId 更新 UI
+ *   - 启动 / 断线恢复 / 电脑休眠唤醒时拉一次 GET /events?since=<游标>&userId=<accid> 补齐期间上下线记录
+ *   - 服务不可用、link.connected=false 或 stale=true 时静默显示「未知」并自动重试，不弹窗打扰
  * 接入点：custom/shell/AppShell.tsx 启动时调用 startPresenceWatcher。
  */
 const POLL_INTERVAL_MS: number = 30_000;
 const FIRST_SYNC_DELAY_MS: number = 3_000;
-const ROSTER_RECONCILE_INTERVAL_MS: number = 10 * 60_000;
+const FOLLOW_DEBOUNCE_MS: number = 400;
 const WAKE_GAP_MS: number = 90_000;
 
 let started: boolean = false;
 let polling: boolean = false;
-let syncingRoster: boolean = false;
+let pushingList: boolean = false;
 let syncingEvents: boolean = false;
-let lastRosterSyncAt: number = 0;
+let listDirty: boolean = true;
+let activeUserId: string | undefined;
 let lastTickAt: number = 0;
 let loggedDown: boolean = false;
-const pendingAdds: Map<number, RoomMember> = new Map();
+let debounceTimer: number | undefined;
+const trackedAccidToOwner: Map<string, number> = new Map();
 
-/* 是不是测试窗口（检查脚本启动的）：是的话不改服务端的名单 */
-export function isPresenceReadOnly(): boolean {
-  const initial: { isTest?: boolean } | undefined = (globalThis as { __INITIAL_STATE__?: { isTest?: boolean } }).__INITIAL_STATE__;
+/* 为服务端历史旧事件（升级前尚未带 ownerId 字段）提供纯内存兜底映射，不发任何请求 */
+function buildFallbackLookup(): PresenceFallbackLookup {
+  const byAccid: Map<string, number> = new Map(trackedAccidToOwner);
+  const byName: Map<string, number> = new Map();
+  const nameCounts: Map<string, number> = new Map();
+  const follows: Array<RoomMember> = getRoomState().follows;
 
-  return Boolean(initial?.isTest) || process.env.TEST === 'true';
+  for (const member of follows) {
+    nameCounts.set(member.name, (nameCounts.get(member.name) ?? 0) + 1);
+  }
+
+  for (const member of follows) {
+    if (nameCounts.get(member.name) === 1) byName.set(member.name, member.ownerId);
+  }
+
+  for (const dir of getMemberDirectory().members) {
+    if (dir.account && !byAccid.has(dir.account)) byAccid.set(dir.account, dir.id);
+  }
+
+  return { byAccid, byName };
 }
 
-/* 关注的成员里哪些查不到账号：告诉界面 */
-function reportUnresolved(): void {
-  const directory: DirectoryState = getMemberDirectory();
-  const ownerIds: Array<number> = getRoomState().follows
-    .filter((member: RoomMember): boolean => !getSavedIdentity(member.ownerId)?.accid && !directory.byId[member.ownerId]?.account)
-    .map((member: RoomMember): number => member.ownerId);
+/* 取本机当前登录口袋48账号的 accid 作为 userId */
+export function getCurrentUserId(): string | undefined {
+  if (typeof localStorage === 'undefined') return undefined;
 
-  setPresenceUnresolved(ownerIds);
+  try {
+    const raw: string | null = localStorage.getItem(Pocket48Login.StorageKey);
+
+    if (!raw) return undefined;
+
+    const info: Partial<UserInfo> = JSON.parse(raw);
+
+    return typeof info.accid === 'string' && info.accid.trim() !== '' ? info.accid.trim() : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
-/* 拉取 GET /events?since=<cursor> 补齐离线/休眠期间的上下线记录 */
-export async function syncPresenceEvents(config?: PresenceClientConfig): Promise<number> {
+/* 组装当前完整关注清单（带上已知的 serverId 可省服务端一次 jump，没有也没关系） */
+export function buildFollowListPayload(follows: Array<RoomMember>, directory: DirectoryState): Array<ListMemberInput> {
+  return follows.map((member: RoomMember): ListMemberInput => {
+    const serverId: number | undefined = directory.byId[member.ownerId]?.serverId ?? getChannel(member.ownerId)?.serverId;
+
+    return serverId === undefined
+      ? { ownerId: member.ownerId, name: member.name }
+      : { ownerId: member.ownerId, name: member.name, serverId };
+  });
+}
+
+/* 拉取 GET /events?since=<游标>&userId=<accid> 补齐期间翻转 */
+export async function syncPresenceEvents(userId?: string, config?: PresenceClientConfig): Promise<number> {
   const cfg: PresenceClientConfig | undefined = config ?? getPresenceConfig();
+  const uid: string | undefined = userId ?? getCurrentUserId();
 
-  if (!cfg || syncingEvents) return 0;
+  if (!cfg || !uid || syncingEvents) return 0;
 
   syncingEvents = true;
 
   try {
-    const since: number = getPresenceEventsCursor();
-    const res: PresenceEventsResponse = await fetchPresenceEvents({ since, config: cfg });
-    const directory: DirectoryState = getMemberDirectory();
-    const follows: Array<RoomMember> = getRoomState().follows;
-    const map: Map<string, number> = buildAccidToOwnerMap(directory, follows);
+    const since: number = getPresenceEventsCursor(uid);
+    const res: PresenceEventsResponse = await fetchPresenceEvents({ since, userId: uid, config: cfg });
 
-    return applyServerEvents(res, map);
+    return applyServerEvents(res, uid, buildFallbackLookup());
   } catch (err) {
-    // 补档失败不打扰用户，下次重连或唤醒时继续按旧游标补齐
     console.warn('拉取历史上下线记录失败:', err instanceof Error ? err.message : String(err));
 
     return 0;
@@ -98,42 +122,23 @@ export async function syncPresenceEvents(config?: PresenceClientConfig): Promise
   }
 }
 
-/* 拉一次 GET /presence，更新所有成员的在线 / 离线 / 未知状态 */
-export async function pollPresenceOnce(config?: PresenceClientConfig): Promise<boolean> {
+/* 拉一次 GET /presence?userId=<accid>，更新在线 / 离线 / 未知状态 */
+export async function pollPresenceOnce(userId?: string, config?: PresenceClientConfig): Promise<boolean> {
   const cfg: PresenceClientConfig | undefined = config ?? getPresenceConfig();
+  const uid: string | undefined = userId ?? getCurrentUserId();
 
-  if (!cfg || polling) return false;
+  if (!cfg || !uid || polling) return false;
 
   polling = true;
 
   try {
     const wasDown: boolean = loggedDown;
-    const res: PresenceResponse = await fetchPresence(cfg);
-    const directory: DirectoryState = getMemberDirectory();
-    const follows: Array<RoomMember> = getRoomState().follows;
-    const map: Map<string, number> = buildAccidToOwnerMap(directory, follows);
+    const res: PresenceResponse = await fetchPresence({ userId: uid, config: cfg });
 
-    // 响应里有还没关联到本地 ownerId 的新成员时，顺便把 /roster 拉下来按 serverId 关联一次
-    const hasUnmapped: boolean = (res.members ?? []).some((m: { accid: string }): boolean => !map.has(m.accid));
-
-    if (hasUnmapped && !syncingRoster) {
-      try {
-        const rosterRes: RosterResponse = await fetchRoster(cfg);
-        const linked: Map<string, number> = linkServerRoster(rosterRes.members ?? [], directory, follows);
-
-        applyServerPresence(res, linked);
-      } catch {
-        applyServerPresence(res, map);
-      }
-    } else {
-      applyServerPresence(res, map);
-    }
-
+    applyServerPresence(res, buildFallbackLookup());
     loggedDown = false;
-    reportUnresolved();
 
-    // 断线恢复后顺便拉一次 /events 补档
-    if (wasDown) void syncPresenceEvents(cfg);
+    if (wasDown) void syncPresenceEvents(uid, cfg);
 
     return true;
   } catch (err) {
@@ -152,119 +157,74 @@ export async function pollPresenceOnce(config?: PresenceClientConfig): Promise<b
   }
 }
 
-/* 与服务端 /roster 对账：把本地关注列表里缺席的成员追加到服务端 */
-export async function syncFollowedRoster(config?: PresenceClientConfig): Promise<void> {
+/* 把当前完整关注清单全量推给服务端 POST /list；若推送期间又有变更则紧接着再推一次 */
+export async function syncFollowList(userId?: string, config?: PresenceClientConfig): Promise<ListSyncResponse | undefined> {
   const cfg: PresenceClientConfig | undefined = config ?? getPresenceConfig();
+  const uid: string | undefined = userId ?? getCurrentUserId();
 
-  if (!cfg || syncingRoster || isPresenceReadOnly()) return;
+  if (!cfg || !uid) return undefined;
 
-  syncingRoster = true;
+  if (pushingList) {
+    listDirty = true;
+
+    return undefined;
+  }
+
+  pushingList = true;
+  let lastRes: ListSyncResponse | undefined;
 
   try {
     await loadMemberDirectory();
 
-    const rosterRes: RosterResponse = await fetchRoster(cfg);
-    const directory: DirectoryState = getMemberDirectory();
-    const follows: Array<RoomMember> = getRoomState().follows;
+    do {
+      listDirty = false;
 
-    linkServerRoster(rosterRes.members ?? [], directory, follows);
+      const payload: Array<ListMemberInput> = buildFollowListPayload(getRoomState().follows, getMemberDirectory());
 
-    const onServer: Set<string> = new Set((rosterRes.members ?? []).map((item: { accid: string }): string => item.accid));
+      lastRes = await pushFollowList(uid, payload, cfg);
 
-    for (const member of follows) {
-      try {
-        const identity: MemberIdentity | undefined = await resolveMemberIdentity(member);
-
-        if (!identity?.accid) {
-          pendingAdds.set(member.ownerId, member);
-          continue;
+      for (const item of lastRes.tracked ?? []) {
+        if (item.accid && Number.isFinite(item.ownerId) && item.ownerId > 0) {
+          trackedAccidToOwner.set(item.accid, item.ownerId);
         }
-
-        if (!onServer.has(identity.accid)) {
-          await addRosterMember({ accid: identity.accid, name: member.name, serverId: identity.serverId }, cfg);
-          onServer.add(identity.accid);
-        }
-
-        pendingAdds.delete(member.ownerId);
-      } catch (err) {
-        pendingAdds.set(member.ownerId, member);
-        console.warn('同步关注成员到在线状态服务失败:', member.name, err);
       }
-    }
 
-    lastRosterSyncAt = Date.now();
-    reportUnresolved();
+      setPresencePending(lastRes.pending ?? []);
+    } while (listDirty);
+
+    loggedDown = false;
+
+    return lastRes;
   } catch (err) {
-    // 服务尚未启动或网络断开时静默等待下一轮
+    listDirty = true;
+
+    const msg: string = err instanceof Error ? err.message : String(err);
+
     if (!loggedDown) {
-      console.warn('拉取在线状态名单失败（将自动重试）:', err instanceof Error ? err.message : String(err));
+      console.warn('同步关注清单到在线状态服务失败（将自动重试）:', msg);
       loggedDown = true;
     }
+
+    markPresenceServiceDown(msg);
+
+    return undefined;
   } finally {
-    syncingRoster = false;
+    pushingList = false;
   }
 }
 
-/* 本地新增关注 → 若已能从缓存/公开名单解析 accid，立即 POST /roster 通知服务端追加 */
-export async function notifyFollowAdded(member: RoomMember, config?: PresenceClientConfig): Promise<boolean> {
-  const cfg: PresenceClientConfig | undefined = config ?? getPresenceConfig();
+/* 关注列表发生加/删变化时防抖推送最新整份清单，推完顺手刷新一次在线状态 */
+function scheduleFollowListSync(): void {
+  listDirty = true;
 
-  if (!cfg || isPresenceReadOnly()) return false;
+  if (typeof window === 'undefined') return;
 
-  try {
-    await loadMemberDirectory();
+  window.clearTimeout(debounceTimer);
+  debounceTimer = window.setTimeout(async (): Promise<void> => {
+    const res: ListSyncResponse | undefined = await syncFollowList();
 
-    const identity: MemberIdentity | undefined = await resolveMemberIdentity(member);
-
-    if (!identity?.accid) {
-      pendingAdds.set(member.ownerId, member);
-      reportUnresolved();
-
-      return false;
-    }
-
-    await addRosterMember({ accid: identity.accid, name: member.name, serverId: identity.serverId }, cfg);
-    pendingAdds.delete(member.ownerId);
-
-    // 稍等服务端就绪后补查一次，尽快点亮状态
-    if (typeof window !== 'undefined') {
-      window.setTimeout((): void => {
-        void pollPresenceOnce(cfg);
-      }, 1_500);
-    }
-
-    return true;
-  } catch (err) {
-    pendingAdds.set(member.ownerId, member);
-    console.warn('通知在线状态服务新增关注失败（稍后自动重试）:', member.name, err);
-
-    return false;
-  }
-}
-
-/* 本地取消关注 → 若已知 accid 则通知服务端 DELETE /roster/{accid} */
-export async function notifyFollowRemoved(member: RoomMember, config?: PresenceClientConfig): Promise<boolean> {
-  pendingAdds.delete(member.ownerId);
-  reportUnresolved();
-
-  const cfg: PresenceClientConfig | undefined = config ?? getPresenceConfig();
-
-  if (!cfg || isPresenceReadOnly()) return false;
-
-  const accid: string | undefined = getSavedIdentity(member.ownerId)?.accid
-    ?? getMemberDirectory().byId[member.ownerId]?.account;
-
-  if (!accid) return false;
-
-  try {
-    await removeRosterMember(accid, cfg);
-
-    return true;
-  } catch (err) {
-    console.warn('通知在线状态服务移除成员失败:', member.name, err);
-
-    return false;
-  }
+    if (res) await pollPresenceOnce();
+  }, FOLLOW_DEBOUNCE_MS);
 }
 
 async function tick(): Promise<void> {
@@ -272,20 +232,26 @@ async function tick(): Promise<void> {
 
   if (!cfg) return;
 
+  const uid: string | undefined = getCurrentUserId();
+
+  if (!uid) return;
+
   const now: number = Date.now();
+  const switchedUser: boolean = activeUserId !== uid;
   const wokeFromSleep: boolean = lastTickAt > 0 && now - lastTickAt >= WAKE_GAP_MS;
 
   lastTickAt = now;
 
-  // 没加成功的成员（查不到账号、或者当时服务没连上）跟着每 10 分钟一次的对账再试，不用每 30 秒都试
-  if (now - lastRosterSyncAt >= ROSTER_RECONCILE_INTERVAL_MS) {
-    lastRosterSyncAt = now; // 这一轮失败了也等下一个 10 分钟
-    await syncFollowedRoster(cfg);
+  if (switchedUser) {
+    activeUserId = uid;
+    listDirty = true;
   }
 
-  if (wokeFromSleep) await syncPresenceEvents(cfg);
+  if (listDirty) await syncFollowList(uid, cfg);
 
-  await pollPresenceOnce(cfg);
+  if (switchedUser || wokeFromSleep) await syncPresenceEvents(uid, cfg);
+
+  await pollPresenceOnce(uid, cfg);
 }
 
 /* 启动后台轮询与关注变动监听（只启动一次；未配置服务地址时静默不启动） */
@@ -299,15 +265,21 @@ export function startPresenceWatcher(): void {
   started = true;
   setPresenceServiceConfigured(true);
 
-  onFollowChange((member: RoomMember, followed: boolean): void => {
-    void (followed ? notifyFollowAdded(member) : notifyFollowRemoved(member));
+  onFollowChange((): void => {
+    scheduleFollowListSync();
   });
 
   window.setTimeout(async (): Promise<void> => {
     lastTickAt = Date.now();
-    await syncFollowedRoster(cfg);
-    await syncPresenceEvents(cfg);
-    await pollPresenceOnce(cfg);
+
+    const uid: string | undefined = getCurrentUserId();
+
+    if (!uid) return;
+
+    activeUserId = uid;
+    await syncFollowList(uid, cfg);
+    await syncPresenceEvents(uid, cfg);
+    await pollPresenceOnce(uid, cfg);
   }, FIRST_SYNC_DELAY_MS);
   window.setInterval((): void => {
     void tick();

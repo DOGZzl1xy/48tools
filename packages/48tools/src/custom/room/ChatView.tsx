@@ -233,9 +233,9 @@ function ChatView(props: ChatViewProps): ReactElement {
             {
               showPresence ? (
                 <span className={ `room-chat-status is-${ memberPresence?.status ?? 'unknown' }` }
-                  title={ presenceReason(memberPresence, presence.service, Boolean(presence.unresolved[member.ownerId])) }
+                  title={ presenceReason(memberPresence, presence.service, presence.unresolved[member.ownerId]) }
                 >
-                  { presenceLabel(memberPresence) }
+                  { presenceLabel(memberPresence, zone, presence.service) }
                 </span>
               ) : null
             }

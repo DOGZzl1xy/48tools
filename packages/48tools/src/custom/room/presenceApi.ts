@@ -8,19 +8,45 @@ import * as tls from 'node:tls';
 import { getLocalConfigRoot, getPocket48LocalConfig, type Pocket48LocalConfig } from '../pocket48Proxy/pocket48Proxy';
 
 /**
- * 远端在线状态服务的 HTTPS 客户端：
- *   - 服务地址、鉴权密钥和自签证书配置全部来自本机 local/pocket48.json，不写进代码库
- *   - 除 /health 外，请求统一带 Authorization: Bearer <key>
- *   - 支持自签证书 pin：在 TLS 握手完成后、发送任何 HTTP 请求头之前校验对端证书的 SHA-256 指纹，
- *     指纹不匹配会立即断开，避免鉴权头泄露给未授权对端
- *   - 直连远端服务，不走口袋48 专用代理
- *   - 服务地址必须是 https（密钥是放在请求头里发出去的，http 等于明文）；只有本机地址（127.0.0.1 / localhost）可以用 http
+ * 远端在线状态服务的纯 HTTPS 客户端：
+ *   - 服务地址、鉴权密钥和自签证书指纹全部来自本机 local/pocket48.json，不写进代码库
+ *   - 除 GET /health 外，请求统一带 Authorization: Bearer <key>
+ *   - 严格证书 Pin：在 TLS 握手完成后、发送任何 HTTP 请求头之前校验对端证书 SHA-256 指纹，不符立即断开
+ *   - 直连远端服务，不走口袋48 专用代理；客户端不碰云信 SDK，不做关注操作，不解析成员 accid
  */
 export interface PresenceClientConfig {
   baseUrl: string;
   apiKey: string;
   certPem?: string;
   certPin?: string;
+}
+
+export interface ListMemberInput {
+  ownerId: number;
+  name: string;
+  serverId?: number;
+}
+
+export interface ListTrackedMember {
+  ownerId: number;
+  name: string;
+  serverId?: number;
+  accid: string;
+}
+
+export interface ListPendingMember {
+  ownerId: number;
+  name: string;
+  serverId?: number;
+  reason?: string;
+}
+
+export interface ListSyncResponse {
+  ok: boolean;
+  userId: string;
+  unionSize: number;
+  tracked: Array<ListTrackedMember>;
+  pending: Array<ListPendingMember>;
 }
 
 export interface PresenceLinkInfo {
@@ -30,8 +56,10 @@ export interface PresenceLinkInfo {
 }
 
 export interface PresenceServerMember {
+  ownerId: number;
   accid: string;
   name: string;
+  serverId?: number;
   online: boolean;
   since: number | null;
   stale: boolean;
@@ -43,28 +71,10 @@ export interface PresenceResponse {
   members: Array<PresenceServerMember>;
 }
 
-export interface RosterMember {
-  accid: string;
-  name: string;
-  serverId?: number;
-}
-
-export interface RosterResponse {
-  ok?: boolean;
-  members: Array<RosterMember>;
-}
-
-export interface PresenceHealthResponse {
-  ok: boolean;
-  uptime?: number;
-  connected?: boolean;
-  members?: number;
-  lastPollAt?: number | null;
-}
-
 export interface PresenceServerEvent {
   t: number;
   accid: string;
+  ownerId: number;
   name: string;
   online: boolean;
 }
@@ -73,6 +83,16 @@ export interface PresenceEventsResponse {
   serverTime: number;
   retentionMs: number;
   events: Array<PresenceServerEvent>;
+}
+
+export interface PresenceHealthResponse {
+  ok: boolean;
+  uptime?: number;
+  connected?: boolean;
+  union?: number;
+  users?: number;
+  members?: number;
+  lastPollAt?: number | null;
 }
 
 export class PresenceApiError extends Error {
@@ -85,7 +105,12 @@ export class PresenceApiError extends Error {
   }
 }
 
-const REQUEST_TIMEOUT_MS: number = 12_000;
+const DEFAULT_TIMEOUT_MS: number = 15_000;
+const LIST_PUSH_TIMEOUT_MS: number = 75_000; // POST /list 服务端需按 diff 解析新成员，超时给 ≥60s
+const DEFAULT_CERT_CANDIDATES: Array<string> = [
+  path.join('local', 'presence', 'server.crt'),
+  path.join('local', 'presence', 'cert.pem')
+];
 let warnedInsecure: boolean = false;
 
 /* 服务地址能不能用：https 都可以；http 只允许本机（开发、测试时用） */
@@ -103,7 +128,7 @@ export function isAllowedPresenceUrl(baseUrl: string): boolean {
   return url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
 }
 
-/* 规范化 SHA-256 指纹：去掉冒号和空白并转大写，方便与 tls peerCertificate.fingerprint256 比对 */
+/* 规范化 SHA-256 指纹：去掉冒号和空白并转大写 */
 export function normalizePin(pin: string | undefined): string {
   return (pin ?? '').replace(/[^0-9a-fA-F]/g, '').toUpperCase();
 }
@@ -121,6 +146,8 @@ function resolveCertPem(configuredPath: string | undefined): string | undefined 
 
   if (configuredPath && configuredPath.trim() !== '') {
     candidates.push(path.isAbsolute(configuredPath) || !root ? configuredPath.trim() : path.join(root, configuredPath.trim()));
+  } else if (root) {
+    for (const rel of DEFAULT_CERT_CANDIDATES) candidates.push(path.join(root, rel));
   }
 
   for (const file of candidates) {
@@ -215,7 +242,7 @@ function createPinnedAgent(certPem: string | undefined, expectedPin: string): ht
 }
 
 export async function requestPresenceJson<T>(
-  method: 'GET' | 'POST' | 'DELETE',
+  method: 'GET' | 'POST',
   endpoint: string,
   options: {
     config?: PresenceClientConfig;
@@ -277,7 +304,7 @@ export async function requestPresenceJson<T>(
       });
     });
 
-    req.setTimeout(options.timeoutMs ?? REQUEST_TIMEOUT_MS, (): void => {
+    req.setTimeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, (): void => {
       req.destroy(new PresenceApiError('在线状态服务请求超时'));
     });
     req.on('error', (err: Error): void => {
@@ -290,40 +317,47 @@ export async function requestPresenceJson<T>(
   });
 }
 
-/* GET /presence —— 获取全部已跟踪成员在线状态 */
-export function fetchPresence(config?: PresenceClientConfig): Promise<PresenceResponse> {
-  return requestPresenceJson<PresenceResponse>('GET', '/presence', { config, auth: true });
+/* POST /list —— 推送某用户的完整关注清单（全量，服务端自行 diff；超时 ≥60s） */
+export function pushFollowList(
+  userId: string,
+  members: Array<ListMemberInput>,
+  config?: PresenceClientConfig
+): Promise<ListSyncResponse> {
+  if (!userId) return Promise.reject(new PresenceApiError('缺少 userId', 400));
+
+  const cleaned: Array<ListMemberInput> = members.map((item: ListMemberInput): ListMemberInput => (
+    item.serverId === undefined
+      ? { ownerId: item.ownerId, name: item.name }
+      : { ownerId: item.ownerId, name: item.name, serverId: item.serverId }
+  ));
+
+  return requestPresenceJson<ListSyncResponse>('POST', '/list', {
+    config,
+    auth: true,
+    body: { userId, members: cleaned },
+    timeoutMs: LIST_PUSH_TIMEOUT_MS
+  });
 }
 
-/* GET /roster —— 查看服务端当前跟踪名单 */
-export function fetchRoster(config?: PresenceClientConfig): Promise<RosterResponse> {
-  return requestPresenceJson<RosterResponse>('GET', '/roster', { config, auth: true });
+/* GET /presence?userId=<id> —— 拉取该用户追踪成员的在线快照 */
+export function fetchPresence(options: {
+  userId?: string;
+  config?: PresenceClientConfig;
+} = {}): Promise<PresenceResponse> {
+  const params: URLSearchParams = new URLSearchParams();
+
+  if (options.userId) params.set('userId', options.userId);
+
+  const query: string = params.toString();
+  const endpoint: string = query ? `/presence?${ query }` : '/presence';
+
+  return requestPresenceJson<PresenceResponse>('GET', endpoint, { config: options.config, auth: true });
 }
 
-/* POST /roster —— 本地新增关注时通知服务端追加名单 */
-export function addRosterMember(member: RosterMember, config?: PresenceClientConfig): Promise<RosterResponse> {
-  if (!member.accid) return Promise.reject(new PresenceApiError('缺少成员 accid', 400));
-
-  const body: RosterMember = member.serverId === undefined
-    ? { accid: member.accid, name: member.name }
-    : { accid: member.accid, name: member.name, serverId: member.serverId };
-
-  return requestPresenceJson<RosterResponse>('POST', '/roster', { config, auth: true, body });
-}
-
-/* DELETE /roster/{accid} —— 本地取消关注时通知服务端移除 */
-export function removeRosterMember(accid: string, config?: PresenceClientConfig): Promise<RosterResponse> {
-  return requestPresenceJson<RosterResponse>('DELETE', `/roster/${ encodeURIComponent(accid) }`, { config, auth: true });
-}
-
-/* GET /health —— 健康检查（不带鉴权头） */
-export function fetchPresenceHealth(config?: PresenceClientConfig): Promise<PresenceHealthResponse> {
-  return requestPresenceJson<PresenceHealthResponse>('GET', '/health', { config, auth: false });
-}
-
-/* GET /events?since=<ms>&accid=<可选> —— 拉取服务端保留的历史上下线事件（按时间升序，用于补齐关机/断网空档） */
+/* GET /events?since=<ms>&userId=<id>&accid=<可选> —— 近 7 天上下线事件（升序），用于补齐时间线 */
 export function fetchPresenceEvents(options: {
   since?: number;
+  userId?: string;
   accid?: string;
   config?: PresenceClientConfig;
 } = {}): Promise<PresenceEventsResponse> {
@@ -333,10 +367,20 @@ export function fetchPresenceEvents(options: {
     params.set('since', String(Math.floor(options.since)));
   }
 
+  if (options.userId) params.set('userId', options.userId);
+
   if (options.accid) params.set('accid', options.accid);
 
   const query: string = params.toString();
   const endpoint: string = query ? `/events?${ query }` : '/events';
 
   return requestPresenceJson<PresenceEventsResponse>('GET', endpoint, { config: options.config, auth: true });
+}
+
+/* GET /health —— 健康检查（默认不带鉴权头） */
+export function fetchPresenceHealth(
+  config?: PresenceClientConfig,
+  options: { auth?: boolean } = {}
+): Promise<PresenceHealthResponse> {
+  return requestPresenceJson<PresenceHealthResponse>('GET', '/health', { config, auth: options.auth ?? false });
 }
