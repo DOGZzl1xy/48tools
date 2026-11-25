@@ -24,7 +24,7 @@ import {
   usePresenceState,
   loadPresenceHistory,
   mergeChatTimeline,
-  presenceLabel,
+  presenceHeadline,
   presenceReason,
   type ChatTimelineItem,
   type MemberPresence,
@@ -235,13 +235,12 @@ function ChatView(props: ChatViewProps): ReactElement {
                 <span className={ `room-chat-status is-${ memberPresence?.status ?? 'unknown' }` }
                   title={ presenceReason(memberPresence, presence.service, presence.unresolved[member.ownerId]) }
                 >
-                  { presenceLabel(memberPresence, zone, presence.service) }
+                  { presenceHeadline(memberPresence, zone) }
                 </span>
               ) : null
             }
             { showPresence ? ' · ' : null }
             已加载 { allItems.length } 条
-            { room.fromCache ? ' · 含本地缓存' : '' }
             { room.syncing ? ' · 正在取新消息…' : '' }
             { room.opened && !room.hasMore && !room.cacheMore ? ' · 已经是最早的消息' : '' }
           </small>

@@ -10,9 +10,12 @@ import {
   appendPresenceEvent,
   mergeChatTimeline,
   presenceLabel,
+  presenceHeadline,
+  formatLastSeen,
   formatPresenceDuration,
   resetPresenceStoreForTest,
   type ChatTimelineItem,
+  type MemberPresence,
   type PresenceEvent
 } from './presenceStore';
 import {
@@ -199,7 +202,7 @@ describe('presenceStore', function(): void {
     expect(fullTimeline[0].time).toBe(100);
   });
 
-  test('presenceLabel 与 formatPresenceDuration 区分在线 / 离线 / 未知', function(): void {
+  test('圆点提示只有三种说法；标题在线时写已在线多久，离线时写上次在线的时间', function(): void {
     const since: number = Date.UTC(2026, 10, 24, 12, 30, 0); // 北京时间 20:30
     const serverTime: number = since + (16 * 60_000);
 
@@ -207,13 +210,29 @@ describe('presenceStore', function(): void {
     expect(formatPresenceDuration(16 * 60_000)).toBe('16 分钟');
     expect(formatPresenceDuration(90 * 60_000)).toBe('1 小时 30 分钟');
 
-    expect(presenceLabel(undefined, 'Asia/Shanghai', { configured: true, connected: false })).toBe('状态未知 · 服务未连接');
-    expect(presenceLabel({ status: 'unknown', online: false, stale: true, updatedAt: serverTime }, 'Asia/Shanghai', { configured: true, connected: true }))
-      .toBe('状态未知');
-    expect(presenceLabel({ status: 'online', online: true, stale: false, since, serverTime, updatedAt: serverTime }, 'Asia/Shanghai'))
-      .toBe('在线 · 已在线 16 分钟（20:30 上线）');
-    expect(presenceLabel({ status: 'offline', online: false, stale: false, since, serverTime, updatedAt: serverTime }, 'Asia/Shanghai'))
-      .toBe('离线 · 20:30 下线');
+    const online: MemberPresence = { status: 'online', online: true, stale: false, since, serverTime, updatedAt: serverTime };
+    const offline: MemberPresence = { status: 'offline', online: false, stale: false, since, serverTime, updatedAt: serverTime };
+    const unknown: MemberPresence = { status: 'unknown', online: false, stale: true, updatedAt: serverTime };
+
+    expect(presenceLabel(undefined)).toBe('状态未知');
+    expect(presenceLabel(unknown)).toBe('状态未知');
+    expect(presenceLabel(online)).toBe('在线');
+    expect(presenceLabel(offline)).toBe('离线');
+
+    expect(presenceHeadline(undefined)).toBe('状态未知');
+    expect(presenceHeadline(unknown)).toBe('状态未知');
+    expect(presenceHeadline(online)).toBe('已在线 16 分钟');
+    expect(presenceHeadline({ ...online, since: undefined })).toBe('在线');
+    expect(presenceHeadline(offline, 'Asia/Shanghai')).toBe('离线 · 上次在线 20:30');
+    expect(presenceHeadline({ ...offline, since: undefined })).toBe('离线');
+
+    // 上次在线：今天只写几点，昨天、更早、跨年各有写法（都按北京时间）
+    const now: number = Date.UTC(2026, 10, 24, 14, 0, 0); // 北京时间 11-24 22:00
+
+    expect(formatLastSeen(Date.UTC(2026, 10, 23, 16, 5, 0), now, 'Asia/Shanghai')).toBe('00:05');       // 北京时间当天 00:05
+    expect(formatLastSeen(Date.UTC(2026, 10, 23, 15, 55, 0), now, 'Asia/Shanghai')).toBe('昨天 23:55');
+    expect(formatLastSeen(Date.UTC(2026, 10, 20, 4, 0, 0), now, 'Asia/Shanghai')).toBe('11-20 12:00');
+    expect(formatLastSeen(Date.UTC(2025, 11, 31, 4, 0, 0), now, 'Asia/Shanghai')).toBe('2025-12-31 12:00');
   });
 });
 

@@ -8,7 +8,7 @@ import {
   type PresenceKind
 } from './presenceCache';
 import { readJson, writeJson } from '../common/util';
-import { roomClock } from './roomTime';
+import { roomClock, type RoomClock } from './roomTime';
 import type { RoomMessageItem } from './roomStore';
 import type { ListPendingMember, PresenceEventsResponse, PresenceResponse } from './presenceApi';
 
@@ -165,34 +165,57 @@ export function formatPresenceDuration(ms: number): string {
   return rem > 0 ? `${ hours } 小时 ${ rem } 分钟` : `${ hours } 小时`;
 }
 
-/* 头像圆点的悬停提示文字（严格区分在线 / 离线 / 未知） */
-export function presenceLabel(
-  presence: MemberPresence | undefined,
-  zone?: string,
-  service?: PresenceServiceState
-): string {
-  if (!presence || presence.status === 'unknown') {
-    if (service?.configured && !service.connected) return '状态未知 · 服务未连接';
+/* 头像圆点的悬停提示文字：只有「在线 / 离线 / 状态未知」三种说法，不带时间 */
+export function presenceLabel(presence: MemberPresence | undefined): string {
+  if (presence?.status === 'online') return '在线';
 
-    return '状态未知';
+  if (presence?.status === 'offline') return '离线';
+
+  return '状态未知';
+}
+
+/* 上次在线是什么时候：今天的只写几点，昨天的写「昨天 21:16」，更早的带上日期（跨年再带上年份） */
+export function formatLastSeen(time: number, now: number, zone?: string): string {
+  const then: RoomClock = roomClock(time, zone);
+  const today: RoomClock = roomClock(now, zone);
+
+  if (!then.time || !today.date) return '';
+
+  if (then.date === today.date) return then.time;
+
+  if (then.date === roomClock(now - 86_400_000, zone).date) return `昨天 ${ then.time }`;
+
+  return then.date.slice(0, 4) === today.date.slice(0, 4)
+    ? `${ then.date.slice(5) } ${ then.time }`
+    : `${ then.date } ${ then.time }`;
+}
+
+/**
+ * 房间标题里的状态：
+ *   - 在线：「已在线多久」（按服务端的时间算，不写几点上线）
+ *   - 离线：「离线 · 上次在线 21:16」（她下线的时间，也就是服务端记的这次离线从什么时候开始）
+ *   - 未知：只写「状态未知」
+ */
+export function presenceHeadline(presence: MemberPresence | undefined, zone?: string): string {
+  const label: string = presenceLabel(presence);
+
+  if (!presence || presence.status === 'unknown') return label;
+
+  const since: number | undefined = presence.since ?? presence.changedAt;
+
+  if (since === undefined || !Number.isFinite(since) || since <= 0) return label;
+
+  if (presence.status === 'offline') {
+    const lastSeen: string = formatLastSeen(since, presence.serverTime ?? Date.now(), zone);
+
+    return lastSeen ? `${ label } · 上次在线 ${ lastSeen }` : label;
   }
 
-  const timeRef: number | undefined = presence.since ?? presence.changedAt;
-  const clockTime: string = timeRef !== undefined ? roomClock(timeRef, zone).time : '';
+  if (presence.serverTime === undefined) return label;
 
-  if (presence.status === 'online') {
-    const duration: string = presence.since !== undefined && presence.serverTime !== undefined
-      ? formatPresenceDuration(Math.max(0, presence.serverTime - presence.since))
-      : '';
+  const duration: string = formatPresenceDuration(Math.max(0, presence.serverTime - since));
 
-    if (duration && clockTime) return `在线 · 已在线 ${ duration }（${ clockTime } 上线）`;
-
-    if (clockTime) return `在线 · ${ clockTime } 上线`;
-
-    return '在线';
-  }
-
-  return clockTime ? `离线 · ${ clockTime } 下线` : '离线';
+  return duration ? `已在线 ${ duration }` : label;
 }
 
 /* 状态说明（供聊天页标题栏悬停显示「为什么是未知 / 暂未解析」） */
@@ -201,17 +224,15 @@ export function presenceReason(
   service?: PresenceServiceState,
   unresolved?: boolean | string
 ): string | undefined {
-  if (typeof unresolved === 'string' && unresolved) return unresolved;
-
-  if (unresolved) return '服务端暂未解析到该成员（可能无口袋房间），将自动重试';
-
   if (presence && presence.status !== 'unknown') return undefined;
 
-  if (service && !service.configured) return '尚未配置在线状态服务';
+  if (unresolved) return '还查不到她的账号信息，暂时看不到她的在线状态，过一会儿会自动再试';
 
-  if (service && !service.connected) return service.error ? `在线状态服务未连接：${ service.error }` : '在线状态服务未连接，正在自动重连';
+  if (service && !service.configured) return '还没有配置在线状态服务';
 
-  return '正在等待服务端轮询更新';
+  if (service && !service.connected) return '在线状态服务暂时没有连上，连上后会自动恢复';
+
+  return '还没有拿到她的状态，稍等一会儿';
 }
 
 export function setPresencePending(pending: Array<ListPendingMember>): void {

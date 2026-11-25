@@ -146,15 +146,12 @@
   right: -1px
   bottom: -1px
   z-index: 1
-  display: inline-flex
-  align-items: center
-  justify-content: center
   box-sizing: border-box
   width: 12px
   height: 12px
   border: 2px solid var(--presence-ring, var(--shell-bg))
   border-radius: 50%
-  background: color-mix(in srgb, var(--shell-text) 45%, var(--shell-surface))
+  background: color-mix(in srgb, var(--shell-text) 45%, var(--shell-surface)) // 离线：实心的灰点，要和「未知」的空心圈一眼分得出来
   transition: background-color .22s ease, box-shadow .22s ease, border-color .12s ease
 
   &.is-md
@@ -168,21 +165,10 @@
     background: var(--shell-primary)
     box-shadow: 0 1px 5px color-mix(in srgb, var(--shell-primary) 45%, transparent)
 
-  // 状态未知（stale=true / link.connected=false / 未同步）：灰色圆点 + 问号，不误标为离线
+  // 状态未知（stale=true / link.connected=false / 未同步）：灰色空心圈，不误标为离线
   &.is-unknown
-    width: 14px
-    height: 14px
-    background: color-mix(in srgb, var(--shell-text) 36%, var(--shell-surface))
-    color: var(--shell-surface)
-    font-size: 8.5px
-    font-weight: 700
-    line-height: 1
-    user-select: none
-
-    &.is-md
-      width: 16px
-      height: 16px
-      font-size: 9.5px
+    background: var(--presence-ring, var(--shell-bg))
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--shell-text) 32%, var(--shell-surface))
 
 .room-member-name
   display: flex

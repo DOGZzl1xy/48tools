@@ -31,6 +31,8 @@ import {
  *   - 每 30 秒拉一次 GET /presence?userId=<accid>，直接按响应里的 ownerId 更新 UI
  *   - 启动 / 断线恢复 / 电脑休眠唤醒时拉一次 GET /events?since=<游标>&userId=<accid> 补齐期间上下线记录
  *   - 服务不可用、link.connected=false 或 stale=true 时静默显示「未知」并自动重试，不弹窗打扰
+ *   - 测试窗口（检查脚本启动的）只读：照常取状态，不推关注清单。测试用的那份数据登录的可能和平时用的是同一个账号，
+ *     推了就会把服务端那份真实的清单整份换掉
  * 接入点：custom/shell/AppShell.tsx 启动时调用 startPresenceWatcher。
  */
 const POLL_INTERVAL_MS: number = 30_000;
@@ -48,6 +50,13 @@ let lastTickAt: number = 0;
 let loggedDown: boolean = false;
 let debounceTimer: number | undefined;
 const trackedAccidToOwner: Map<string, number> = new Map();
+
+/* 是不是测试窗口（检查脚本启动的）：是的话不改服务端的关注清单 */
+export function isPresenceReadOnly(): boolean {
+  const initial: { isTest?: boolean } | undefined = (globalThis as { __INITIAL_STATE__?: { isTest?: boolean } }).__INITIAL_STATE__;
+
+  return Boolean(initial?.isTest) || process.env.TEST === 'true';
+}
 
 /* 为服务端历史旧事件（升级前尚未带 ownerId 字段）提供纯内存兜底映射，不发任何请求 */
 function buildFallbackLookup(): PresenceFallbackLookup {
@@ -163,6 +172,12 @@ export async function syncFollowList(userId?: string, config?: PresenceClientCon
   const uid: string | undefined = userId ?? getCurrentUserId();
 
   if (!cfg || !uid) return undefined;
+
+  if (isPresenceReadOnly()) {
+    listDirty = false;
+
+    return undefined;
+  }
 
   if (pushingList) {
     listDirty = true;
