@@ -332,3 +332,197 @@
   flex: none
   width: 200px
   margin: 0
+
+// ---------- 写好了等着定标题的 ----------
+// 写好以后标题在下面定，上面只是这个爆点说的是什么
+.picks-title.is-fixed
+  flex: 1 1 240px
+  min-width: 0
+  overflow: hidden
+  font-size: 14.5px
+  font-weight: 600
+  line-height: 32px
+  text-overflow: ellipsis
+  white-space: nowrap
+
+.picks-draft
+  margin-top: 10px
+  padding-top: 12px
+  border-top: 1px solid var(--shell-border)
+
+.picks-draft-main
+  display: flex
+  flex-wrap: wrap
+  align-items: flex-start
+  gap: 16px 24px
+
+.picks-draft-fields
+  display: flex
+  flex: 1 1 240px
+  flex-direction: column
+  gap: 14px
+  min-width: 0
+
+.picks-field
+  display: flex
+  align-items: flex-start
+  gap: 12px
+
+.picks-field-name
+  flex: none
+  width: 48px
+  color: var(--shell-text-tertiary)
+  font-size: 12px
+  line-height: 28px
+
+.picks-field-body
+  display: flex
+  flex: 1
+  flex-direction: column
+  align-items: flex-start
+  min-width: 0
+
+  .picks-post
+    padding: 4px 0
+    line-height: 20px
+
+// 选标题：一行一个
+.picks-titles.ant-radio-group
+  display: flex
+  flex: 1
+  flex-direction: column
+  min-width: 0
+
+  > .ant-radio-wrapper
+    min-height: 28px
+    margin: 0
+    align-items: center
+
+  .picks-row
+    gap: 0
+
+    .ant-radio-wrapper
+      margin: 0
+
+.picks-row
+  display: flex
+  align-items: center
+  gap: 4px
+  width: 100%
+
+  > .picks-meta
+    flex: none
+    width: 44px
+
+  .picks-edit.ant-input
+    margin-left: 0
+
+.picks-field-body > .picks-row, .picks-field-body > .ant-btn
+  margin-left: -8px
+
+// 封面：当场做的图，下面换一帧
+.picks-cover
+  display: flex
+  flex: none
+  flex-direction: column
+  align-items: flex-start
+  gap: 8px
+  width: 320px
+
+.picks-cover-image
+  display: flex
+  align-items: center
+  justify-content: center
+  width: 320px
+  height: 180px
+  border-radius: 8px
+  cursor: zoom-in
+  background: var(--shell-hover)
+  overflow: hidden
+
+  img
+    display: block
+    width: 320px
+    height: 180px
+
+    &.is-standard
+      width: 240px
+
+.picks-cover-empty
+  padding: 0 12px
+  color: var(--shell-text-tertiary)
+  font-size: 12px
+
+.picks-frames
+  display: flex
+  flex-wrap: wrap
+  gap: 6px
+
+  button
+    padding: 0
+    border: 2px solid transparent
+    border-radius: 6px
+    background: transparent
+    line-height: 0
+    cursor: pointer
+    overflow: hidden
+    opacity: .65
+    transition: opacity .12s, border-color .12s
+
+    &:hover, &:focus-visible
+      opacity: 1
+
+    &:focus-visible
+      outline: 2px solid var(--shell-primary)
+
+    &.is-active
+      border-color: var(--shell-primary)
+      opacity: 1
+
+    &:disabled
+      cursor: default
+
+  img
+    width: 44px
+    height: 78px
+    object-fit: cover
+
+  &.is-stage img
+    width: 94px
+    height: 53px
+
+.picks-draft-actions
+  display: flex
+  flex-wrap: wrap
+  align-items: center
+  gap: 8px
+  margin-top: 12px
+
+// 字幕：一句一行，太多就在里面滚
+.picks-captions
+  max-height: 320px
+  margin-top: 10px
+  padding: 6px 12px
+  border-radius: 8px
+  background: var(--shell-hover)
+  overflow-y: auto
+  overscroll-behavior: contain
+
+.picks-player
+  display: block
+  width: 100%
+  max-height: 62vh
+  border-radius: 8px
+  background: #000
+
+.picks-player-line
+  min-height: 36px
+  margin-top: 10px
+  font-size: 18px
+  font-weight: 600
+  text-align: center
+
+.picks-player-hint
+  color: var(--shell-text-tertiary)
+  font-size: 12px
+  text-align: center

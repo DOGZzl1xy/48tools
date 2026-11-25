@@ -115,6 +115,25 @@ export async function detectSilences(ffmpeg: string, file: string, signal?: Abor
   return parseSilences(log);
 }
 
+/* 画面上一个点的颜色（YUV）；x、y 要是偶数 */
+export async function pixelAt(ffmpeg: string, file: string, time: number, x: number, y: number, signal?: AbortSignal): Promise<{ y: number; u: number; v: number }> {
+  const raw: string = `${ file }.pixel`;
+
+  try {
+    await runFfmpeg(ffmpeg, [
+      '-y', '-v', 'error', '-ss', time.toFixed(3), '-i', file, '-frames:v', '1', '-vf', `crop=2:2:${ x }:${ y }`, '-f', 'rawvideo', '-pix_fmt', 'yuv420p', raw
+    ], { signal });
+
+    const data: Buffer = await fsP.readFile(raw);
+
+    if (data.length < 6) throw new Error('读不出成片的画面');
+
+    return { y: data[0], u: data[4], v: data[5] };
+  } finally {
+    await fsP.rm(raw, { force: true });
+  }
+}
+
 export const PCM_RATE: number = 8_000;
 
 /**

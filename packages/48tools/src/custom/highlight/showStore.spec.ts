@@ -33,12 +33,13 @@ describe('showStore', (): void => {
   test('直播的在文件夹里，公演的在「切片」里；没有清单的不算；等你挑的在前，同样的新的在前', async (): Promise<void> => {
     await writeShowInfo(path.join(root, '录播切片', '挑过的'), infoOf('挑过的', 3, 'done'));
     await writeShowInfo(path.join(root, '录播切片', '旧的'), infoOf('旧的', 1, 'waiting'));
+    await writeShowInfo(path.join(root, '录播切片', '写好的'), infoOf('写好的', 0, 'naming'));
     await writeShowInfo(path.join(root, 'B站公演', '公演', '切片'), infoOf('公演', 2, 'waiting'));
     fs.mkdirSync(path.join(root, '录播切片', '以前切的'));
     await refreshShows();
 
-    expect(getShowState().shows.map((show: Show): string => show.info.liveId)).toEqual(['公演', '旧的', '挑过的']);
-    expect(waitingCount(getShowState().shows)).toBe(2);
+    expect(getShowState().shows.map((show: Show): string => show.info.liveId)).toEqual(['写好的', '公演', '旧的', '挑过的']);
+    expect(waitingCount(getShowState().shows)).toBe(3);
   });
 
   test('同时改同一场：一个接一个，不会互相盖掉', async (): Promise<void> => {

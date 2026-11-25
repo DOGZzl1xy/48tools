@@ -1,7 +1,7 @@
 import { toOut } from './highlightCut';
 import {
   assTime, assEscape, textWidth, charWidth, captionText, fontSize, rect, roundRect, assDocument, style, subtitlesFilter,
-  segmentFilters, wordBoundaries, LOUDNESS_FILTER, type FontSet, type PlacedDanmu
+  segmentFilters, wordBoundaries, LOUDNESS_FILTER, type FontSet, type PlacedDanmu, type Strip
 } from './highlightAss';
 import type { CaptionLine, Segment } from './highlightTypes';
 
@@ -149,6 +149,35 @@ export function stageTitleRows(title: string): Array<string> {
   return [chars.slice(0, at).join('').replace(/[，,\s]+$/, ''), chars.slice(at).join('').trim()].filter((row: string): boolean => row !== '');
 }
 
+const TITLE_TOP: number = 206;
+
+/* 右边一列里的标题：分两行时第二行用团队色 */
+function stageTitleEvents(title: string, team: string, total: number, fonts: FontSet): Array<string> {
+  const rows: Array<string> = stageTitleRows(title);
+  const size: number = Math.round(Math.min(fontSize(48, fonts), (400 * fonts.em) / Math.max(1, ...rows.map(textWidth))));
+
+  return rows.map((row: string, index: number): string => {
+    const color: string = index === rows.length - 1 && rows.length > 1 ? `\\c${ team }` : '';
+
+    return `Dialogue: 3,${ assTime(0) },${ assTime(total) },Side,,0,0,0,,{\\an7\\pos(${ SIDE_X + SIDE_PAD },${
+      TITLE_TOP + (index * Math.round(size * 1.25)) })\\fs${ size }\\b1${ color }}${ assEscape(row) }`;
+  });
+}
+
+function sideStyle(fonts: FontSet): string {
+  return style('Side', fonts.text, fontSize(30, fonts), '&H00FFFFFF', '&H00000000', false, 0, 0, 7);
+}
+
+/* 标题那一块：日期下面、分隔线上面，底是纯色的（改标题时填回底色再写新的） */
+export function stageTitleStrip(): Strip {
+  return { x: SIDE_X + 8, y: TITLE_TOP - 8, w: W - SIDE_X - 8, h: 152 };
+}
+
+/* 只有标题的字幕文件 */
+export function buildStageTitleAss(input: { stage: StageInfo; title: string; total: number; fonts: FontSet }): string {
+  return assDocument([sideStyle(input.fonts)], stageTitleEvents(input.title, assColor(input.stage.teamColor), input.total, input.fonts));
+}
+
 export interface StageVideoAssInput {
   stage: StageInfo;
   title: string;
@@ -193,15 +222,7 @@ export function buildStageVideoAss(input: StageVideoAssInput): string {
   add(3, 0, total, 'Side', `{\\an7\\pos(${ x },${ 108 })\\fs${ showSize }\\b1}${ assEscape(showText) }`);
   add(3, 0, total, 'Side', `{\\an7\\pos(${ x },${ 150 })\\fs${ fontSize(24, fonts) }\\c${ MUTED }}${ assEscape(stage.date) }`);
 
-  const rows: Array<string> = stageTitleRows(title);
-  const titleSize: number = Math.round(Math.min(fontSize(48, fonts), (400 * fonts.em) / Math.max(1, ...rows.map(textWidth))));
-
-  rows.forEach((row: string, index: number): void => {
-    // 分两行时第二行用团队色
-    const color: string = index === rows.length - 1 && rows.length > 1 ? `\\c${ team }` : '';
-
-    add(3, 0, total, 'Side', `{\\an7\\pos(${ x },${ 206 + (index * Math.round(titleSize * 1.25)) })\\fs${ titleSize }\\b1${ color }}${ assEscape(row) }`);
-  });
+  events.push(...stageTitleEvents(title, team, total, fonts));
   shape(2, '&H372F2A&', rect(x, 352, W - SIDE_PAD, 354));
 
   // 字幕：左下居中
@@ -218,6 +239,8 @@ export function buildStageVideoAss(input: StageVideoAssInput): string {
     let end: number = segment.out + (Math.min(line.end, segment.end) - segment.start) + 0.9;
 
     if (nextStart !== null && nextStart > start) end = Math.min(Math.max(end, Math.min(nextStart, end + 0.8)), nextStart);
+
+    if (line.text.trim() === '') return; // 改字幕时清空的：不显示
 
     const caption: { text: string; size: number } = captionText(line, fonts, team); // 重点词用队伍的颜色
 
@@ -254,7 +277,7 @@ export function buildStageVideoAss(input: StageVideoAssInput): string {
 
   return assDocument([
     style('Caption', fonts.text, fontSize(76, fonts), '&H00FFFFFF', '&H66000000', false, 2, 3, 5),
-    style('Side', fonts.text, fontSize(30, fonts), '&H00FFFFFF', '&H00000000', false, 0, 0, 7),
+    sideStyle(fonts),
     style('Danmu', fonts.regular, size, `&H00${ DANMU_TEXT.slice(2, 8) }`, '&H00000000', false, 0, 0, 7),
     style('Shape', 'Arial', 20, '&H00FFFFFF', '&H00000000', false, 0, 0, 7)
   ], events);
@@ -271,6 +294,12 @@ export function stageRenderFilter(segments: Array<Segment>, fonts: FontSet, assF
     `[base]${ subtitlesFilter(assFile, fonts) }[vout]`,
     LOUDNESS_FILTER
   ].join(';');
+}
+
+/* 封面候选的一帧：直播画面放在左上（封面只用这一块，见 stageCoverFilter），输出 [out]。输入已经定位到那一帧 */
+export function stageFrameFilter(): string {
+  return `[0:v]setpts=PTS-STARTPTS,scale=${ STAGE_VIDEO.width }:${ STAGE_VIDEO.height }:force_original_aspect_ratio=decrease:flags=lanczos,format=yuv420p,`
+    + `pad=${ STAGE_VIDEO.width }:${ STAGE_VIDEO.height }:(ow-iw)/2:(oh-ih)/2:color=${ BACKGROUND },pad=${ W }:${ H }:0:0:color=${ BACKGROUND },setsar=1[out]`;
 }
 
 /* 封面上的一行：【】里的是要用色块突出的词 */

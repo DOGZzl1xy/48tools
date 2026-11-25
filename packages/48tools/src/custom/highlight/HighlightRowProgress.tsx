@@ -11,14 +11,14 @@ import { pickKey } from './highlightShow';
  * 接入点：Pocket48Record.tsx 的「下载进度」列。
  */
 function runningHighlight(tasks: Array<QueueTask>, liveId: string): QueueTask | undefined {
-  const ids: Array<string> = [highlightTaskId(liveId), highlightTaskId(pickKey({ liveId }))]; // 找爆点、切片
+  const ids: Array<string> = [highlightTaskId(liveId), highlightTaskId(pickKey({ liveId }))]; // 找爆点；写标题、切片、改标题
 
   return tasks.find((task: QueueTask): boolean => ids.includes(task.id) && task.status === 'running');
 }
 
 /* 有没有正在进行的切片任务（没有任何任务时「下载进度」这一列不显示） */
 export function useHighlightRunning(): boolean {
-  return useQueueTasks().some((task: QueueTask): boolean => (task.kind === '找爆点' || task.kind === '切片') && task.status === 'running');
+  return useQueueTasks().some((task: QueueTask): boolean => (task.id.startsWith(highlightTaskId(''))) && task.status === 'running');
 }
 
 function HighlightRowProgress(props: { readonly liveId: string; readonly downloading: boolean; readonly children: ReactNode }): ReactElement {

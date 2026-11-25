@@ -8,7 +8,7 @@ import type { CaptionLine } from './highlightTypes';
  *      相同的字就有了时间；每句话的开始、结束从这句里第一个、最后一个相同的字的时间推出来
  * 一句话里对上的字太少（唱歌、背景音乐、本地模型没听出来）时，这一句保持传进来的时间
  * （传进来的是 ./highlightAlign 用停顿和音节对过的时间）。整体对上的字太少时全部不动。
- * 都是纯计算，方便测试。接入点：./highlightPipeline 的 makeClip。
+ * 都是纯计算，方便测试。接入点：./highlightPipeline 的 writeClip。
  */
 export interface TimedToken {
   text: string;

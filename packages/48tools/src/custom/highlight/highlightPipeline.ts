@@ -1,14 +1,14 @@
 import * as fs from 'node:fs';
 import { promises as fsP } from 'node:fs';
 import * as path from 'node:path';
-import { runFfmpeg, mediaDuration, hasVideoStream, detectSilences, readPcm, pickFonts, PCM_RATE } from './highlightFfmpeg';
+import { runFfmpeg, mediaDuration, hasVideoStream, detectSilences, readPcm, pickFonts, pixelAt, PCM_RATE } from './highlightFfmpeg';
 import { downloadReplay, type DownloadProgress, type SegmentFetcher } from './highlightDownload';
 import {
   geminiJson, findRequest, readFound, scriptRequest, readScript, stageTitlesRequest, readTitles, coverRequest, HighlightStopped, ContentRefused,
   type GeminiConfig, type LiveMeta
 } from './highlightGemini';
 import {
-  parseLrc, planWindows, mergeHighlights, targetCount, safeFileName, postTitle, clock, AGY_WINDOW_LENGTH, AGY_WINDOW_OVERLAP, AUTO_SCORE,
+  parseLrc, planWindows, mergeHighlights, targetCount, safeFileName, clock, AGY_WINDOW_LENGTH, AGY_WINDOW_OVERLAP, AUTO_SCORE,
   clipWindow, clipLengthProblem, clipLengthNote, CLIP_MIN_SECONDS, CLIP_MAX_SECONDS, RETRY_EXTRA_CONTEXT, type ClipWindow
 } from './highlightTime';
 import { tidyLines, buildSegments } from './highlightCut';
@@ -17,33 +17,38 @@ import { timeLinesByTokens, type TimedToken, type TokenTiming } from './highligh
 import { fixHighlightTimes } from './highlightQuotes';
 import { parseGlossary, glossaryPrompt, applyGlossary, type Glossary } from './highlightGlossary';
 import {
-  placeDanmu, buildVideoAss, renderFilter, buildCoverAss, coverFilter, LEFT_WIDTH, COVER_WIDTHS, type FontSet, type PlacedDanmu
+  placeDanmu, buildVideoAss, renderFilter, buildTitleAss, titleStrip, retitleFilter, type FontSet, type Strip
 } from './highlightAss';
-import type { AudioWindow, CaptionLine, ClipScript, DanmuLine, Highlight, HighlightCount, Segment, Silence, StageKind } from './highlightTypes';
-import {
-  stageFindRequest, stageKindOf, stageClipWindow, stageLengthProblem, stageScript, stageCoverLines, stagePostTitle, stageQuota, type StageQuota
-} from './highlightStage';
-import {
-  buildStageVideoAss, stageRenderFilter, buildStageCoverAss, stageCoverFilter, STAGE_VIDEO, type StageInfo
-} from './highlightStageAss';
+import type {
+  AudioWindow, CaptionLine, ClipDraft, ClipScript, DanmuLine, Highlight, HighlightCount, Segment, Silence, StageKind
+} from './highlightTypes';
+import { stageFindRequest, stageKindOf, stageClipWindow, stageLengthProblem, stageScript, stageQuota, type StageQuota } from './highlightStage';
+import { buildStageVideoAss, stageRenderFilter, buildStageTitleAss, stageTitleStrip, type StageInfo } from './highlightStageAss';
 import { locateMistake, locateSong, lowBandLevels, type StageTiming } from './highlightStageTiming';
-import { newShowInfo, readShowInfo, writeShowInfo, highlightOf, planCuts, withResult, INFO_FILE, type ShowInfo, type ShowItem } from './highlightShow';
+import { draftPoints, draftPostTitles, draftSegments, isOwnTitle, newDraft, videoTag } from './highlightDraft';
+import { coverDir, makeCovers, makeFrames, thumbFile } from './highlightCover';
+import {
+  newShowInfo, readShowInfo, writeShowInfo, highlightOf, planCuts, readyToRender, withDraft, withResult, INFO_FILE, type ShowInfo, type ShowItem
+} from './highlightShow';
 
 /**
  * 录播自动切片：给一场直播的录播，自动剪出几个横屏短视频（左边直播画面，右上她说的话，右下弹幕），
  * 每个带封面、标题和简介。听音频、挑片段、写字幕都由 Gemini 做，剪和合成用 ffmpeg。
  * 电台也切（用户 2026-11-23 定的，找爆点的标准和视频直播一样，排版也一样）：录音没有画面，左边放电台封面（见 saveRadioCover、stillInput）。
  *
- * 分两次做（用户 2026-11-23 定的：找完爆点停下来等人挑，挑好了再切）：prepareHighlight、findHighlights 找到第 3 步，
- * 清单存在输出文件夹里（./highlightShow）；挑好以后 cutHighlights 从第 4 步接着做，只做挑的。
+ * 停两次等人（用户 2026-11-23、2026-11-24 定的）：prepareHighlight、findHighlights 找到第 3 步，清单存在输出文件夹里（./highlightShow），等人挑；
+ * 挑好以后 writeDrafts 做第 4 步，写好字幕、标题、亮点和封面候选，等人定；定好了 renderDrafts 做第 5、6 步，每个只渲染一次。
+ * 渲染完又想改标题：retitleClip 只换成片上标题那一条、重做封面，不用再问 Gemini，也不用录播。
  * 流程：
  *   1. 取录播地址和弹幕文件，把整场录播下载到工作文件夹（同时下 4 个分片，不重新编码，见 ./highlightDownload）
  *   2. 每半小时一段，音频和弹幕（只有时间和内容）交给 Gemini，找出可能成为爆点的片段和时间。
  *      Gemini 可以走按量付费的接口，也可以走本机的 agy（订阅额度，见 ./highlightAgy）；走 agy 时它说的时间不准，
  *      改用它引的原话到本地识别的结果里定位（见 ./highlightQuotes），所以要装本地打轴模型
  *   3. 各段的结果合在一起按分数排，推荐哪几个（用户选的数量，或者自动），写好清单等人挑
- *   4. 每个片段前后多留十几秒再交给 Gemini：出逐句字幕、每句留不留、重点词、三个不同风格的标题（第一个用在画面上）、简介、看点、除了主播还有谁是主角
- *   5. 用声音里的停顿和音节把每句话的时间对准（模型标的时间偶尔早一两秒，见 ./highlightAlign）；装了本地打轴模型时再用它认出来的每个字的时间（见 ./highlightTokens），按留下的句子剪掉沉默和无关的话，合成横屏视频；再从成片里挑一帧做封面（16:9 和 4:3 各一张）
+ *   4. 每个片段前后多留十几秒再交给 Gemini：出逐句字幕、每句留不留、重点词、三个不同风格的标题、简介、看点、除了主播还有谁是主角；
+ *      用声音里的停顿和音节把每句话的时间对准（模型标的时间偶尔早一两秒，见 ./highlightAlign），装了本地打轴模型时再用它认出来的每个字的时间
+ *      （见 ./highlightTokens）；从录播里取几帧当封面候选（./highlightCover）
+ *   5. 按留下的句子剪掉沉默和无关的话，合成横屏视频；照定好的标题、亮点、画面做封面（16:9 和 4:3 各一张）
  *   6. 成片、两张封面、说明（标题和简介）放进输出文件夹；工作文件夹用完删掉
  * 中途失败或停止时工作文件夹留着，重试时下载好的录播和已经问过 Gemini 的结果不用重来。等人挑的时候下载好的录播也留在工作文件夹里，切完才删。
  *
@@ -238,17 +243,22 @@ function glossaryScript(script: ClipScript, glossary: Glossary): ClipScript {
   };
 }
 
-interface ClipContext {
-  glossary: Glossary;
+/* 切的时候用的：录播、弹幕、字体 */
+interface CutContext {
   job: HighlightJob;
-  deps: HighlightDeps;
   signal?: AbortSignal;
   source: string;
   duration: number;
   danmu: Array<DanmuLine>;
   fonts: FontSet;
-  meta: LiveMeta;
   still?: Array<string>;       // 素材没有画面（电台）：当画面的那个输入的 ffmpeg 参数（见 stillInput）
+}
+
+/* 写的时候还要问 Gemini */
+interface ClipContext extends CutContext {
+  glossary: Glossary;
+  deps: HighlightDeps;
+  meta: LiveMeta;
 }
 
 /**
@@ -316,7 +326,7 @@ async function scriptAndCut(
     try {
       answer = await ask(clipDanmu);
     } catch (err) {
-      // 以内容为由被拒：敏感词多半在弹幕里，弹幕只是用来认人的，去掉再问一次（还不行由 makeClip 跳过这个片段）
+      // 以内容为由被拒：敏感词多半在弹幕里，弹幕只是用来认人的，去掉再问一次（还不行由 writeClip 跳过这个片段）
       if (!(err instanceof ContentRefused) || clipDanmu.length === 0) throw err;
 
       answer = await ask([]);
@@ -362,41 +372,48 @@ async function scriptAndCut(
   return { window, script, lines, timing, segments, total };
 }
 
-/* 公演里唱歌、失误的片段写的东西：用找爆点时给的；挑片的人自己取了标题时，发布用的标题另外问一次 Gemini，问不到就用他取的 */
+/* 公演里唱歌、失误的片段写的东西：用找爆点时给的，再问 Gemini 要几个标题给人选（人自己取过的不算 Gemini 的）；问不到就只有原来的 */
 async function stageClipScript(context: ClipContext, highlight: Highlight): Promise<ClipScript> {
   const { job, deps, signal, meta, glossary }: ClipContext = context;
   const script: ClipScript = stageScript(highlight);
 
-  if (!highlight.coverTitle || !job.stage) return script;
+  if (!job.stage) return script;
 
   try {
     const answer: { titles?: unknown } = await geminiJson<{ titles?: unknown }>(
       job.gemini, stageTitlesRequest(meta, highlight, job.stage), signal, deps.fetchImpl);
-    const titles: Array<string> = readTitles(answer.titles).map((title: string): string => applyGlossary(title, glossary));
+    const asked: Array<string> = readTitles(answer.titles).map((title: string): string => applyGlossary(title, glossary));
+    const titles: Array<string> = readTitles(highlight.coverTitle ? asked : [highlight.title, ...asked]);
 
     return titles.length > 0 ? { ...script, title: titles[0], titles } : script;
   } catch (err) {
     if (err instanceof HighlightStopped) throw err;
 
-    console.warn('起发布用的标题失败，用挑片的人取的', err);
+    console.warn('起标题失败，用找爆点时的', err);
 
     return script;
   }
 }
 
+/* 一个爆点的工作文件夹、封面候选的文件夹叫什么 */
+function draftKey(highlight: Pick<Highlight, 'start'>): string {
+  return String(Math.round(highlight.start));
+}
+
+function clipWorkDir(job: HighlightJob, highlight: Pick<Highlight, 'start'>): string {
+  return path.join(job.workDir, `clip-${ draftKey(highlight) }`);
+}
+
 /**
- * 做一个切片。剪完的长度不在 45 秒到 5 分钟之间（重做一次也不行）时返回原因（字符串），换下一个爆点
+ * 写一个切片：字幕、标题、亮点、封面候选，不渲染。剪完的长度不在 45 秒到 5 分钟之间（重做一次也不行）时返回原因（字符串）
  * @param { ClipContext } context
  * @param { Highlight } highlight
- * @param { number } index - 第几个成片（从 1 开始，用在文件名里）
- * @param { number } slot - 第几个候选（工作文件夹的名字）
  * @param { (stage: string, part: number) => void } report - 做到哪一步了；part 是这个切片完成了多少（0 ~ 1）
  */
-async function makeClip(
-  context: ClipContext, highlight: Highlight, index: number, slot: number, report: (stage: string, part: number) => void
-): Promise<ClipResult | string> {
+async function writeClip(context: ClipContext, highlight: Highlight, report: (stage: string, part: number) => void): Promise<ClipDraft | string> {
   const { job, signal, source, duration, danmu, fonts, deps }: ClipContext = context;
-  const clipDir: string = path.join(job.workDir, `clip-${ slot }`);
+  const key: string = draftKey(highlight);
+  const clipDir: string = clipWorkDir(job, highlight);
 
   await fsP.mkdir(clipDir, { recursive: true });
 
@@ -410,6 +427,7 @@ async function makeClip(
 
     if (problem) return `「${ highlight.title }」${ problem }，跳过`;
 
+    report('起标题', 0.1);
     cut = {
       window,
       script: await stageClipScript(context, highlight),
@@ -441,63 +459,34 @@ async function makeClip(
     }
   }
 
-  const { script, lines, timing, segments, total }: ClipCut = cut;
-  const title: string = highlight.coverTitle ?? script.title; // 画面和封面上的；发布用的标题（.txt）用 script 里 Gemini 起的
-  const clipStart: number = cut.window.start;
-  const clipLength: number = cut.window.length;
+  // 封面候选：从录播里取几帧，让模型先挑一张（人可以换）；电台的画面是同一张图，不用挑
+  report('取封面', 0.75);
 
-  // 合成
-  const placed: Array<PlacedDanmu> = placeDanmu(danmu, clipStart, segments, total);
+  const draft: ClipDraft = newDraft(highlight, {
+    key,
+    window: cut.window,
+    script: cut.script,
+    lines: cut.lines,
+    timing: cut.timing,
+    whole: kind !== 'mc',
+    frames: coverTimes(cut.lines, cut.segments, cut.total).slice(0, context.still ? 1 : undefined),
+    frame: 0
+  });
+  const covers: string = coverDir(job.outDir, key);
 
-  await fsP.writeFile(path.join(clipDir, 'overlay.ass'), job.stage
-    ? buildStageVideoAss({ stage: job.stage, title, lines, segments, total, danmu: placed, fonts })
-    : buildVideoAss({
-      title,
-      tag: `${ job.member }  ${ job.date }`.trim(),
-      lines,
-      segments,
-      total,
-      danmu: placed,
-      fonts
-    }));
-  report('合成', 0.35);
-  await runFfmpeg(job.ffmpeg, [
-    '-y', '-v', 'error', '-nostats', '-progress', 'pipe:1',
-    '-ss', clipStart.toFixed(3), '-t', clipLength.toFixed(3), '-i', source, ...(context.still ?? []),
-    '-filter_complex', job.stage ? stageRenderFilter(segments, fonts) : renderFilter(segments, fonts, 'overlay.ass', Boolean(context.still)),
-    '-map', '[vout]', '-map', '[aout]',
-    '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p',
-    '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-movflags', '+faststart', 'out.mp4'
-  ], {
-    cwd: clipDir,
-    signal,
-    onTime: (seconds: number): void => report('合成', 0.35 + (Math.min(1, seconds / total) * 0.5))
+  await makeFrames({
+    ffmpeg: job.ffmpeg, source, still: context.still, cwd: clipDir, outDir: covers, job, draft,
+    danmu: placeDanmu(danmu, draft.start, cut.segments, cut.total), fonts, signal
   });
 
-  // 封面：几张候选里让模型挑一张；挑不出来就用第一张
-  report('做封面', 0.87);
+  if (draft.frames.length > 1) {
+    report('挑封面', 0.85);
 
-  // 电台的画面是同一张图，不用挑
-  const times: Array<number> = coverTimes(lines, segments, total).slice(0, context.still ? 1 : undefined);
-  const candidates: Array<string> = [];
-
-  for (const [order, time] of times.entries()) {
-    const file: string = path.join(clipDir, `candidate-${ order + 1 }.jpg`);
-
-    await runFfmpeg(job.ffmpeg, [
-      '-y', '-v', 'error', '-ss', time.toFixed(2), '-i', 'out.mp4', '-frames:v', '1',
-      '-vf', job.stage ? `crop=${ STAGE_VIDEO.width }:${ STAGE_VIDEO.height }:0:0,scale=480:270` : `crop=${ LEFT_WIDTH }:1080:0:0,scale=304:540`, '-q:v', '4', file
-    ], { cwd: clipDir, signal });
-    candidates.push(await base64Of(file));
-  }
-
-  let best: number = 1;
-
-  if (candidates.length > 1) {
     try {
-      const picked: { best?: number } = await geminiJson<{ best?: number }>(job.gemini, coverRequest(candidates), signal, deps.fetchImpl);
+      const images: Array<string> = await Promise.all(draft.frames.map((_time: number, index: number): Promise<string> => base64Of(thumbFile(covers, index))));
+      const picked: { best?: number } = await geminiJson<{ best?: number }>(job.gemini, coverRequest(images), signal, deps.fetchImpl);
 
-      if (Number.isInteger(picked.best) && picked.best! >= 1 && picked.best! <= candidates.length) best = picked.best!;
+      if (Number.isInteger(picked.best) && picked.best! >= 1 && picked.best! <= images.length) draft.frame = picked.best! - 1;
     } catch (err) {
       if (err instanceof HighlightStopped) throw err;
 
@@ -505,60 +494,175 @@ async function makeClip(
     }
   }
 
-  // 两个比例各做一张：wide 是 16:9，standard 是 4:3
-  for (const [shape, width] of Object.entries(COVER_WIDTHS)) {
-    await fsP.writeFile(path.join(clipDir, `cover-${ shape }.ass`), job.stage
-      ? buildStageCoverAss({ stage: job.stage, lines: stageCoverLines(highlight, title), fonts, width })
-      : buildCoverAss({
-        title,
-        tag: `${ job.member }  直播切片  ${ job.date }`.trim(),
-        points: script.points,
-        fonts,
-        width
-      }));
-    await runFfmpeg(job.ffmpeg, [
-      '-y', '-v', 'error', '-ss', times[best - 1].toFixed(2), '-i', 'out.mp4',
-      '-filter_complex', job.stage ? stageCoverFilter(fonts, `cover-${ shape }.ass`, width) : coverFilter(fonts, `cover-${ shape }.ass`, width),
-      '-map', '[out]', '-frames:v', '1', '-q:v', '2', `cover-${ shape }.jpg`
-    ], { cwd: clipDir, signal });
-  }
+  report('写好了', 1);
 
-  // 放进输出文件夹
-  const name: string = `${ String(index).padStart(2, '0') }-${ safeFileName(title) }`;
-  const info: ClipInfo = {
+  return draft;
+}
+
+/* 做好的文件叫什么、说明里写什么 */
+function clipResultOf(job: HighlightJob, highlight: Highlight, draft: ClipDraft, index: number): ClipResult {
+  const { segments, total }: ReturnType<typeof draftSegments> = draftSegments(draft);
+  const { post, others }: ReturnType<typeof draftPostTitles> = draftPostTitles(job, draft);
+  const name: string = `${ String(index).padStart(2, '0') }-${ safeFileName(draft.title) }`;
+
+  return {
     index,
-    title,
-    ...(highlight.coverTitle ? { ownTitle: true } : {}),
-    postTitle: job.stage ? stagePostTitle(job.stage, script.title, script.people) : postTitle(job.member, job.date, script.title, script.people, script.more),
-    otherTitles: (script.titles ?? []).filter((other: string): boolean => other !== script.title)
-      .map((other: string): string => (job.stage
-        ? stagePostTitle(job.stage, other, script.people)
-        : postTitle(job.member, job.date, other, script.people, script.more))),
-    people: script.people ?? [],
-    description: script.description,
-    points: script.points,
+    title: draft.title,
+    ...(isOwnTitle(draft) ? { ownTitle: true } : {}),
+    postTitle: post,
+    otherTitles: others,
+    people: draft.people,
+    description: draft.description,
+    points: draftPoints(draft),
     score: highlight.score,
-    start: clipStart + segments[0].start,
-    end: clipStart + segments[segments.length - 1].end,
+    start: draft.start + segments[0].start,
+    end: draft.start + segments[segments.length - 1].end,
     duration: total,
-    timing
-  };
-  const result: ClipResult = {
-    ...info,
+    timing: draft.timing,
     video: path.join(job.outDir, `${ name }.mp4`),
     cover: path.join(job.outDir, `${ name }-封面16比9.jpg`),
     cover43: path.join(job.outDir, `${ name }-封面4比3.jpg`),
     text: path.join(job.outDir, `${ name }.txt`)
   };
+}
 
+/* 放进输出文件夹：成片（已经在那里、名字也没变的不动）、封面、说明；标题换了的话，原来编号的旧文件换掉 */
+async function placeClip(job: HighlightJob, result: ClipResult, covers: { wide: string; standard: string }, video: string): Promise<void> {
   await fsP.mkdir(job.outDir, { recursive: true });
-  await fsP.copyFile(path.join(clipDir, 'out.mp4'), result.video);
-  await fsP.copyFile(path.join(clipDir, 'cover-wide.jpg'), result.cover);
-  await fsP.copyFile(path.join(clipDir, 'cover-standard.jpg'), result.cover43);
-  await fsP.writeFile(result.text, clipInfoText(job, info));
+
+  const head: string = `${ String(result.index).padStart(2, '0') }-`;
+  const before: Array<string> = (await fsP.readdir(job.outDir)).filter((name: string): boolean => name.startsWith(head));
+
+  if (path.resolve(video) !== path.resolve(result.video)) {
+    await fsP.copyFile(video, `${ result.video }.part`);
+    await fsP.rename(`${ result.video }.part`, result.video);
+  }
+
+  await fsP.copyFile(covers.wide, result.cover);
+  await fsP.copyFile(covers.standard, result.cover43);
+  await fsP.writeFile(result.text, clipInfoText(job, result));
+
+  const now: Set<string> = new Set([result.video, result.cover, result.cover43, result.text].map((file: string): string => path.basename(file)));
+
+  for (const name of before) now.has(name) || await fsP.rm(path.join(job.outDir, name), { force: true });
+}
+
+const ENCODE: Array<string> = ['-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p'];
+
+/**
+ * 渲染一个定好了的切片：剪、合成、做封面，放进输出文件夹
+ * @param { CutContext } context
+ * @param { Highlight } highlight
+ * @param { ClipDraft } draft
+ * @param { number } index - 第几个成片（从 1 开始，用在文件名里）
+ * @param { (stage: string, part: number) => void } report
+ */
+async function renderClip(
+  context: CutContext, highlight: Highlight, draft: ClipDraft, index: number, report: (stage: string, part: number) => void
+): Promise<ClipResult> {
+  const { job, signal, source, danmu, fonts }: CutContext = context;
+  const clipDir: string = path.join(job.workDir, `clip-${ draft.key }`);
+  const { segments, total }: ReturnType<typeof draftSegments> = draftSegments(draft);
+  const shared: { title: string; lines: Array<CaptionLine>; segments: Array<Segment>; total: number; danmu: ReturnType<typeof placeDanmu>; fonts: FontSet } = {
+    title: draft.title, lines: draft.lines, segments, total, danmu: placeDanmu(danmu, draft.start, segments, total), fonts
+  };
+
+  await fsP.mkdir(clipDir, { recursive: true });
+  await fsP.writeFile(path.join(clipDir, 'overlay.ass'), job.stage
+    ? buildStageVideoAss({ ...shared, stage: job.stage })
+    : buildVideoAss({ ...shared, tag: videoTag(job) }));
+  report('合成', 0);
+  await runFfmpeg(job.ffmpeg, [
+    '-y', '-v', 'error', '-nostats', '-progress', 'pipe:1',
+    '-ss', draft.start.toFixed(3), '-t', draft.length.toFixed(3), '-i', source, ...(context.still ?? []),
+    '-filter_complex', job.stage ? stageRenderFilter(segments, fonts) : renderFilter(segments, fonts, 'overlay.ass', Boolean(context.still)),
+    '-map', '[vout]', '-map', '[aout]', ...ENCODE, '-crf', '20',
+    '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-movflags', '+faststart', 'out.mp4'
+  ], {
+    cwd: clipDir,
+    signal,
+    onTime: (seconds: number): void => report('合成', Math.min(1, seconds / total) * 0.95)
+  });
+  report('做封面', 0.95);
+
+  const covers: string = coverDir(job.outDir, draft.key);
+
+  // 封面候选没了（文件夹被删）：照写的时候那样再取一遍
+  if (!(await exists(thumbFile(covers, draft.frame)))) {
+    await makeFrames({ ffmpeg: job.ffmpeg, source, still: context.still, cwd: clipDir, outDir: covers, job, draft, danmu: shared.danmu, fonts, signal });
+  }
+
+  const result: ClipResult = clipResultOf(job, highlight, draft, index);
+
+  await placeClip(job, result, await makeCovers({ ffmpeg: job.ffmpeg, cwd: clipDir, dir: covers, job, highlight, draft, fonts, signal }), path.join(clipDir, 'out.mp4'));
+  await fsP.rm(clipDir, { recursive: true, force: true }).catch((): void => undefined);
   report('完成', 1);
 
   return result;
+}
+
+/**
+ * 渲染完又改了标题、亮点、封面的画面：只换成片上标题那一条（底是纯色的，填回底色再写新的，声音不动），重做封面和说明。
+ * 不用再问 Gemini，也不用录播；标题没变的话成片不动
+ * @param { HighlightJob } job
+ * @param { ShowItem } item - 做好了的，带草稿
+ * @param { string } video - 现在的成片
+ * @param { (progress: HighlightProgress) => void } onProgress - 0 ~ 100
+ * @param { AbortSignal } [signal]
+ */
+export async function retitleClip(
+  job: HighlightJob, item: ShowItem, video: string, onProgress: (progress: HighlightProgress) => void, signal?: AbortSignal
+): Promise<ClipResult> {
+  const { draft, clip }: ShowItem = item;
+
+  if (!draft || !clip) throw new Error('这个切片没有留下草稿，没法只改标题');
+
+  const highlight: Highlight = highlightOf(item);
+  const workDir: string = path.join(job.workDir, `title-${ draft.key }`);
+
+  checkStopped(signal);
+
+  try {
+    await fsP.mkdir(workDir, { recursive: true });
+
+    const fonts: FontSet = await pickFonts(workDir);
+    let file: string = video;
+
+    if (draft.title !== clip.title) {
+      const total: number = await mediaDuration(job.ffmpeg, video, signal);
+      const strip: Strip = job.stage ? stageTitleStrip() : titleStrip(videoTag(job));
+
+      await fsP.writeFile(path.join(workDir, 'title.ass'), job.stage
+        ? buildStageTitleAss({ stage: job.stage, title: draft.title, total: total + 1, fonts })
+        : buildTitleAss({ title: draft.title, tag: videoTag(job), total: total + 1, fonts }));
+      onProgress({ percent: 1, detail: '换标题' });
+      await runFfmpeg(job.ffmpeg, [
+        '-y', '-v', 'error', '-nostats', '-progress', 'pipe:1', '-i', video,
+        '-filter_complex', retitleFilter(strip, await pixelAt(job.ffmpeg, video, total / 2, strip.x + 2, strip.y + 2, signal), fonts, 'title.ass'),
+        '-map', '[vout]', '-map', '0:a', ...ENCODE, '-crf', '18', '-c:a', 'copy', '-movflags', '+faststart', 'out.mp4'
+      ], {
+        cwd: workDir,
+        signal,
+        onTime: (seconds: number): void => onProgress({ percent: 1 + (Math.min(1, seconds / total) * 92), detail: '换标题' })
+      });
+      file = path.join(workDir, 'out.mp4');
+    }
+
+    onProgress({ percent: 94, detail: '做封面' });
+
+    const covers: { wide: string; standard: string } = await makeCovers({
+      ffmpeg: job.ffmpeg, cwd: workDir, dir: coverDir(job.outDir, draft.key), job, highlight, draft, fonts, signal
+    });
+    const result: ClipResult = clipResultOf(job, highlight, draft, clip.index);
+
+    await placeClip(job, result, covers, file);
+    onProgress({ percent: 100, detail: '完成' });
+
+    return result;
+  } finally {
+    await fsP.rm(workDir, { recursive: true, force: true }).catch((): void => undefined);
+    await fsP.rmdir(job.workDir).catch((): void => undefined); // 里面没有录播了就删掉
+  }
 }
 
 /**
@@ -822,24 +926,7 @@ export async function findHighlights(
   return info;
 }
 
-/**
- * 第 4 ~ 6 步：把挑好的（清单里 cut 的）做成切片，写字幕、剪、合成、做封面。做完一个就记一个（onMade），中途停了不会忘；
- * 某个剪完太短、被模型拒绝的跳过，原因也交给 onMade。重切的用原来的编号，旧文件换掉。全部做完删掉工作文件夹（里面可能有整场录播，很大）
- * @param { HighlightJob } job
- * @param { HighlightDeps } deps
- * @param { PreparedSource } prepared
- * @param { ShowInfo } info
- * @param { (progress: HighlightProgress) => void } onProgress - 0 ~ 100
- * @param { (item: ShowItem, result: ClipResult | string) => Promise<void> } onMade
- * @param { AbortSignal } [signal] - 用户点了停止
- */
-export async function cutHighlights(
-  job: HighlightJob, deps: HighlightDeps, prepared: PreparedSource, info: ShowInfo,
-  onProgress: (progress: HighlightProgress) => void, onMade: (item: ShowItem, result: ClipResult | string) => Promise<void>, signal?: AbortSignal
-): Promise<CutResult> {
-  const glossary: Glossary = parseGlossary(job.glossary);
-  const meta: LiveMeta = { member: job.member, title: job.title, glossary: glossaryPrompt(glossary), members: job.members };
-
+async function cutContext(job: HighlightJob, prepared: PreparedSource, signal?: AbortSignal): Promise<CutContext> {
   checkStopped(signal);
   // 用已经下好的录播切片时（自动抓取）前面没有下载这一步，文件夹还没建，ffmpeg 会报「Error opening output files」（2026-11-23 实际遇到）
   await fsP.mkdir(job.workDir, { recursive: true });
@@ -847,36 +934,149 @@ export async function cutHighlights(
 
   const duration: number = await mediaDuration(job.ffmpeg, prepared.source, signal);
   const fonts: FontSet = await pickFonts(job.workDir);
-  const context: ClipContext = {
-    job, deps, signal, source: prepared.source, duration, danmu: prepared.danmu, meta, glossary,
+
+  return {
+    job, signal, source: prepared.source, duration, danmu: prepared.danmu,
     fonts: fonts.dir ? { ...fonts, dir: `../${ fonts.dir }` } : fonts, // 合成时的当前文件夹是 clip-N
     still: await stillInput(job.ffmpeg, prepared, signal)
   };
-  const plan: Array<{ item: ShowItem; index: number }> = planCuts(info, await fsP.readdir(job.outDir));
-  const clips: Array<ClipResult> = [];
+}
+
+const WRITE_AT_ONCE: number = 3; // 同时写几个：时间主要花在等 Gemini 上
+
+/* 同时做几个；有一个出错，别的都停下来，报那个错 */
+async function together<T>(list: Array<T>, size: number, run: (item: T, signal: AbortSignal) => Promise<void>, signal?: AbortSignal): Promise<void> {
+  const controller: AbortController = new AbortController();
+  const queue: Array<T> = [...list];
+  let failed: { err: unknown } | undefined;
+
+  function handleAbort(): void {
+    controller.abort();
+  }
+
+  signal?.addEventListener('abort', handleAbort, { once: true });
+
+  await Promise.all(Array.from({ length: Math.min(size, list.length) }, async (): Promise<void> => {
+    while (queue.length > 0 && !controller.signal.aborted) {
+      try {
+        await run(queue.shift()!, controller.signal);
+      } catch (err) {
+        failed ??= { err };
+        controller.abort();
+      }
+    }
+  }));
+  signal?.removeEventListener('abort', handleAbort);
+  checkStopped(signal);
+
+  if (failed) throw failed.err;
+}
+
+/**
+ * 第 4 步：给挑好的（清单里 cut 的、还没有草稿的）写字幕、标题、亮点，取封面候选，不渲染。写好一个就记一个（onWritten），中途停了不会忘；
+ * 某个剪完太短、被模型拒绝的，原因也交给 onWritten
+ * @param { HighlightJob } job
+ * @param { HighlightDeps } deps
+ * @param { PreparedSource } prepared
+ * @param { ShowInfo } info
+ * @param { (progress: HighlightProgress) => void } onProgress - 0 ~ 100
+ * @param { (item: ShowItem, draft: ClipDraft | string) => Promise<void> } onWritten
+ * @param { AbortSignal } [signal] - 用户点了停止
+ */
+export async function writeDrafts(
+  job: HighlightJob, deps: HighlightDeps, prepared: PreparedSource, info: ShowInfo,
+  onProgress: (progress: HighlightProgress) => void, onWritten: (item: ShowItem, draft: ClipDraft | string) => Promise<void>, signal?: AbortSignal
+): Promise<{ written: number; skipped: Array<string> }> {
+  const glossary: Glossary = parseGlossary(job.glossary);
+  const meta: LiveMeta = { member: job.member, title: job.title, glossary: glossaryPrompt(glossary), members: job.members };
+  const base: CutContext = await cutContext(job, prepared, signal);
+  const list: Array<ShowItem> = info.items.filter((item: ShowItem): boolean => item.cut && !item.draft);
+  const parts: Map<ShowItem, number> = new Map();
   const skipped: Array<string> = [];
+  let written: number = 0;
+  let recognizing: Promise<unknown> = Promise.resolve();
+
+  // 本地识别很吃 CPU，一个一个来
+  const recognize: HighlightDeps['recognize'] = deps.recognize && ((audio: string, stop?: AbortSignal): Promise<Array<TimedToken> | null> => {
+    const next: Promise<Array<TimedToken> | null> = recognizing.then((): Promise<Array<TimedToken> | null> => deps.recognize!(audio, stop));
+
+    recognizing = next.catch((): void => undefined);
+
+    return next;
+  });
+
+  function report(item: ShowItem, stage: string, part: number): void {
+    parts.set(item, part);
+
+    const sum: number = Array.from(parts.values()).reduce((total: number, one: number): number => total + one, 0);
+
+    onProgress({ percent: (sum / list.length) * 100, detail: `写标题 ${ written + skipped.length }/${ list.length }：「${ item.title }」${ stage }` });
+  }
+
+  await together(list, WRITE_AT_ONCE, async (item: ShowItem, stop: AbortSignal): Promise<void> => {
+    const draft: ClipDraft | string = await writeClip({ ...base, signal: stop, deps: { ...deps, recognize }, meta, glossary }, highlightOf(item),
+      (stage: string, part: number): void => report(item, stage, part));
+
+    typeof draft === 'string' ? skipped.push(draft) : written++;
+    // 问过 Gemini 的结果不留（写成的在草稿里）：没写成的改了说明再写、写好的「重新写」，都要真的再问一次
+    await fsP.rm(clipWorkDir(job, item), { recursive: true, force: true }).catch((): void => undefined);
+    await onWritten(item, draft);
+    report(item, '写好了', 1);
+  }, signal);
+
+  return { written, skipped };
+}
+
+/**
+ * 第 5、6 步：把定好了标题的（清单里 cut 的、有草稿的）渲染成切片。做完一个就记一个（onMade），中途停了不会忘。
+ * 重切的用原来的编号，旧文件换掉
+ * @param { HighlightJob } job
+ * @param { PreparedSource } prepared
+ * @param { ShowInfo } info
+ * @param { (progress: HighlightProgress) => void } onProgress - 0 ~ 100
+ * @param { (item: ShowItem, result: ClipResult) => Promise<void> } onMade
+ * @param { AbortSignal } [signal] - 用户点了停止
+ */
+export async function renderDrafts(
+  job: HighlightJob, prepared: PreparedSource, info: ShowInfo,
+  onProgress: (progress: HighlightProgress) => void, onMade: (item: ShowItem, result: ClipResult) => Promise<void>, signal?: AbortSignal
+): Promise<Array<ClipResult>> {
+  const context: CutContext = await cutContext(job, prepared, signal);
+  const plan: Array<{ item: ShowItem; index: number }> = planCuts(info, await fsP.readdir(job.outDir), readyToRender);
+  const clips: Array<ClipResult> = [];
 
   for (const [order, { item, index }] of plan.entries()) {
     checkStopped(signal);
 
-    const before: Array<string> = (await fsP.readdir(job.outDir)).filter((name: string): boolean => name.startsWith(`${ String(index).padStart(2, '0') }-`));
-    const made: ClipResult | string = await makeClip(context, highlightOf(item), index, Math.round(item.start), (stage: string, part: number): void => {
+    const made: ClipResult = await renderClip(context, highlightOf(item), item.draft!, index, (stage: string, part: number): void => {
       onProgress({ percent: ((order + part) / plan.length) * 100, detail: `第 ${ order + 1 }/${ plan.length } 个：${ stage }` });
     });
 
-    if (typeof made === 'string') {
-      skipped.push(made);
-    } else {
-      const now: Set<string> = new Set([made.video, made.cover, made.cover43, made.text].map((file: string): string => path.basename(file)));
-
-      // 重切：标题换了的话，原来编号的旧文件换掉
-      for (const name of before) now.has(name) || await fsP.rm(path.join(job.outDir, name), { force: true });
-
-      clips.push(made);
-    }
-
+    clips.push(made);
     await onMade(item, made);
   }
+
+  return clips;
+}
+
+/**
+ * 写完直接渲染，中间不停（程序里是写完等人定标题，这个给测试和检查脚本用）。全部做完删掉工作文件夹（里面可能有整场录播，很大）
+ * @param { (item: ShowItem, result: ClipResult | string) => Promise<void> } onMade - 做完一个记一个；没做成的是原因
+ */
+export async function cutHighlights(
+  job: HighlightJob, deps: HighlightDeps, prepared: PreparedSource, info: ShowInfo,
+  onProgress: (progress: HighlightProgress) => void, onMade: (item: ShowItem, result: ClipResult | string) => Promise<void>, signal?: AbortSignal
+): Promise<CutResult> {
+  let now: ShowInfo = info;
+  const { skipped }: { skipped: Array<string> } = await writeDrafts(job, deps, prepared, info,
+    (progress: HighlightProgress): void => onProgress({ ...progress, percent: progress.percent / 2 }),
+    async (item: ShowItem, draft: ClipDraft | string): Promise<void> => {
+      now = withDraft(now, item, draft);
+
+      if (typeof draft === 'string') await onMade(item, draft);
+    }, signal);
+  const clips: Array<ClipResult> = await renderDrafts(job, prepared, now,
+    (progress: HighlightProgress): void => onProgress({ ...progress, percent: 50 + (progress.percent / 2) }), onMade, signal);
 
   await fsP.rm(job.workDir, { recursive: true, force: true }).catch((): void => undefined);
 

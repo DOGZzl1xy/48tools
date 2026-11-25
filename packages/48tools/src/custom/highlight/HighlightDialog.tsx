@@ -19,7 +19,7 @@ import type { HighlightCount } from './highlightTypes';
 
 /**
  * 「自动切片」对话框：在录播列表里点一场直播的「自动切片」后打开。选默认推荐几个（或者自动）、保存到哪里，
- * 点开始后任务进下载队列（见 ./highlightTask）：先找爆点，找完在切片页面（./HighlightsPage）挑好再切。
+ * 点开始后任务进下载队列（见 ./highlightTask）：先找爆点，找完在切片页面（./HighlightsPage）挑好、定好标题再切。
  * 这场以前找过的可以直接去挑，也可以重新找一遍。
  * 由 custom/shell/AppShell 渲染一次；用 ./highlightDialogStore 的 openHighlightDialog 打开。
  */
@@ -107,7 +107,7 @@ function HighlightDialog(props: {}): ReactElement {
               old ? (
                 <Alert type="info"
                   showIcon={ true }
-                  message={ `这场找过爆点了（${ old.items.length } 个）。重新找一遍会换掉清单和改过的文字，做好的切片不动。` }
+                  message={ `这场找过爆点了（${ old.items.length } 个）。重新找一遍会换掉清单、改过的文字和写好的标题，做好的切片不动。` }
                   action={ <Button size="small" type="primary" onClick={ handleShowClick }>去挑爆点</Button> }
                 />
               ) : null
@@ -137,7 +137,7 @@ function HighlightDialog(props: {}): ReactElement {
               </Typography.Text>
             </div>
             <Typography.Text className="block text-[12px]" type="secondary">
-              会先把整场录播下载下来（切完自动删除），再把音频和弹幕内容（不含粉丝昵称）{ viaAgy ? `通过本机的 agy 交给 Gemini（${ resolveSetting(overrides, 'highlightAgyModel') || agyDefaults.model }，用订阅额度）` : `发给 Google Gemini（${ model }，按量付费）` }找爆点。找完停下来，你在「切片」页面挑好要切哪些、改好标题和说明，再写字幕、剪片。
+              会先把整场录播下载下来（切完自动删除），再把音频和弹幕内容（不含粉丝昵称）{ viaAgy ? `通过本机的 agy 交给 Gemini（${ resolveSetting(overrides, 'highlightAgyModel') || agyDefaults.model }，用订阅额度）` : `发给 Google Gemini（${ model }，按量付费）` }找爆点。找完停下来，你在「切片」页面挑好要切哪些；Gemini 写好字幕、标题和亮点再停一次，你定好了才渲染。
               进度在下载队列和录播列表里看。可以连着加几场：前一场开始找爆点时，后一场就开始下载。
             </Typography.Text>
             {

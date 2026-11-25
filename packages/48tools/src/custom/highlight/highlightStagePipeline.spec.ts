@@ -2,7 +2,7 @@
  * 公演切片完整走一遍（不联网）：用本机的 ffmpeg 做一段测试录像，假的 Gemini 回答「一首歌 + 一个失误」，
  * 走真的剪、合成（左边画面、右边弹幕）、做两种封面，检查成片的长度、尺寸和发布标题。本机没有 ffmpeg 时跳过。
  * 唱歌的起止按伴奏（测试录像里一段 80Hz 的声音）、失误按弹幕的反应重新定（./highlightStageTiming），模型给的时间故意偏一点。
- * 唱歌、失误不写字幕，所以只会问两次：找片段、挑封面。
+ * 唱歌、失误不写字幕，只多问一次标题（这里答不出来，用找片段时的）。
  */
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -195,7 +195,9 @@ function videoSize(file: string): string {
       fetchImpl: fake
     }, { source, danmu }, (): void => undefined);
 
-    expect(asked.slice(0, 4)).toEqual(['甲+弹幕', '甲', '乙+弹幕', '乙']);
+    // 几个一起写，先后不定
+    expect(asked.filter((item: string): boolean => item.startsWith('甲'))).toEqual(['甲+弹幕', '甲']);
+    expect(asked.filter((item: string): boolean => item.startsWith('乙'))).toEqual(['乙+弹幕', '乙']);
     expect(result.clips.map((clip: ClipResult): string => clip.title)).toEqual(['弹幕惹的祸']);
     expect(result.skipped.join('\n')).toContain('「被拦的爆点」写字幕时被模型以内容为由拒绝');
   }, 600_000);

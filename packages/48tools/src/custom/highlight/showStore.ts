@@ -32,10 +32,11 @@ function set(patch: Partial<State>): void {
   for (const listener of listeners) listener();
 }
 
-/* 等你挑的在前，同样的按时间，新的在前 */
+const order: Record<ShowInfo['status'], number> = { naming: 0, waiting: 1, done: 2 };
+
+/* 等你定标题的在前，然后是等你挑的；同样的按时间，新的在前 */
 export function sortShows(shows: Array<Show>): Array<Show> {
-  return [...shows].sort((a: Show, b: Show): number => (
-    Number(b.info.status === 'waiting') - Number(a.info.status === 'waiting')) || (b.info.foundAt - a.info.foundAt));
+  return [...shows].sort((a: Show, b: Show): number => (order[a.info.status] - order[b.info.status]) || (b.info.foundAt - a.info.foundAt));
 }
 
 /* sub：爆点清单在每一场的文件夹下面的哪个文件夹里（公演的在「切片」里） */
@@ -130,9 +131,9 @@ export function useShowState(): State {
   return useSyncExternalStore(subscribe, getShowState);
 }
 
-/* 有几场在等着挑 */
+/* 有几场在等着挑、等着定标题 */
 export function waitingCount(shows: Array<Show>): number {
-  return shows.filter((show: Show): boolean => show.info.status === 'waiting').length;
+  return shows.filter((show: Show): boolean => show.info.status !== 'done').length;
 }
 
 /* 测试用 */

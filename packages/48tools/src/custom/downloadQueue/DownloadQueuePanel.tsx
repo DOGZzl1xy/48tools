@@ -17,7 +17,7 @@ import {
 /**
  * 下载队列的界面：从右边滑出的任务列表。入口是侧边栏底部的「下载队列」（显示正在进行的任务数和总进度）。
  * 数据来自 ./downloadQueue，开关状态在 shell/shellStore。失败或停止的任务有「重试」（这次运行里开始的任务才有）。
- * 找好爆点、切完的任务可以直接去切片页面（custom/highlight/HighlightsPage）看那一场。
+ * 找好爆点、写好标题、切完的任务可以直接去切片页面（custom/highlight/HighlightsPage）看那一场。
  * 右上角「清除记录」把已经结束的任务从列表里拿掉（文件不删），每一条上的「移除」只拿掉那一条。
  * 由 custom/shell/AppShell 渲染，所有页面都能打开。
  */
@@ -35,6 +35,8 @@ const statusColor: Record<QueueTaskStatus, string> = {
   stopped: 'default'
 };
 
+const pickText: Record<string, string> = { 找爆点: '去挑爆点', 写标题: '去定标题' };
+
 function showInFolder(filePath: string): void {
   // 文件还没生成（例如下载中）时打开所在的文件夹
   if (fs.existsSync(filePath)) {
@@ -48,7 +50,7 @@ function TaskItem(props: { task: QueueTask }): ReactElement {
   const { task }: { task: QueueTask } = props;
   const navigate: NavigateFunction = useNavigate();
   const isRunning: boolean = task.status === 'running';
-  const toPick: boolean = task.kind === '找爆点'; // 找好了：等着挑
+  const toPick: boolean = task.kind in pickText; // 找好了等着挑，写好了等着定
 
   function handleShowClick(): void {
     selectShow(task.filePath);
@@ -82,8 +84,8 @@ function TaskItem(props: { task: QueueTask }): ReactElement {
       <Space className="mt-[6px]" size={ 4 }>
         { isRunning && task.stop ? <Button size="small" danger={ true } onClick={ (): void => task.stop?.() }>停止</Button> : null }
         {
-          (toPick || task.kind === '切片') && task.status === 'done' && task.filePath
-            ? <Button size="small" type={ toPick ? 'primary' : 'default' } ghost={ toPick } onClick={ handleShowClick }>{ toPick ? '去挑爆点' : '看切片' }</Button>
+          (toPick || task.kind === '切片' || task.kind === '改标题') && task.status === 'done' && task.filePath
+            ? <Button size="small" type={ toPick ? 'primary' : 'default' } ghost={ toPick } onClick={ handleShowClick }>{ pickText[task.kind] ?? '看切片' }</Button>
             : null
         }
         {

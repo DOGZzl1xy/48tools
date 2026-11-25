@@ -5,10 +5,11 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
-  editItem, highlightOf, newShowInfo, planCuts, readShowInfo, readShowInfoSync, showText, withResult, writeShowInfo, type ShowClip, type ShowInfo, type ShowItem
+  editItem, highlightOf, isRestyled, newShowInfo, nextStatus, planCuts, readShowInfo, readShowInfoSync, readyToRender, showText, stillWaiting, withDraft, withResult,
+  writeShowInfo, type ShowClip, type ShowInfo, type ShowItem
 } from './highlightShow';
 import { recommend } from './highlightPipeline';
-import type { Highlight } from './highlightTypes';
+import type { ClipDraft, Highlight } from './highlightTypes';
 
 const job: { liveId: string; member: string; title: string; date: string } = { liveId: '123', member: 'SNH48 成员甲', title: '测试', date: '2026.11.23' };
 
@@ -23,6 +24,10 @@ function infoOf(items: Array<Highlight>, recommended: Array<number>, old?: ShowI
 function clip(index: number, start: number): ShowClip {
   return { index, title: `第${ index }个`, postTitle: `【成员甲】第${ index }个 | 20261123 直播切片`, otherTitles: ['【成员甲】备选'], description: '简介。', start, end: start + 70, duration: 66, score: 8 };
 }
+
+const draft: ClipDraft = {
+  key: '100', basis: '', start: 85, length: 120, lines: [], timing: '', titles: ['Gemini 的'], more: [], description: '', points: ['亮点'], people: [], frames: [1], title: 'Gemini 的', frame: 0
+};
 
 describe('找完爆点的清单', (): void => {
   test('推荐的默认切，别的默认不切，等人挑；一个都没找到就不用等', (): void => {
@@ -102,6 +107,55 @@ describe('切', (): void => {
     expect(made.items.map((item: ShowItem): string => `${ item.cut } ${ item.clip?.index ?? '-' } ${ item.problem ?? '-' }`)).toEqual(['false 1 -', 'false - 剪完太短']);
     expect(made.items[0].clip).toEqual(clip(1, 105));
     expect(withResult(made, found('二', 300), clip(2, 300)).items[1].problem).toBeUndefined();
+  });
+});
+
+describe('写好了等人定标题', (): void => {
+  test('写好的记上草稿、还是要切的；没写成的不切了，记上原因', (): void => {
+    const info: ShowInfo = withDraft(withDraft(infoOf([found('一', 100), found('二', 300)], [0, 1]), found('一', 100), draft), found('二', 300), '剪完太短');
+
+    expect(info.items.map((item: ShowItem): string => `${ item.cut } ${ item.draft?.title ?? '-' } ${ item.problem ?? '-' }`)).toEqual(['true Gemini 的 -', 'false - 剪完太短']);
+    expect(Object.keys(highlightOf(info.items[0]))).not.toContain('draft');
+  });
+
+  test('这一场的状态：有等着定的、还有没写的、都好了', (): void => {
+    const info: ShowInfo = infoOf([found('一', 100), found('二', 300)], [0, 1]);
+    const written: ShowInfo = withDraft(info, found('一', 100), draft);
+    const made: ShowInfo = withResult(written, found('一', 100), clip(1, 105));
+
+    expect(nextStatus(info)).toBe('waiting');
+    expect(nextStatus(written)).toBe('naming');
+    expect(nextStatus({ ...made, status: 'naming' })).toBe('waiting');                // 第二个还没写
+    expect(nextStatus(withResult(made, found('二', 300), '剪完太短'))).toBe('done');
+    expect(nextStatus({ ...made, status: 'done' })).toBe('done');                     // 切完以后又选了一个，还没点写标题：不算在等
+  });
+
+  test('改了选哪些：写好的都不选了就退回等着挑，选回来又是等着定；已经好了的不变', (): void => {
+    const info: ShowInfo = { ...withDraft(infoOf([found('一', 100), found('二', 300)], [0]), found('一', 100), draft), status: 'naming' };
+    const off: ShowInfo = stillWaiting({ ...info, items: info.items.map((item: ShowItem): ShowItem => ({ ...item, cut: false })) });
+
+    expect(off.status).toBe('waiting');
+    expect(stillWaiting({ ...off, items: info.items }).status).toBe('naming');
+    expect(stillWaiting({ ...info, status: 'done' }).status).toBe('done');
+  });
+
+  test('编号：只渲染一部分时，没写好的不占号', (): void => {
+    const info: ShowInfo = withDraft(infoOf([found('一', 100), found('二', 300)], [0, 1]), found('二', 300), draft);
+
+    expect(planCuts(info, [], readyToRender).map(({ item, index }: { item: ShowItem; index: number }): string => `${ item.title }${ index }`)).toEqual(['二1']);
+    expect(planCuts(info, []).map(({ index }: { index: number }): number => index)).toEqual([1, 2]);
+  });
+
+  test('渲染完草稿留着，改了标题就是「还没重做」；重新找一遍时草稿跟着做好的切片走', (): void => {
+    const made: ShowInfo = withResult(withDraft(infoOf([found('一', 100)], [0]), found('一', 100), draft), found('一', 100), clip(1, 105));
+
+    expect(isRestyled(made.items[0])).toBe(false);
+    expect(isRestyled({ ...made.items[0], draft: { ...draft, title: '换了' } })).toBe(true);
+    expect(isRestyled(infoOf([found('一', 100)], [0]).items[0])).toBe(false);
+
+    const again: ShowInfo = infoOf([found('换了个说法', 95), found('新的', 400)], [0, 1], made);
+
+    expect(again.items.map((item: ShowItem): string => item.draft?.key ?? '-')).toEqual(['100', '-']);
   });
 });
 

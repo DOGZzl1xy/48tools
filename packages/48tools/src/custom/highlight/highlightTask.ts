@@ -38,7 +38,8 @@ import { keptReplayOf } from '../live/replayGrabCore';
  * 录播自动切片接到程序里的部分：从设置里读 Gemini 的 key 和保存位置，登记到下载队列，排队执行。
  * 真正干活的是 ./highlightPipeline，排队的规则在 ./highlightQueue：
  * 同一时间只切一场（合成视频很吃 CPU），前一场开始切的时候后一场就开始下载录播；同一场录播不会重复加。
- * 分两次排队：先找爆点，清单写好就停下来等人在切片页面挑（用户 2026-11-23 定的）；挑好了再排队切（./pickTask）。
+ * 分三次排队：先找爆点，清单写好就停下来等人在切片页面挑（用户 2026-11-23 定的）；挑好了排队写标题，写好再停下来等人定
+ * （用户 2026-11-24 定的）；定好了再排队渲染（后两次见 ./pickTask）。
  * 「切完」要做的事（自动抓取：切完删掉录播）等真的切完才做：找完爆点时记在 waitingEnds 里，切完、不切了时由 endWaiting 叫到。
  * 接入点：./HighlightDialog（录播列表里点「自动切片」后的对话框）、../live/replayGrab、../bilibili 的公演切片。
  */
@@ -265,6 +266,8 @@ export interface QueuedHighlight {
   prepare(signal: AbortSignal, report: (progress: HighlightProgress) => void): Promise<PreparedSource>;
   // 准备好以后做什么，返回做完后显示的说明；不给就是找爆点（findHighlights），找完等人挑
   process?(prepared: PreparedSource, report: (progress: HighlightProgress) => void, signal: AbortSignal): Promise<string>;
+  kind?: string;    // 下载队列里写是什么任务；不给的话，找爆点是「找爆点」，别的是「切片」
+  notice?: string;  // 做完时通知的标题；不给的话「找好爆点了」「切片完成」
   waiting?: string; // 排队时显示的说明
   retry(): unknown;
   whenEnded?(outcome: QueueOutcome, text: string): void; // 找爆点时：找完不算结束，等切完（./pickTask）才叫
@@ -287,7 +290,7 @@ export function enqueueHighlight(item: QueuedHighlight): void {
   queueTaskStart({
     id,
     title: item.title,
-    kind: finding ? '找爆点' : '切片',
+    kind: item.kind ?? (finding ? '找爆点' : '切片'),
     filePath: job.outDir,
     percent: 0,
     detail: item.waiting ?? '排队中，等前面那场开始切片后就开始准备…',
@@ -316,13 +319,13 @@ export function enqueueHighlight(item: QueuedHighlight): void {
     onEnd(outcome: QueueOutcome, err?: unknown): void {
       if (outcome === 'done') {
         queueTaskEnd(id, 'done', undefined, text);
-        notify(`${ finding ? '找好爆点了' : '切片完成' }：${ job.member } ${ job.title }`, text, (): void => openShow(job.outDir));
+        notify(`${ item.notice ?? (finding ? '找好爆点了' : '切片完成') }：${ job.member } ${ job.title }`, text, (): void => openShow(job.outDir));
       } else if (outcome === 'stopped') {
         queueTaskEnd(id, 'stopped', undefined, started
           ? '已停止。再点「重试」会接着做，已经准备好的部分不用重来'
           : '已取消，还没有开始');
       } else {
-        console.error(finding ? '找爆点失败' : '切片失败', err);
+        console.error(`${ item.kind ?? (finding ? '找爆点' : '切片') }失败`, err);
         queueTaskEnd(id, 'error', err instanceof Error ? err.message : String(err));
       }
 
@@ -507,7 +510,7 @@ export function startHighlightFromFile(
 
   // 程序重启前已经用这份录播找好爆点了：不再找，接着等人挑；重启前刚切完（或者不切了）就直接说结果
   if (old?.local?.file === file) {
-    if (old.status === 'waiting') {
+    if (old.status !== 'done') {
       whenEnded && waitingEnds.set(record.liveId, whenEnded);
       whenFound?.();
     } else {

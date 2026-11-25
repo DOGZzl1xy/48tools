@@ -1,9 +1,10 @@
 import { clipboard, shell } from 'electron';
-import { useEffect, useRef, useState, type ReactElement, type RefObject, type ChangeEvent, type Dispatch as D, type SetStateAction as S } from 'react';
+import { useState, type ReactElement, type Dispatch as D, type SetStateAction as S } from 'react';
 import { App, Button, Dropdown, Input, Switch, Tag, Typography, type MenuProps } from 'antd';
 import type { useAppProps } from 'antd/es/app/context';
 import {
   CopyOutlined as IconCopyOutlined,
+  EditOutlined as IconEditOutlined,
   FolderOpenOutlined as IconFolderOpenOutlined,
   PlayCircleOutlined as IconPlayCircleOutlined,
   ScissorOutlined as IconScissorOutlined,
@@ -11,17 +12,18 @@ import {
   UndoOutlined as IconUndoOutlined
 } from '@ant-design/icons';
 import { clock } from './highlightTime';
-import type { ShowItem } from './highlightShow';
-import type { StageKind } from './highlightTypes';
+import { basisOf } from './highlightDraft';
+import { isRestyled, readyToRender, type ShowInfo, type ShowItem } from './highlightShow';
+import { useDraftField, type DraftField } from './useDraftField';
+import DraftPanel, { TITLE_MAX } from './DraftPanel';
+import type { ClipDraft, StageKind } from './highlightTypes';
 
 /**
  * 切片页面（./HighlightsPage）里的一个爆点：切不切的开关，标题和说明直接点进去改（停一会儿、离开输入框时自动存），
- * 做好的切片显示编号和发布用的标题。右键有菜单：切不切、在 Explorer 中显示做好的切片、播放、复制标题、恢复原来的文字。
+ * 写好了标题的下面是定标题的一块（./DraftPanel），做好的切片显示编号和发布用的标题。右键有菜单：切不切、在 Explorer 中显示做好的切片、播放、复制标题、恢复原来的文字。
  */
 const kindText: Record<StageKind, string> = { mc: 'MC', song: '唱歌', mistake: '失误' };
-const SAVE_DELAY: number = 800;
 
-export const TITLE_MAX: number = 40;
 export const REASON_MAX: number = 400;
 
 /* 2 分 24 秒 */
@@ -34,6 +36,8 @@ export function lengthText(seconds: number): string {
 
 /* 改过的会怎么用：标题写在画面和封面上，发布用的标题（.txt）还是 Gemini 起 */
 function editedText(item: ShowItem): string {
+  if (item.draft) return item.draft.basis === basisOf(item) ? '照改过的写的' : '改过了，点「重新写」才会用上';
+
   if (item.clip && !item.cut) return '改过了，打开「重切」才会用上';
 
   return item.original && item.original.title !== item.title
@@ -41,62 +45,27 @@ function editedText(item: ShowItem): string {
     : '改过了，会按改过的切';
 }
 
-interface DraftField {
-  value: string;
-  onChange(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>): void;
-  onBlur(): void;
-}
-
-/* 一边打字一边存：打字时显示打的字，停一会儿或者离开输入框时存；清空了就回到原来的 */
-function useDraft(saved: string, save: (text: string) => Promise<unknown>): DraftField {
-  const [draft, setDraft]: [string | undefined, D<S<string | undefined>>] = useState<string | undefined>(undefined);
-  const timer: RefObject<ReturnType<typeof setTimeout> | undefined> = useRef(undefined);
-  const pending: RefObject<(() => void) | undefined> = useRef(undefined); // 还没存的；切到别的场次时也要存上
-
-  async function commit(text: string, done: boolean): Promise<void> {
-    clearTimeout(timer.current);
-    pending.current = undefined;
-
-    if (text.trim() !== '' && text.trim() !== saved) await save(text);
-
-    // 存好了才换回去，不会闪一下旧的字；还在打字的不动
-    done && setDraft((now: string | undefined): string | undefined => (now === text ? undefined : now));
-  }
-
-  useEffect((): (() => void) => (): void => {
-    clearTimeout(timer.current);
-    pending.current?.();
-  }, []);
-
-  return {
-    value: draft ?? saved,
-    onChange(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>): void {
-      const text: string = event.target.value;
-
-      setDraft(text);
-      clearTimeout(timer.current);
-      pending.current = (): void => void commit(text, false);
-      timer.current = setTimeout((): void => void commit(text, false), SAVE_DELAY);
-    },
-    onBlur(): void {
-      draft !== undefined && void commit(draft, true);
-    }
-  };
-}
-
 interface HighlightPickItemProps {
+  readonly dir: string;
+  readonly info: ShowInfo;
   readonly item: ShowItem;
-  readonly locked: boolean; // 正在切，不能改
+  readonly locked: boolean;   // 正在做，不能改切不切
+  readonly writing: boolean;  // 正在做的是写标题：已经写好的可以先定
   clipFile(): string | undefined; // 做好的切片在哪里；不在了是 undefined
   onCut(cut: boolean): void;
   onEdit(patch: { title?: string; reason?: string }): Promise<unknown>;
+  onDraft(change: (draft: ClipDraft) => ClipDraft): Promise<unknown>;
+  onRewrite(): void;
+  onRetitle(): void;
 }
 
 function HighlightPickItem(props: HighlightPickItemProps): ReactElement {
-  const { item, locked, clipFile, onCut, onEdit }: HighlightPickItemProps = props;
+  const { dir, info, item, locked, writing, clipFile, onCut, onEdit, onDraft, onRewrite, onRetitle }: HighlightPickItemProps = props;
   const { message: messageApi }: useAppProps = App.useApp();
-  const title: DraftField = useDraft(item.title, (text: string): Promise<unknown> => onEdit({ title: text }));
-  const reason: DraftField = useDraft(item.reason, (text: string): Promise<unknown> => onEdit({ reason: text }));
+  const [restyling, setRestyling]: [boolean, D<S<boolean>>] = useState(false); // 做好的切片：改标题和亮点的那一块打开了没有
+  const title: DraftField = useDraftField(item.title, (text: string): Promise<unknown> => onEdit({ title: text }));
+  const reason: DraftField = useDraftField(item.reason, (text: string): Promise<unknown> => onEdit({ reason: text }));
+  const naming: boolean = readyToRender(item); // 写好了，等着定标题
 
   function cutLabel(): string {
     if (item.clip) return item.cut ? '不重切' : '重切';
@@ -125,6 +94,8 @@ function HighlightPickItem(props: HighlightPickItemProps): ReactElement {
       messageApi.success('标题复制好了');
     } else if (key === 'restore') {
       onEdit({ ...item.original });
+    } else if (key === 'draft') {
+      setRestyling(!restyling);
     }
   }
 
@@ -132,6 +103,7 @@ function HighlightPickItem(props: HighlightPickItemProps): ReactElement {
     items: [
       { key: 'cut', icon: item.cut ? <IconStopOutlined /> : <IconScissorOutlined />, label: cutLabel(), disabled: locked },
       { key: 'restore', icon: <IconUndoOutlined />, label: '恢复原来的标题和说明', disabled: locked || !item.original },
+      ...(item.clip && item.draft && !naming ? [{ key: 'draft', icon: <IconEditOutlined />, label: restyling ? '收起标题和亮点' : '改标题和亮点' }] : []),
       { type: 'divider' },
       { key: 'folder', icon: <IconFolderOpenOutlined />, label: '在 Explorer 中显示', disabled: !item.clip },
       { key: 'play', icon: <IconPlayCircleOutlined />, label: '播放切片', disabled: !item.clip },
@@ -153,17 +125,22 @@ function HighlightPickItem(props: HighlightPickItemProps): ReactElement {
         />
         <div className="picks-item-main">
           <div className="picks-item-head">
-            <Input className="picks-edit picks-title"
-              variant="borderless"
-              aria-label="标题"
-              value={ title.value }
-              maxLength={ TITLE_MAX }
-              spellCheck={ false }
-              disabled={ locked }
-              onChange={ title.onChange }
-              onBlur={ title.onBlur }
-              onPressEnter={ (event: { currentTarget: HTMLInputElement }): void => event.currentTarget.blur() }
-            />
+            {
+              // 写好以后标题在下面定，这里只是这个爆点说的是什么
+              item.draft ? <span className="picks-title is-fixed" title={ item.title }>{ item.title }</span> : (
+                <Input className="picks-edit picks-title"
+                  variant="borderless"
+                  aria-label="标题"
+                  value={ title.value }
+                  maxLength={ TITLE_MAX }
+                  spellCheck={ false }
+                  disabled={ locked }
+                  onChange={ title.onChange }
+                  onBlur={ title.onBlur }
+                  onPressEnter={ (event: { currentTarget: HTMLInputElement }): void => event.currentTarget.blur() }
+                />
+              )
+            }
             <div className="picks-tags">
               { item.kind ? <Tag className="mr-0">{ kindText[item.kind] }</Tag> : null }
               { item.recommended ? <Tag className="mr-0" color="processing">推荐</Tag> : null }
@@ -190,6 +167,13 @@ function HighlightPickItem(props: HighlightPickItemProps): ReactElement {
                 <Typography.Text className="picks-post" type="secondary" copyable={{ text: item.clip.postTitle, tooltips: ['复制发布用的标题', '复制好了'] }}>
                   { item.clip.postTitle }
                 </Typography.Text>
+                {
+                  item.draft && !naming ? (
+                    <Button type="link" size="small" onClick={ (): void => setRestyling(!restyling) }>
+                      { restyling ? '收起' : '改标题和亮点' }{ !restyling && isRestyled(item) ? '（改过，还没重做）' : '' }
+                    </Button>
+                  ) : null
+                }
               </div>
             ) : null
           }
@@ -202,6 +186,19 @@ function HighlightPickItem(props: HighlightPickItemProps): ReactElement {
             ) : null
           }
           { item.problem ? <div className="picks-note"><Typography.Text type="danger">没做成：{ item.problem }</Typography.Text></div> : null }
+          {
+            item.draft && (naming || (restyling && item.clip)) ? (
+              <DraftPanel dir={ dir }
+                info={ info }
+                item={ item }
+                locked={ locked && !writing }
+                busy={ locked }
+                onDraft={ onDraft }
+                onRewrite={ onRewrite }
+                onRetitle={ onRetitle }
+              />
+            ) : null
+          }
         </div>
       </article>
     </Dropdown>

@@ -1,10 +1,9 @@
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { Fragment, useEffect, useState, type ReactElement, type Dispatch as D, type SetStateAction as S } from 'react';
 import { Link } from 'react-router';
 import { App, Button, Empty, Progress, Segmented, Tooltip } from 'antd';
 import type { useAppProps } from 'antd/es/app/context';
 import {
+  EditOutlined as IconEditOutlined,
   FolderOpenOutlined as IconFolderOpenOutlined,
   HighlightOutlined as IconHighlightOutlined,
   MoreOutlined as IconMoreOutlined,
@@ -20,22 +19,24 @@ import { useQueueTasks, type QueueTask } from '../downloadQueue/downloadQueue';
 import { formatBytes } from '../download/formatProgress';
 import HighlightPickItem from './HighlightPickItem';
 import { FindingMenu, ShowMenu, useShowActions, type ShowActions } from './HighlightShowMenu';
-import { editItem, madeCount, pickKey, sameItem, showKind, type ShowInfo, type ShowItem, type ShowKind } from './highlightShow';
+import { editItem, madeCount, pickKey, readyToRender, sameItem, showKind, stillWaiting, toWrite, type ShowInfo, type ShowItem, type ShowKind } from './highlightShow';
 import { refreshShows, selectShow, updateShow, useShowState, type Show } from './showStore';
-import { plannedIndexes, replayBytes, startPick } from './pickTask';
+import { clipFileOf, plannedIndexes, replayBytes, rewrite, startRender, startRetitle, startWrite, WRITE_KIND } from './pickTask';
 import { highlightTaskId } from './highlightTask';
 import { clock, shortName } from './highlightTime';
+import type { ClipDraft } from './highlightTypes';
 
 /**
- * 切片页面：Gemini 找完爆点以后在这里挑（用户 2026-11-23 定的）。
- *   - 左边：各场录播，分成正在处理、未切片（等你挑的在前面，有数字）、已切片；名字前面是电台、直播、公演，后面是队伍。
+ * 切片页面：Gemini 找完爆点以后在这里挑（用户 2026-11-23 定的），写好标题和亮点以后在这里定，定好了才渲染（2026-11-24 定的）。
+ *   - 左边：各场录播，分成正在处理、等你定标题、未切片（等你挑的在前面，有数字）、已切片；名字前面是电台、直播、公演，后面是队伍。
  *     右键有菜单：在 Explorer 中显示、取消切片、删除完整录播、从列表移除（./HighlightShowMenu），右上角的「更多」是同一套
  *   - 右边：这一场找到的全部爆点。推荐的默认「切片」，别的默认「不切」，每个都能单独改；标题和说明点进去就能改，自动存
- *   - 底下一条：要切几个、「开始切片」；切的时候显示进度
+ *     写好了的下面多一块：选标题、改亮点、看封面（./DraftPanel）
+ *   - 底下一条：「写标题」「开始渲染」；做的时候显示进度
  * 数据见 ./showStore，切见 ./pickTask。样子和房间消息（../room）一致：左右两栏，颜色都用外壳的变量。
  * 接入点：pages/48/Index.tsx 的 Highlights 路由；入口是侧边栏的「切片」、下载队列、找好时的通知、自动切片对话框。
  */
-type Filter = 'all' | 'cut' | 'made';
+type Filter = 'all' | 'cut' | 'naming' | 'made';
 
 function cuttingTask(tasks: Array<QueueTask>, info: ShowInfo): QueueTask | undefined {
   const id: string = highlightTaskId(pickKey(info));
@@ -77,12 +78,18 @@ function TeamBadge(props: { readonly info: ShowInfo }): ReactElement | null {
   return team ? <span className="room-team" title={ team.title }>{ team.label }</span> : null;
 }
 
-/* 左边一行右边的字：正在切的进度、等你挑的个数、做了几个 */
+/* 左边一行右边的字：正在做的进度、等你定标题的和等你挑的个数、做了几个 */
 function ShowState(props: { readonly info: ShowInfo; readonly task: QueueTask | undefined }): ReactElement {
   const { info, task }: { readonly info: ShowInfo; readonly task: QueueTask | undefined } = props;
   const made: number = madeCount(info);
 
   if (task) return <span className="picks-show-state is-running">{ Math.floor(task.percent ?? 0) }%</span>;
+
+  if (info.status === 'naming') {
+    const ready: number = info.items.filter(readyToRender).length;
+
+    return <span className="shell-item-badge" aria-label={ `${ ready } 个等你定标题` }>{ ready }</span>;
+  }
 
   if (info.status === 'waiting') return <span className="shell-item-badge" aria-label={ `${ info.items.length } 个爆点等你挑` }>{ info.items.length }</span>;
 
@@ -138,7 +145,8 @@ function ShowList(props: { readonly shows: Array<Show>; readonly current: string
 
   const finding: Array<QueueTask> = tasks.filter((task: QueueTask): boolean => task.kind === '找爆点' && task.status === 'running');
   const cutting: Array<Show> = shows.filter((show: Show): boolean => cuttingTask(tasks, show.info) !== undefined);
-  const rest: Array<Show> = shows.filter((show: Show): boolean => !cutting.includes(show));
+  const naming: Array<Show> = shows.filter((show: Show): boolean => !cutting.includes(show) && show.info.status === 'naming');
+  const rest: Array<Show> = shows.filter((show: Show): boolean => !cutting.includes(show) && !naming.includes(show));
 
   // 等你挑的、一个都没切的算未切片
   function isCut(show: Show): boolean {
@@ -162,13 +170,14 @@ function ShowList(props: { readonly shows: Array<Show>; readonly current: string
         ))
       }
       { rows(cutting) }
+      { group('等你定标题', naming) }
       { group('未切片', rest.filter((show: Show): boolean => !isCut(show))) }
       { group('已切片', rest.filter(isCut)) }
     </aside>
   );
 }
 
-/* 底下的一条：要切几个、开始切片；切的时候是进度 */
+/* 底下的一条：要写几个、要渲染几个；做的时候是进度 */
 function Footer(props: { readonly show: Show; readonly task: QueueTask | undefined }): ReactElement {
   const { show, task }: { readonly show: Show; readonly task: QueueTask | undefined } = props;
   const { dir, info }: Show = show;
@@ -176,13 +185,21 @@ function Footer(props: { readonly show: Show; readonly task: QueueTask | undefin
   const actions: ShowActions = useShowActions();
   const cuts: Array<ShowItem> = info.items.filter((item: ShowItem): boolean => item.cut);
   const again: number = cuts.filter((item: ShowItem): boolean => item.clip !== undefined).length;
+  const writes: number = cuts.filter(toWrite).length;
+  const renders: number = cuts.filter(readyToRender).length;
   const indexes: Array<number> = plannedIndexes(dir, info);
   const bytes: number = replayBytes(dir, info);
 
-  function handleStartClick(): void {
-    const problem: string | undefined = startPick(dir, info);
+  function handleWriteClick(): void {
+    const problem: string | undefined = startWrite(dir, info);
 
-    problem ? messageApi.warning(problem) : messageApi.success('开始切片了，进度在这里和下载队列里看');
+    problem ? messageApi.warning(problem) : messageApi.success('开始写了，写好会通知你来定标题和亮点');
+  }
+
+  function handleRenderClick(): void {
+    const problem: string | undefined = startRender(dir, info);
+
+    problem ? messageApi.warning(problem) : messageApi.success('开始渲染了，进度在这里和下载队列里看');
   }
 
   if (task) {
@@ -199,7 +216,7 @@ function Footer(props: { readonly show: Show; readonly task: QueueTask | undefin
   return (
     <footer className="picks-footer">
       <span className="picks-footer-text">
-        <b>{ cuts.length > 0 ? `要切 ${ cuts.length } 个${ again > 0 ? `（重切 ${ again } 个）` : '' }` : '还没有选要切的' }</b>
+        <b>{ cuts.length > 0 ? `要切 ${ cuts.length } 个${ again > 0 ? `（重切 ${ again } 个）` : '' }${ renders > 0 ? `，写好 ${ renders } 个` : '' }` : '还没有选要切的' }</b>
         <small>
           {
             [
@@ -210,30 +227,27 @@ function Footer(props: { readonly show: Show; readonly task: QueueTask | undefin
         </small>
       </span>
       {
-        info.status === 'waiting' ? (
+        info.status === 'done' ? null : (
           <Button type="text" onClick={ (): void => actions.cancel(show) }>取消切片</Button>
+        )
+      }
+      {
+        writes > 0 || renders === 0 ? (
+          <Button type={ renders > 0 ? 'default' : 'primary' } icon={ <IconEditOutlined /> } disabled={ writes === 0 } onClick={ handleWriteClick }>
+            写标题{ writes > 0 ? `（${ writes }）` : '' }
+          </Button>
         ) : null
       }
-      <Button type="primary" icon={ <IconScissorOutlined /> } disabled={ cuts.length === 0 } onClick={ handleStartClick }>
-        开始切片{ cuts.length > 0 ? `（${ cuts.length }）` : '' }
-      </Button>
+      {
+        renders > 0 ? (
+          <Button type="primary" icon={ <IconScissorOutlined /> } onClick={ handleRenderClick }>开始渲染（{ renders }）</Button>
+        ) : null
+      }
     </footer>
   );
 }
 
-/* 做好的切片的文件：编号开头的 mp4（标题可能改过，按编号找） */
-function clipFileOf(dir: string, item: ShowItem): string | undefined {
-  if (!item.clip) return undefined;
-
-  try {
-    const head: string = `${ String(item.clip.index).padStart(2, '0') }-`;
-    const name: string | undefined = fs.readdirSync(dir).find((file: string): boolean => file.startsWith(head) && file.endsWith('.mp4'));
-
-    return name && path.join(dir, name);
-  } catch {
-    return undefined;
-  }
-}
+const emptyText: Record<Filter, string> = { all: '', cut: '还没有选要切的。', naming: '没有等着定标题的。', made: '还没有切好的。' };
 
 /* 右边：一场的爆点 */
 function ShowView(props: { readonly show: Show; readonly task: QueueTask | undefined }): ReactElement {
@@ -241,16 +255,38 @@ function ShowView(props: { readonly show: Show; readonly task: QueueTask | undef
   const { dir, info }: Show = show;
   const { message: messageApi }: useAppProps = App.useApp();
   const actions: ShowActions = useShowActions();
-  const [filter, setFilter]: [Filter, D<S<Filter>>] = useState<Filter>('all');
+  const [filter, setFilter]: [Filter, D<S<Filter>>] = useState<Filter>(info.status === 'naming' ? 'naming' : 'all');
   const locked: boolean = task !== undefined;
+  const ready: number = info.items.filter(readyToRender).length;
   const cuts: number = info.items.filter((item: ShowItem): boolean => item.cut).length;
   const made: number = madeCount(info);
-  const list: Array<ShowItem> = info.items.filter((item: ShowItem): boolean => (
-    filter === 'all' || (filter === 'cut' ? item.cut : item.clip !== undefined)));
+  const filters: Record<Filter, (item: ShowItem) => boolean> = {
+    all: (): boolean => true,
+    cut: (item: ShowItem): boolean => item.cut,
+    naming: readyToRender,
+    made: (item: ShowItem): boolean => item.clip !== undefined
+  };
+  const list: Array<ShowItem> = info.items.filter(filters[filter]);
+
+  const tabs: Array<{ label: string; value: Filter }> = [
+    { label: `全部 ${ info.items.length }`, value: 'all' },
+    { label: `要切 ${ cuts }`, value: 'cut' },
+    ...(ready > 0 || filter === 'naming' ? [{ label: `定标题 ${ ready }`, value: 'naming' as Filter }] : []),
+    { label: `已切 ${ made }`, value: 'made' }
+  ];
+
+  // 写好了：切到要定标题的那几个；都渲染完了就回来
+  useEffect(function(): void {
+    setFilter((now: Filter): Filter => {
+      if (info.status === 'naming') return 'naming';
+
+      return now === 'naming' ? 'all' : now;
+    });
+  }, [info.status]);
 
   async function change(next: (item: ShowItem) => ShowItem): Promise<void> {
     try {
-      await updateShow(dir, (now: ShowInfo): ShowInfo => ({ ...now, items: now.items.map(next) }));
+      await updateShow(dir, (now: ShowInfo): ShowInfo => stillWaiting({ ...now, items: now.items.map(next) }));
     } catch (err) {
       messageApi.error(`没有存下来：${ err instanceof Error ? err.message : String(err) }`);
     }
@@ -258,6 +294,18 @@ function ShowView(props: { readonly show: Show; readonly task: QueueTask | undef
 
   function changeOne(target: ShowItem, next: (item: ShowItem) => ShowItem): Promise<void> {
     return change((item: ShowItem): ShowItem => (sameItem(item, target) ? next(item) : item));
+  }
+
+  async function handleRewrite(item: ShowItem): Promise<void> {
+    const problem: string | undefined = await rewrite(dir, info, item);
+
+    problem ? messageApi.warning(problem) : messageApi.success('开始重新写了');
+  }
+
+  function handleRetitle(item: ShowItem): void {
+    const problem: string | undefined = startRetitle(dir, info, item);
+
+    problem ? messageApi.warning(problem) : messageApi.success('开始重做标题和封面了');
   }
 
   return (
@@ -279,7 +327,7 @@ function ShowView(props: { readonly show: Show; readonly task: QueueTask | undef
         </ShowMenu>
       </header>
       <div className="picks-toolbar">
-        <Segmented options={ [{ label: `全部 ${ info.items.length }`, value: 'all' }, { label: `要切 ${ cuts }`, value: 'cut' }, { label: `已切 ${ made }`, value: 'made' }] }
+        <Segmented options={ tabs }
           value={ filter }
           onChange={ (value: string): void => setFilter(value as Filter) }
         />
@@ -295,15 +343,21 @@ function ShowView(props: { readonly show: Show; readonly task: QueueTask | undef
         {
           list.map((item: ShowItem): ReactElement => (
             <HighlightPickItem key={ `${ item.start }-${ item.end }` }
+              dir={ dir }
+              info={ info }
               item={ item }
               locked={ locked }
+              writing={ task?.kind === WRITE_KIND }
               clipFile={ (): string | undefined => clipFileOf(dir, item) }
               onCut={ (cut: boolean): Promise<void> => changeOne(item, (now: ShowItem): ShowItem => ({ ...now, cut })) }
               onEdit={ (patch: { title?: string; reason?: string }): Promise<void> => changeOne(item, (now: ShowItem): ShowItem => editItem(now, patch)) }
+              onDraft={ (next: (draft: ClipDraft) => ClipDraft): Promise<void> => changeOne(item, (now: ShowItem): ShowItem => (now.draft ? { ...now, draft: next(now.draft) } : now)) }
+              onRewrite={ (): Promise<void> => handleRewrite(item) }
+              onRetitle={ (): void => handleRetitle(item) }
             />
           ))
         }
-        { list.length === 0 ? <div className="picks-empty">{ filter === 'cut' ? '还没有选要切的。' : '还没有切好的。' }</div> : null }
+        { list.length === 0 ? <div className="picks-empty">{ emptyText[filter] }</div> : null }
       </div>
       <Footer show={ show } task={ task } />
     </section>

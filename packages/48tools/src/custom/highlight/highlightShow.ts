@@ -2,7 +2,8 @@ import * as fs from 'node:fs';
 import { promises as fsP } from 'node:fs';
 import * as path from 'node:path';
 import { clock } from './highlightTime';
-import type { Highlight } from './highlightTypes';
+import { lookOf } from './highlightDraft';
+import type { ClipDraft, Highlight } from './highlightTypes';
 import type { StageInfo } from './highlightStageAss';
 import type { ClipResult, HighlightJob } from './highlightPipeline';
 
@@ -10,25 +11,30 @@ import type { ClipResult, HighlightJob } from './highlightPipeline';
  * 一场录播的爆点清单（输出文件夹里的 爆点.json）：找到的全部爆点、推荐切哪些、挑的人改过的标题和说明、做成了哪些切片。
  * 用户 2026-11-23 定的：找完爆点就停下来等人挑。推荐的默认「切片」，其余默认「不切」，每个都能单独改；标题和说明也能改，
  * 改好了才写字幕、剪片，这样 Gemini 拿到的是核对过的文字。
+ * 用户 2026-11-24 定的：选好以后 Gemini 写完字幕、标题、亮点再停一次（每个爆点的 draft，见 ./highlightDraft），人定好了才渲染；
+ * 渲染完 draft 也留着，以后改标题不用再问 Gemini。
  * 这个文件只管清单的内容和读写；界面在 ./HighlightsPage，读写的排队在 ./showStore，切在 ./pickTask。
  */
 export const SHOW_FILE: string = '爆点.json';
 export const INFO_FILE: string = '切片说明.txt';
 
 /* 做成的切片（写切片说明、界面上显示用） */
-export type ShowClip = Pick<ClipResult, 'index' | 'title' | 'postTitle' | 'otherTitles' | 'description' | 'start' | 'end' | 'duration' | 'score'>;
+export type ShowClip = Pick<ClipResult, 'index' | 'title' | 'postTitle' | 'otherTitles' | 'description' | 'start' | 'end' | 'duration' | 'score'> & {
+  look?: string; // 照什么样子做的（./highlightDraft 的 lookOf）：和草稿现在的不一样就是改过、还没重做
+};
 
 export interface ShowItem extends Highlight {
   recommended: boolean;                                // 程序推荐的
   cut: boolean;                                        // 挑的人选了切（默认照推荐的；已经切过的选了就是重切）
   original?: Pick<Highlight, 'title' | 'reason'>;      // 改过标题或说明以后，Gemini 原来写的
+  draft?: ClipDraft;                                   // 写好的字幕、标题、亮点：等人定，或者已经渲染过
   clip?: ShowClip;
   problem?: string;                                    // 上次没做成的原因
 }
 
 export interface ShowInfo {
   version: 2;
-  status: 'waiting' | 'done';  // waiting：找完了，还没挑
+  status: 'waiting' | 'naming' | 'done';  // waiting：找完了，等人挑；naming：写好了，等人定标题和亮点
   liveId: string;
   member: string;
   title: string;
@@ -36,6 +42,8 @@ export interface ShowInfo {
   radio?: boolean;
   stage?: StageInfo;
   local?: HighlightJob['local']; // 用的是本机已经下好的录播
+  source?: string;               // 写字幕时用的录播文件和电台封面：定标题时播放这一段用
+  picture?: string;
   model: string;
   foundAt: number;
   duration: number;
@@ -87,7 +95,7 @@ export function newShowInfo(
   found: { model: string; duration: number; summaries: Array<string>; notes: Array<string>; items: Array<Highlight>; recommended: Set<number> },
   old?: ShowInfo
 ): ShowInfo {
-  const made: Array<ShowClip> = (old?.items ?? []).flatMap((item: ShowItem): Array<ShowClip> => (item.clip ? [item.clip] : []));
+  const made: Array<ShowItem> = (old?.items ?? []).filter((item: ShowItem): boolean => item.clip !== undefined);
 
   return {
     version: 2,
@@ -105,10 +113,11 @@ export function newShowInfo(
     summaries: found.summaries,
     notes: found.notes,
     items: found.items.map((item: Highlight, order: number): ShowItem => {
-      const clip: ShowClip | undefined = made.find((one: ShowClip): boolean => madeFrom(item, one));
+      const { clip, draft }: Partial<ShowItem> = made.find((one: ShowItem): boolean => madeFrom(item, one.clip!)) ?? {};
       const recommended: boolean = found.recommended.has(order);
 
-      return { ...item, recommended, cut: recommended && !clip, ...(clip ? { clip } : {}) };
+      // 草稿跟着做好的切片走（以后还能改标题）
+      return { ...item, recommended, cut: recommended && !clip, ...(clip ? { clip, ...(draft ? { draft } : {}) } : {}) };
     })
   };
 }
@@ -201,15 +210,44 @@ export function editItem(item: ShowItem, patch: Partial<Pick<Highlight, 'title' 
 
 /* 交给切片流程的爆点。改过的标题直接写在画面和封面上（coverTitle）；封面上别的大字是照 Gemini 原来的标题写的，改了标题就不用了 */
 export function highlightOf(item: ShowItem): Highlight {
-  const { recommended: _recommended, cut: _cut, original, clip: _clip, problem: _problem, coverLines, ...highlight }: ShowItem = item;
+  const { recommended: _recommended, cut: _cut, original, draft: _draft, clip: _clip, problem: _problem, coverLines, ...highlight }: ShowItem = item;
 
   return original && original.title !== item.title
     ? { ...highlight, cover: '', coverTitle: item.title }
     : { ...highlight, ...(coverLines ? { coverLines } : {}) };
 }
 
-/* 要切哪些、编号是几：重切的用原来的编号，新切的接在已经做好的后面 */
-export function planCuts(info: ShowInfo, fileNames: Array<string>): Array<{ item: ShowItem; index: number }> {
+/* 选了切、还没写标题的 */
+export function toWrite(item: Pick<ShowItem, 'cut' | 'draft'>): boolean {
+  return item.cut && !item.draft;
+}
+
+/* 选了切、写好了等人定（定好了就能渲染）的 */
+export function readyToRender(item: Pick<ShowItem, 'cut' | 'draft'>): boolean {
+  return item.cut && item.draft !== undefined;
+}
+
+/* 做好以后又改了标题、亮点或者封面的画面，还没重做 */
+export function isRestyled(item: Pick<ShowItem, 'draft' | 'clip'>): boolean {
+  return item.draft !== undefined && item.clip !== undefined && item.clip.look !== lookOf(item.draft);
+}
+
+/* 还在等人的一场，改了选哪些以后：有写好的选着就是等着定标题，没有就是等着挑 */
+export function stillWaiting(info: ShowInfo): ShowInfo {
+  return info.status === 'done' ? info : { ...info, status: info.items.some(readyToRender) ? 'naming' : 'waiting' };
+}
+
+/* 写完、渲染完以后这一场的状态：还有等人定的，还有没写的，或者都好了 */
+export function nextStatus(info: ShowInfo): ShowInfo['status'] {
+  if (info.items.some(readyToRender)) return 'naming';
+
+  return info.status !== 'done' && info.items.some(toWrite) ? 'waiting' : 'done';
+}
+
+/* 要切哪些（默认全部选了切的）、编号是几：重切的用原来的编号，新切的接在已经做好的后面 */
+export function planCuts(
+  info: ShowInfo, fileNames: Array<string>, which: (item: ShowItem) => boolean = (item: ShowItem): boolean => item.cut
+): Array<{ item: ShowItem; index: number }> {
   let next: number = Math.max(
     0,
     ...info.items.map((item: ShowItem): number => item.clip?.index ?? 0),
@@ -217,7 +255,7 @@ export function planCuts(info: ShowInfo, fileNames: Array<string>): Array<{ item
   ) + 1;
 
   return info.items
-    .filter((item: ShowItem): boolean => item.cut)
+    .filter(which)
     .map((item: ShowItem): { item: ShowItem; index: number } => ({ item, index: item.clip?.index ?? next++ }));
 }
 
@@ -226,10 +264,24 @@ export function sameItem(a: Pick<Highlight, 'start' | 'end'>, b: Pick<Highlight,
 }
 
 /* 清单里只留要用的几项（成片的路径不留：文件夹搬走了也能看） */
-function shortClip(clip: ShowClip): ShowClip {
+function shortClip(clip: ShowClip, draft: ClipDraft | undefined): ShowClip {
   const { index, title, postTitle, otherTitles, description, start, end, duration, score }: ShowClip = clip;
 
-  return { index, title, postTitle, otherTitles, description, start, end, duration, score };
+  return { index, title, postTitle, otherTitles, description, start, end, duration, score, ...(draft ? { look: lookOf(draft) } : {}) };
+}
+
+/* 写好一个（或者没写成）以后的清单：没写成的不切了，记上原因 */
+export function withDraft(info: ShowInfo, item: Pick<Highlight, 'start' | 'end'>, draft: ClipDraft | string): ShowInfo {
+  return {
+    ...info,
+    items: info.items.map((one: ShowItem): ShowItem => {
+      if (!sameItem(one, item)) return one;
+
+      const { problem: _problem, ...rest }: ShowItem = one;
+
+      return typeof draft === 'string' ? { ...rest, cut: false, problem: draft } : { ...rest, draft };
+    })
+  };
 }
 
 /* 一个切片做完（或者没做成）以后的清单 */
@@ -241,7 +293,7 @@ export function withResult(info: ShowInfo, item: Pick<Highlight, 'start' | 'end'
 
       const { problem: _problem, ...rest }: ShowItem = one;
 
-      return typeof result === 'string' ? { ...rest, cut: false, problem: result } : { ...rest, cut: false, clip: shortClip(result) };
+      return typeof result === 'string' ? { ...rest, cut: false, problem: result } : { ...rest, cut: false, clip: shortClip(result, one.draft) };
     })
   };
 }

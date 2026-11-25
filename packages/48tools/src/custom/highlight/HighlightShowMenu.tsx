@@ -70,7 +70,7 @@ export function useShowActions(): ShowActions {
         title: `取消切片：${ nameOf(info) }？`,
         content: (
           <div>
-            <p className="mt-0 mb-[8px]">正在切的会停下来，做好的切片留着。爆点清单也留着，以后还能回来切。</p>
+            <p className="mt-0 mb-[8px]">正在做的会停下来，做好的切片留着。爆点清单和写好的标题也留着，以后还能回来切。</p>
             {
               files.length > 0 ? (
                 <Checkbox onChange={ (event: CheckboxChangeEvent): void => {
@@ -125,7 +125,7 @@ export function useShowActions(): ShowActions {
     remove({ dir, info }: Show): void {
       modalApi.confirm({
         title: `从列表移除：${ nameOf(info) }？`,
-        content: '只移除这一场的爆点清单（改过的标题和说明也没了），切片和录播都不动。还没切的会先取消。',
+        content: '只移除这一场的爆点清单（改过的文字、写好的标题和亮点也没了，以后不能只改标题），切片和录播都不动。还没切的会先取消。',
         okText: '移除',
         cancelText: '返回',
         async onOk(): Promise<void> {
@@ -149,7 +149,7 @@ function menuOf(show: Show, cutting: boolean, files: Array<ReplayFile>, actions:
       { key: 'folder', icon: <IconFolderOpenOutlined />, label: '在 Explorer 中显示' },
       { key: 'replay', icon: <IconPlaySquareOutlined />, label: '在 Explorer 中显示录播', disabled: files.length === 0 },
       { type: 'divider' },
-      { key: 'cancel', icon: <IconCloseCircleOutlined />, label: '取消切片', disabled: !cutting && info.status !== 'waiting' },
+      { key: 'cancel', icon: <IconCloseCircleOutlined />, label: '取消切片', disabled: !cutting && info.status === 'done' },
       {
         key: 'delete', icon: <IconDeleteOutlined />, danger: files.length > 0 && !cutting, disabled: files.length === 0 || cutting,
         label: files.length > 0 ? `删除完整录播（${ sizeOf(files) }）` : '删除完整录播（本机没有）'

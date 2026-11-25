@@ -9,7 +9,7 @@ import type { CaptionLine, Silence } from './highlightTypes';
  *   3. 每句话归到一段声音里，顺序不变：离模型给的时间近，而且这一段装得下这些字（assignLines）
  *   4. 同一段里的几句话，按字数分这一段里的音节：第一句从这段声音开始的地方开始，最后一句到它结束的地方结束（placeLines）
  * 音节的位置从音量的起伏里找（syllablePeaks），不需要识别内容。
- * 都是纯计算，方便测试。接入点：./highlightPipeline 的 makeClip。
+ * 都是纯计算，方便测试。接入点：./highlightPipeline 的 writeClip。
  */
 export interface Stretch {
   start: number;

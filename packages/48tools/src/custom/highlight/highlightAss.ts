@@ -298,8 +298,43 @@ export function style(
     spacing },0,1,0,${ shadow },${ align },0,0,0,1`;
 }
 
+/* 标题和右边的成员、日期在同一行：标题长了就缩小，不压到右边的字（11 个字以内是原来的大小） */
+function titleText(title: string, tag: string, fonts: FontSet): string {
+  const left: number = LEFT_WIDTH + 76;
+  const room: number = W - 48 - (textWidth(tag) * TAG_SIZE) - 48 - left;
+  const size: number = Math.min(TITLE_SIZE, Math.floor(room / Math.max(1, textWidth(title))));
+
+  return `{\\an4\\pos(${ left },${ TITLE_Y })\\fs${ fontSize(size, fonts) }}${ assEscape(title) }`;
+}
+
+function titleStyle(fonts: FontSet): string {
+  return style('Title', fonts.heavy, fontSize(TITLE_SIZE, fonts), '&H00FFFFFF', '&H00000000', fonts.heavyBold, 1, 0, 4);
+}
+
+/* 成片上的一块地方（像素，都是偶数） */
+export interface Strip {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/* 标题那一条：黄色竖条右边到成员名字左边，底是纯色的（改标题时填回底色再写新的，见 ./highlightPipeline 的 retitleClip） */
+export function titleStrip(tag: string): Strip {
+  const x: number = LEFT_WIDTH + 66;
+
+  return { x, y: TITLE_Y - 50, w: Math.floor((W - 72 - (textWidth(tag) * TAG_SIZE) - x) / 2) * 2, h: 100 };
+}
+
+/* 只有标题的字幕文件 */
+export function buildTitleAss(input: { title: string; tag: string; total: number; fonts: FontSet }): string {
+  return assDocument([titleStyle(input.fonts)], [
+    `Dialogue: 1,${ assTime(0) },${ assTime(input.total) },Title,,0,0,0,,${ titleText(input.title, input.tag, input.fonts) }`
+  ]);
+}
+
 export interface VideoAssInput {
-  title: string;
+  title: string;               // 空的不写（封面候选的画面上没有标题，见 ./highlightCover）
   tag: string;                 // 右上角的小字：成员和日期
   lines: Array<CaptionLine>;   // 片段里的全部句子（已经修正过时间）
   segments: Array<Segment>;
@@ -323,12 +358,7 @@ export function buildVideoAss(input: VideoAssInput): string {
   add(0, 0, total, 'Shape', `{\\an7\\pos(0,0)\\p1\\c&H000000&\\1a&HB8&}${ rect(PANEL.x1, PANEL.y1, PANEL.x2, PANEL.y2) }{\\p0}`);
   add(0, 0, total, 'Shape',
     `{\\an7\\pos(0,0)\\p1\\c${ YELLOW }}${ rect(LEFT_WIDTH + 44, TITLE_Y - 30, LEFT_WIDTH + 54, TITLE_Y + 30) }{\\p0}`);
-  // 标题和右边的成员、日期在同一行：标题长了就缩小，不压到右边的字（11 个字以内是原来的大小）
-  const titleLeft: number = LEFT_WIDTH + 76;
-  const titleRoom: number = W - 48 - (textWidth(tag) * TAG_SIZE) - 48 - titleLeft;
-  const titleSize: number = Math.min(TITLE_SIZE, Math.floor(titleRoom / Math.max(1, textWidth(title))));
-
-  add(1, 0, total, 'Title', `{\\an4\\pos(${ titleLeft },${ TITLE_Y })\\fs${ fontSize(titleSize, fonts) }}${ assEscape(title) }`);
+  title && add(1, 0, total, 'Title', titleText(title, tag, fonts));
   add(1, 0, total, 'Tag', `{\\an6\\pos(${ W - 48 },${ TITLE_Y })}${ assEscape(tag) }`);
   add(1, 0, total, 'Tag', `{\\an7\\pos(${ PANEL.x1 + 24 },${ PANEL.y1 + 14 })}弹幕`);
 
@@ -346,6 +376,8 @@ export function buildVideoAss(input: VideoAssInput): string {
     let end: number = segment.out + (Math.min(line.end, segment.end) - segment.start) + 0.9;
 
     if (nextStart !== null && nextStart > start) end = Math.min(Math.max(end, Math.min(nextStart, end + 0.8)), nextStart);
+
+    if (line.text.trim() === '') return; // 改字幕时清空的：不显示
 
     const caption: { text: string; size: number } = captionText(line, fonts);
 
@@ -387,7 +419,7 @@ export function buildVideoAss(input: VideoAssInput): string {
 
   return assDocument([
     style('Caption', fonts.text, fontSize(76, fonts), '&H00FFFFFF', '&H66000000', false, 2, 3, 5),
-    style('Title', fonts.heavy, fontSize(TITLE_SIZE, fonts), '&H00FFFFFF', '&H00000000', fonts.heavyBold, 1, 0, 4),
+    titleStyle(fonts),
     style('Tag', fonts.regular, fontSize(TAG_SIZE, fonts), '&H30FFFFFF', '&H00000000', false, 1, 0, 7),
     style('Danmu', fonts.regular, fontSize(DANMU.size, fonts), '&H00FFFFFF', '&H00000000', false, 0, 0, 1),
     style('Shape', 'Arial', 20, '&H00FFFFFF', '&H00000000', false, 0, 0, 7)
@@ -450,6 +482,27 @@ export function renderFilter(segments: Array<Segment>, fonts: FontSet, assFile: 
   parts.push(LOUDNESS_FILTER);
 
   return parts.join(';');
+}
+
+/**
+ * 封面候选的一帧：原片里的一帧照成片的样子排好（左边画面，右边那一刻的字幕和弹幕，没有标题），输出 [out]。
+ * 输入已经定位到那一帧；time 是它在成片里的时间
+ */
+export function frameFilter(fonts: FontSet, assFile: string, time: number): string {
+  return [
+    `[0:v]setpts=PTS-STARTPTS,scale=${ LEFT_WIDTH }:${ H }:force_original_aspect_ratio=decrease:flags=lanczos:out_range=tv,format=yuv420p,`
+      + `pad=${ LEFT_WIDTH }:${ H }:(ow-iw)/2:(oh-ih)/2:color=0x1B2030,setsar=1[vs]`,
+    `color=c=${ BACKGROUND }:s=${ W }x${ H }:r=30[bg]`,
+    `[bg][vs]overlay=0:0:shortest=1,trim=end_frame=1,setpts=${ time.toFixed(3) }/TB,${ subtitlesFilter(assFile, fonts) }[out]`
+  ].join(';');
+}
+
+/**
+ * 换掉一条字：这一块填成纯色（color 是成片里量出来的 YUV），再压上新的字幕文件，输出 [vout]
+ */
+export function retitleFilter(strip: Strip, color: { y: number; u: number; v: number }, fonts: FontSet, assFile: string): string {
+  return `[0:v]split[a][b];[b]crop=${ strip.w }:${ strip.h }:${ strip.x }:${ strip.y },lutyuv=y=${ color.y }:u=${ color.u }:v=${ color.v }[p];`
+    + `[a][p]overlay=${ strip.x }:${ strip.y }[c];[c]${ subtitlesFilter(assFile, fonts) }[vout]`;
 }
 
 /* ---------- 封面 ---------- */

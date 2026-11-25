@@ -53,6 +53,31 @@ export interface ClipScript {
   people?: Array<string>; // 除了主播以外的主角（连麦的人、被认真讨论的成员），标题里会带上；以前存下来的结果里没有这一项
 }
 
+/**
+ * 写好、等人定标题的一个切片（用户 2026-11-24 定的：Gemini 写完字幕、标题、亮点先停下来，人定好了再渲染，不满意不用返工）。
+ * 上半是写字幕那一步的结果，下半是人定的；存在爆点清单里（./highlightShow 的 ShowItem），渲染完也留着，改标题时用
+ */
+export interface ClipDraft {
+  key: string;                   // 封面候选的画面存在哪个文件夹里（见 ./highlightCover 的 coverDir）
+  basis: string;                 // 照爆点的哪个标题和说明写的（之后又改了说明，要重新写才会用上）
+  start: number;                 // 录播里从第几秒开始、多长的一段；lines 的时间从这里算
+  length: number;
+  whole?: boolean;               // 公演的唱歌、失误：整段保留，没有字幕
+  lines: Array<CaptionLine>;     // 这一段里的全部句子，时间对好了；字可以改
+  timing: string;                // 字幕的时间是怎么定的（写在说明里）
+  titles: Array<string>;         // Gemini 起的，最多三个
+  more: Array<string>;
+  description: string;
+  points: Array<string>;         // Gemini 写的亮点
+  people: Array<string>;
+  frames: Array<number>;         // 封面候选在成片里的时间（秒）
+  title: string;                 // 定的标题：画面、封面、文件名用它
+  ownTitle?: string;             // 自己写过的标题（选回 Gemini 的也记着，还能再选上）
+  frame: number;                 // 封面用第几个候选（从 0 起）
+  ownPoints?: Array<string>;     // 改过的亮点
+  ownCoverLines?: Array<string>; // 公演：改过的封面大字
+}
+
 /* 成片里连续的一段：from、to 是句子的下标，start、end 是片段里的时间，out 是它在成片里开始的时间 */
 export interface Segment {
   from: number;
