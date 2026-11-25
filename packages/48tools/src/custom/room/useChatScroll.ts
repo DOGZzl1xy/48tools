@@ -36,17 +36,18 @@ interface Position {
 
 type Pending = 'bottom' | { key: string; align: 'start' | 'center' } | null;
 
-export interface ChatScrollOptions {
-  allItems: Array<RoomMessageItem>; // 已经加载的全部消息，从旧到新
+export interface ChatScrollOptions<T extends { key: string } = RoomMessageItem> {
+  allItems: Array<T>;               // 已经加载的全部条目（消息 + 可选状态记录），从旧到新
+  newestMessageKey?: string;        // 最新一条真实消息的 key（用于判断是否提示「有新消息」，避免状态记录触发提示）
   ready: boolean;                   // 第一批已经加载完
   canLoadOlder: boolean;            // 还可以去取更早的（本地缓存或网络）
   onLoadOlder: () => void;
 }
 
-export interface ChatScroll {
+export interface ChatScroll<T extends { key: string } = RoomMessageItem> {
   scrollRef: RefObject<HTMLDivElement | null>;
   contentRef: RefObject<HTMLDivElement | null>;
-  items: Array<RoomMessageItem>;  // 要画的这一段
+  items: Array<T>;                // 要画的这一段
   start: number;                  // 这一段在 allItems 里从第几条开始
   end: number;
   away: boolean;                  // 离开了底部（显示「回到底部」）
@@ -64,8 +65,8 @@ function offsetOf(content: HTMLElement | null, key: string | undefined): number 
   return content.querySelector<HTMLElement>(`[data-key="${ CSS.escape(key) }"]`)?.offsetTop;
 }
 
-export function useChatScroll(options: ChatScrollOptions): ChatScroll {
-  const { allItems, ready, canLoadOlder, onLoadOlder }: ChatScrollOptions = options;
+export function useChatScroll<T extends { key: string } = RoomMessageItem>(options: ChatScrollOptions<T>): ChatScroll<T> {
+  const { allItems, newestMessageKey, ready, canLoadOlder, onLoadOlder }: ChatScrollOptions<T> = options;
   const scrollRef: RefObject<HTMLDivElement | null> = useRef(null);
   const contentRef: RefObject<HTMLDivElement | null> = useRef(null);
   const position: RefObject<Position> = useRef({ firstTop: 0, lastTop: 0, top: 0, atBottom: true });
@@ -78,11 +79,12 @@ export function useChatScroll(options: ChatScrollOptions): ChatScroll {
 
   const bottomIndex: number = view.bottomKey === null
     ? -1
-    : allItems.findIndex((item: RoomMessageItem): boolean => item.key === view.bottomKey);
+    : allItems.findIndex((item: T): boolean => item.key === view.bottomKey);
   const end: number = bottomIndex < 0 ? allItems.length : bottomIndex + 1;
   const start: number = Math.max(0, end - view.count);
-  const items: Array<RoomMessageItem> = start === 0 && end === allItems.length ? allItems : allItems.slice(start, end);
+  const items: Array<T> = start === 0 && end === allItems.length ? allItems : allItems.slice(start, end);
   const following: boolean = end === allItems.length; // 窗口包含最新的消息
+  const trackedNewestKey: string | undefined = newestMessageKey ?? allItems[allItems.length - 1]?.key;
 
   function setWindow(newStart: number, newEnd: number): void {
     const bottomKey: string | null = newEnd >= allItems.length ? null : allItems[newEnd - 1].key;
@@ -111,7 +113,7 @@ export function useChatScroll(options: ChatScrollOptions): ChatScroll {
       lastTop: offsetOf(contentRef.current, lastKey) ?? 0,
       top: el.scrollTop,
       atBottom: following && (position.current.atBottom || nearBottom(el, BOTTOM_GAP)),
-      newestKey: allItems[allItems.length - 1]?.key
+      newestKey: trackedNewestKey
     };
   }
 
@@ -180,7 +182,7 @@ export function useChatScroll(options: ChatScrollOptions): ChatScroll {
   }
 
   function jumpTo(key: string, align: 'start' | 'center'): boolean {
-    const index: number = allItems.findIndex((item: RoomMessageItem): boolean => item.key === key);
+    const index: number = allItems.findIndex((item: T): boolean => item.key === key);
 
     if (index < 0) return false;
 
@@ -228,7 +230,7 @@ export function useChatScroll(options: ChatScrollOptions): ChatScroll {
 
     const prev: Position = position.current;
     const job: Pending = pending.current;
-    const newestKey: string | undefined = allItems[allItems.length - 1]?.key;
+    const newestKey: string | undefined = trackedNewestKey;
 
     if (job === 'bottom') {
       el.scrollTop = el.scrollHeight;

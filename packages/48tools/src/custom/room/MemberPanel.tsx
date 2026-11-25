@@ -12,6 +12,9 @@ import { openRoom, searchMembers, toggleFollow, type RoomState, type RoomMember 
 import { useMemberDirectory, teamOf, type DirectoryState } from './memberDirectory';
 import { searchDirectory, type DirectoryMember } from './memberSearch';
 import type { UnreadState } from './unreadStore';
+import { usePresenceState, presenceLabel, type MemberPresence, type PresenceState } from './presenceStore';
+import PresenceDot from './PresenceDot';
+import { useTimeZone } from '../time/appTime';
 
 /**
  * 房间页面左边的成员栏：搜索成员，下面是关注列表（从 RoomPage 里拆出来的）。
@@ -44,6 +47,7 @@ function mergeResults(fromApi: Array<RoomMember>, fromDirectory: Array<Directory
 interface MemberRowProps {
   member: RoomMember;
   team?: { label: string; title: string };
+  presence?: MemberPresence;
   active: boolean;
   followed: boolean;
   unread: number; // 未读消息数，0 就不显示气泡
@@ -52,7 +56,8 @@ interface MemberRowProps {
 }
 
 function MemberRow(props: MemberRowProps): ReactElement {
-  const { member, team, active, followed, unread, compact, onOpen }: MemberRowProps = props;
+  const { member, team, presence, active, followed, unread, compact, onOpen }: MemberRowProps = props;
+  const showDot: boolean = followed || presence !== undefined;
   const row: ReactElement = (
     <div className={ `room-member${ active ? ' is-active' : '' }` }
       role="button"
@@ -67,7 +72,13 @@ function MemberRow(props: MemberRowProps): ReactElement {
       } }
     >
       <Badge className="room-unread" count={ unread } overflowCount={ 99 } size="small" offset={ [-3, 3] } title={ `${ unread } 条未读消息` }>
-        <Avatar size={ 36 } src={ member.avatar || undefined }>{ member.name.slice(-2) }</Avatar>
+        <PresenceDot visible={ showDot }
+          presence={ presence }
+          size="sm"
+          tooltip={ !compact }
+        >
+          <Avatar size={ 36 } src={ member.avatar || undefined }>{ member.name.slice(-2) }</Avatar>
+        </PresenceDot>
       </Badge>
       {
         compact ? null : (
@@ -96,8 +107,14 @@ function MemberRow(props: MemberRowProps): ReactElement {
     </div>
   );
 
+  const compactTitle: string = [
+    member.name,
+    team?.label,
+    showDot ? presenceLabel(presence) : undefined
+  ].filter(Boolean).join(' · ');
+
   return compact
-    ? <Tooltip title={ team ? `${ member.name } · ${ team.label }` : member.name } placement="right" mouseEnterDelay={ 0.3 }>{ row }</Tooltip>
+    ? <Tooltip title={ compactTitle } placement="right" mouseEnterDelay={ 0.3 }>{ row }</Tooltip>
     : row;
 }
 
@@ -112,6 +129,8 @@ interface MemberPanelProps {
 function MemberPanel(props: MemberPanelProps): ReactElement {
   const { state, counts, loggedIn, collapsed, onToggleCollapsed }: MemberPanelProps = props;
   const directory: DirectoryState = useMemberDirectory();
+  const presence: PresenceState = usePresenceState();
+  const zone: string = useTimeZone();
   const [keyword, setKeyword]: [string, D<S<string>>] = useState('');
   const [results, setResults]: [Array<RoomMember> | null, D<S<Array<RoomMember> | null>>] = useState<Array<RoomMember> | null>(null);
   const [searching, setSearching]: [boolean, D<S<boolean>>] = useState(false);
@@ -211,6 +230,7 @@ function MemberPanel(props: MemberPanelProps): ReactElement {
             <MemberRow key={ member.ownerId }
               member={ member }
               team={ teamOf(directory, member.ownerId) }
+              presence={ presence.byOwner[member.ownerId] }
               active={ state.current?.ownerId === member.ownerId }
               followed={ hasMember(state.follows, member.ownerId) }
               unread={ hasMember(state.follows, member.ownerId) ? (counts[member.ownerId] ?? 0) : 0 }

@@ -117,6 +117,7 @@
     outline-offset: -2px
 
   &.is-active
+    --presence-ring: var(--shell-active-bg)
     background: var(--shell-active-bg)
 
     .room-member-name
@@ -132,6 +133,42 @@
 
   .ant-badge-count
     box-shadow: 0 0 0 2px var(--shell-bg)
+
+// 头像右下角的在线状态小点（在线 = 主题色，离线 = 灰色；描边随容器底色，与右上角未读气泡互不遮挡）
+.room-avatar-presence
+  position: relative
+  display: inline-flex
+  flex: none
+  line-height: 1
+
+.room-presence-dot
+  position: absolute
+  right: -1px
+  bottom: -1px
+  z-index: 1
+  box-sizing: border-box
+  width: 12px
+  height: 12px
+  border: 2px solid var(--presence-ring, var(--shell-bg))
+  border-radius: 50%
+  background: color-mix(in srgb, var(--shell-text) 45%, var(--shell-surface)) // 离线：实心的灰点，要和「未知」的空心圈一眼分得出来
+  transition: background-color .22s ease, box-shadow .22s ease, border-color .12s ease
+
+  &.is-md
+    right: -1px
+    bottom: -1px
+    width: 14px
+    height: 14px
+    border-width: 2.5px
+
+  &.is-online
+    background: var(--shell-primary)
+    box-shadow: 0 1px 5px color-mix(in srgb, var(--shell-primary) 45%, transparent)
+
+  // 状态未知（stale=true / 服务断连 / 未同步）：灰色空心环，不误标为离线
+  &.is-unknown
+    background: var(--presence-ring, var(--shell-bg))
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--shell-text) 32%, var(--shell-surface))
 
 .room-member-name
   display: flex
@@ -192,6 +229,7 @@
   padding: 40px 0
 
 .room-chat-header
+  --presence-ring: var(--shell-surface)
   display: flex
   flex: none
   align-items: center
@@ -199,6 +237,36 @@
   height: 60px
   padding: 0 16px
   border-bottom: 1px solid var(--shell-border)
+
+// 房间标题里的当前状态：在线（主题色）/ 离线 / 状态未知，前面带一个和头像圆点一样的小点
+.room-chat-status
+  font-weight: 500
+
+  &::before
+    display: inline-block
+    box-sizing: border-box
+    width: 7px
+    height: 7px
+    margin-right: 5px
+    border-radius: 50%
+    background: currentcolor
+    vertical-align: 1px
+    content: ''
+
+  &.is-online
+    color: var(--accent-text, var(--shell-primary))
+
+  &.is-offline
+    color: var(--shell-text-secondary)
+
+  // 状态未知：空心的小圈（和头像上的一样），鼠标放上去有原因
+  &.is-unknown
+    color: var(--shell-text-tertiary)
+    cursor: help
+
+    &::before
+      border: 1.5px solid currentcolor
+      background: transparent
 
 .room-chat-title
   display: flex
@@ -329,6 +397,33 @@
     background: var(--shell-primary)
     opacity: .35
     content: ''
+
+// 聊天记录里的上下线记录（居中、弱化，与正常消息气泡明显区分，不作为消息提示）
+.room-presence-event
+  display: flex
+  align-items: center
+  justify-content: center
+  gap: 6px
+  margin: 10px 0 4px
+  color: var(--shell-text-tertiary)
+  font-size: 12px
+  line-height: 1.5
+  user-select: none
+
+  time
+    font-size: 11px
+    font-variant-numeric: tabular-nums
+    opacity: .85
+
+.room-presence-event-dot
+  flex: none
+  width: 6px
+  height: 6px
+  border-radius: 50%
+  background: color-mix(in srgb, var(--shell-text) 26%, var(--shell-surface))
+
+.room-presence-event.is-online .room-presence-event-dot
+  background: var(--shell-primary)
 
 .room-message
   display: flex

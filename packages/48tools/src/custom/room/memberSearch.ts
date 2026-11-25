@@ -9,6 +9,8 @@ export interface DirectoryMember {
   team?: string;   // TEAM NII、预备生……（名单里原样的写法）
   group?: string;  // SNH48、GNZ48……
   pinyin?: string; // shen xin
+  account?: string;  // 成员的云信账号（部分成员公开名单自带）
+  serverId?: number; // 成员的圈组房间 ID
 }
 
 /* 队伍的短写法：「TEAM NII」→「NII」，其他（预备生、荣誉毕业生……）原样 */

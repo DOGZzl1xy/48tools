@@ -30,6 +30,8 @@ import { messageText } from '../room/roomSearchText';
 import { emojiText } from '../room/emojiText';
 import { roomClock, type RoomClock } from '../room/roomTime';
 import { useMemberDirectory, loadMemberDirectory, teamOf, type DirectoryState } from '../room/memberDirectory';
+import { usePresenceState, type MemberPresence, type PresenceState } from '../room/presenceStore';
+import PresenceDot from '../room/PresenceDot';
 import { useTimeZone } from '../time/appTime';
 
 /**
@@ -76,6 +78,7 @@ function FollowedMembers(props: {}): ReactElement {
   const room: RoomState = useRoomState();
   const unread: UnreadState = useUnreadState();
   const directory: DirectoryState = useMemberDirectory();
+  const presence: PresenceState = usePresenceState();
   const zone: string = useTimeZone();
   const [cached, setCached]: [Record<number, CustomMessageV2>, D<S<Record<number, CustomMessageV2>>>] = useState({});
 
@@ -121,6 +124,7 @@ function FollowedMembers(props: {}): ReactElement {
           const raw: CustomMessageV2 | undefined = loaded ?? cached[member.ownerId];
           const clock: RoomClock | undefined = raw ? roomClock(raw.msgTime, zone) : undefined;
           const team: { label: string; title: string } | undefined = teamOf(directory, member.ownerId);
+          const memberPresence: MemberPresence | undefined = presence.byOwner[member.ownerId];
 
           return (
             <button key={ member.ownerId }
@@ -132,7 +136,12 @@ function FollowedMembers(props: {}): ReactElement {
               } }
             >
               <Badge count={ unread.counts[member.ownerId] ?? 0 } overflowCount={ 99 } size="small" offset={ [-4, 4] }>
-                <Avatar size={ 44 } src={ member.avatar || undefined }>{ member.name.slice(-2) }</Avatar>
+                <PresenceDot visible={ true }
+                  presence={ memberPresence }
+                  size="md"
+                >
+                  <Avatar size={ 44 } src={ member.avatar || undefined }>{ member.name.slice(-2) }</Avatar>
+                </PresenceDot>
               </Badge>
               <span className="home-member-text">
                 <b>

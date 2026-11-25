@@ -91,6 +91,7 @@ const PAGE_GAP: number = 120;          // 补「全部消息」时每取一批�
 const MAX_CATCH_UP_PAGES: Record<RoomStream, number> = { owner: 60, all: 100 };
 const roomsKey: Record<RoomStream, 'rooms' | 'allRooms'> = { owner: 'rooms', all: 'allRooms' };
 const listeners: Set<() => void> = new Set();
+const followListeners: Set<(member: RoomMember, followed: boolean) => void> = new Set();
 
 function isMember(value: unknown): value is RoomMember {
   return Boolean(value) && typeof (value as RoomMember).ownerId === 'number' && typeof (value as RoomMember).name === 'string';
@@ -149,8 +150,17 @@ export function isFollowed(ownerId: number): boolean {
   return state.follows.some((member: RoomMember): boolean => member.ownerId === ownerId);
 }
 
+export function onFollowChange(listener: (member: RoomMember, followed: boolean) => void): () => void {
+  followListeners.add(listener);
+
+  return (): void => {
+    followListeners.delete(listener);
+  };
+}
+
 export function toggleFollow(member: RoomMember): void {
-  const follows: Array<RoomMember> = isFollowed(member.ownerId)
+  const wasFollowed: boolean = isFollowed(member.ownerId);
+  const follows: Array<RoomMember> = wasFollowed
     ? state.follows.filter((item: RoomMember): boolean => item.ownerId !== member.ownerId)
     : [...state.follows, { ownerId: member.ownerId, name: member.name, avatar: member.avatar }];
 
@@ -159,6 +169,8 @@ export function toggleFollow(member: RoomMember): void {
   } catch { /* noop */ }
 
   setState({ follows });
+
+  for (const listener of followListeners) listener(member, !wasFollowed);
 }
 
 /* 上次打开的房间（重新进入页面时恢复） */
@@ -556,4 +568,5 @@ export async function readAllCached(member: RoomMember, stream: RoomStream): Pro
 export function resetRoomStoreForTest(): void {
   state = { follows: [], current: undefined, rooms: {}, allRooms: {}, mode: 'owner' };
   listeners.clear();
+  followListeners.clear();
 }

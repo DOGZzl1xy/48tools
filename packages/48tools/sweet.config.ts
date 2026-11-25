@@ -80,6 +80,7 @@ const externalsName: Array<string> = nodeModules([
   'stream/promises',
   'timers',
   'timers/promises',
+  'tls',
   'url',
   'util',
   'zlib' // custom/bilibili：B 站弹幕包是 brotli 压缩的

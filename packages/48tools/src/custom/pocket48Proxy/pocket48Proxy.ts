@@ -28,6 +28,10 @@ export interface Pocket48LocalConfig {
   downloadDir?: string; // 保存文件时默认打开的文件夹，见 custom/download/defaultSaveDir
   liveRecordDir?: string; // 直播自动录制保存的文件夹（优先于界面里配置的目录），见 custom/live/liveRecording
   liveRecordFormat?: 'flv' | 'mp4' | 'mp4-compress'; // 直播录完后是否转成 mp4（mp4：无损封装；mp4-compress：重新编码压缩）
+  presenceUrl?: string; // 在线状态服务地址（配置在 local/，不入库）
+  presenceKey?: string; // 在线状态服务鉴权密钥
+  presenceCert?: string; // 自签证书公钥文件路径（用于证书 pin）
+  presenceCertPin?: string; // 可选：证书 SHA-256 指纹（用于证书 pin）
 }
 
 let localConfig: Pocket48LocalConfig | undefined;

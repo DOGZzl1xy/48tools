@@ -34,6 +34,7 @@ import type { ProxyState } from '../pocket48Api/apiErrorText';
 import RoomUnreadBadge from '../room/RoomUnreadBadge';
 import HighlightsBadge from '../highlight/HighlightsBadge';
 import { startUnreadWatcher } from '../room/unreadWatcher';
+import { startPresenceWatcher } from '../room/presenceWatcher';
 import { autoStartAutoGrab } from '../live/autoGrabRunner';
 import { resumeReplayGrabs } from '../live/replayGrab';
 import { startGongyanWatcher } from '../bilibili/gongyanWatcher';
@@ -162,6 +163,7 @@ function AppShell(props: Required<PropsWithChildren>): ReactElement {
 
   // 后台检查关注成员的房间有没有新消息（只启动一次，程序开着就一直检查）
   useEffect(startUnreadWatcher, []);
+  useEffect(startPresenceWatcher, []);
 
   // 启动后：自动开始自动抓取（设置里可以关），清理很久以前存的语音文件
   useEffect(function(): void {

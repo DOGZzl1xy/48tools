@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type RefObject, type Dispatch as D, type SetStateAction as S } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type RefObject, type Dispatch as D, type SetStateAction as S } from 'react';
 import { App, Avatar, Button, Dropdown, Empty, Segmented, Spin, Tooltip } from 'antd';
 import type { useAppProps } from 'antd/es/app/context';
 import {
@@ -12,6 +12,7 @@ import {
 } from '@ant-design/icons';
 import type { CustomMessageV2 } from '@48tools-api/48';
 import MessageBubble from './MessageBubble';
+import PresenceDot from './PresenceDot';
 import RoomSearch from './RoomSearch';
 import { useChatScroll, type ChatScroll } from './useChatScroll';
 import { exportRoom, downloadRoomBackground } from './roomExport';
@@ -19,6 +20,17 @@ import { roomClock, type RoomClock } from './roomTime';
 import { useMemberDirectory, teamOf, type DirectoryState } from './memberDirectory';
 import { teamLabel } from './memberSearch';
 import { useTimeZone } from '../time/appTime';
+import {
+  usePresenceState,
+  loadPresenceHistory,
+  mergeChatTimeline,
+  presenceLabel,
+  presenceReason,
+  type ChatTimelineItem,
+  type MemberPresence,
+  type PresenceEvent,
+  type PresenceState
+} from './presenceStore';
 import {
   loadOlder,
   loadBackTo,
@@ -58,28 +70,47 @@ function ChatView(props: ChatViewProps): ReactElement {
   const { member, room, mode, followed, divider }: ChatViewProps = props;
   const { message: messageApi, modal: modalApi }: useAppProps = App.useApp();
   const directory: DirectoryState = useMemberDirectory();
+  const presence: PresenceState = usePresenceState();
   const zone: string = useTimeZone();
   const allItems: Array<RoomMessageItem> = room.items;
-  const chat: ChatScroll = useChatScroll({
-    allItems,
+  const memberPresence: MemberPresence | undefined = presence.byOwner[member.ownerId];
+  const memberEvents: Array<PresenceEvent> | undefined = presence.events[member.ownerId];
+  // 标题里显示当前状态（在线 / 离线 / 状态未知）：配置了在线状态服务，而且是关注的成员（或者已经有她的状态）
+  const showPresence: boolean = presence.service.configured && (followed || memberPresence !== undefined);
+  const reachedStart: boolean = room.opened && !room.hasMore && !room.cacheMore;
+  const timelineItems: Array<ChatTimelineItem> = useMemo(
+    (): Array<ChatTimelineItem> => mergeChatTimeline(allItems, memberEvents ?? [], reachedStart),
+    [allItems, memberEvents, reachedStart]
+  );
+  const newestMessageKey: string | undefined = allItems[allItems.length - 1]?.key;
+  const chat: ChatScroll<ChatTimelineItem> = useChatScroll<ChatTimelineItem>({
+    allItems: timelineItems,
+    newestMessageKey,
     ready: room.opened,
     canLoadOlder: Boolean(room.cacheMore || room.hasMore) && !room.loading && !room.error,
     onLoadOlder(): void {
       loadOlder(member, mode);
     }
   });
-  const { items }: ChatScroll = chat;
+  const { items }: ChatScroll<ChatTimelineItem> = chat;
   const [searchOpen, setSearchOpen]: [boolean, D<S<boolean>>] = useState(false);
   const [target, setTarget]: [string | undefined, D<S<string | undefined>>] = useState<string | undefined>(undefined); // 等着跳过去的那一条
   const memberTeam: { label: string; title: string } | undefined = teamOf(directory, member.ownerId);
 
-  // 「以下是新消息」画在哪条消息上面：进入房间时没看过的第一条。它前面要有已经看过的消息才画，
-  // 不然更早的消息加载出来时这条线会跟着跳
-  const dividerIndex: number = divider === undefined
+  // 进入房间时读取本机缓存的上下线记录（只读一次，不影响未读数）
+  useEffect(function(): void {
+    void loadPresenceHistory(member.ownerId);
+  }, [member.ownerId]);
+
+  // 「以下是新消息」画在哪条真实消息上面：进入房间时没看过的第一条（上下线记录不算消息，不挂分隔线）
+  const dividerMsgIndex: number = divider === undefined
     ? -1
     : allItems.findIndex((item: RoomMessageItem): boolean => item.raw.msgTime > divider);
-  const dividerKey: string | undefined = dividerIndex > 0 ? allItems[dividerIndex].key : undefined;
-  const newCount: number = dividerIndex > 0 ? allItems.length - dividerIndex : 0;
+  const dividerKey: string | undefined = dividerMsgIndex > 0 ? allItems[dividerMsgIndex].key : undefined;
+  const dividerTimelineIndex: number = dividerKey === undefined
+    ? -1
+    : timelineItems.findIndex((entry: ChatTimelineItem): boolean => entry.key === dividerKey);
+  const newCount: number = dividerMsgIndex > 0 ? allItems.length - dividerMsgIndex : 0;
 
   // 「N 条新消息」按钮：分隔线在屏幕上方（或者在还没画出来的更上面）时显示；点过，或者自己往上滚到看见分隔线之后就不再显示
   const dividerRef: RefObject<HTMLDivElement | null> = useRef(null);
@@ -93,7 +124,7 @@ function ChatView(props: ChatViewProps): ReactElement {
     if (!el || dividerKey === undefined) return false;
 
     // 分隔线没画出来：看它是在画出来的这一段的上面还是下面
-    if (!dividerRef.current) return dividerIndex < chat.start;
+    if (!dividerRef.current) return dividerTimelineIndex >= 0 && dividerTimelineIndex < chat.start;
 
     return dividerRef.current.getBoundingClientRect().top < el.getBoundingClientRect().top;
   }
@@ -187,13 +218,28 @@ function ChatView(props: ChatViewProps): ReactElement {
   return (
     <section className="room-chat">
       <header className="room-chat-header">
-        <Avatar size={ 36 } src={ member.avatar || undefined }>{ member.name.slice(-2) }</Avatar>
+        <PresenceDot visible={ showPresence }
+          presence={ memberPresence }
+          size="sm"
+        >
+          <Avatar size={ 36 } src={ member.avatar || undefined }>{ member.name.slice(-2) }</Avatar>
+        </PresenceDot>
         <div className="room-chat-title">
           <b>
             <span>{ member.name }</span>
             { memberTeam ? <span className="room-team" title={ memberTeam.title }>{ memberTeam.label }</span> : null }
           </b>
           <small>
+            {
+              showPresence ? (
+                <span className={ `room-chat-status is-${ memberPresence?.status ?? 'unknown' }` }
+                  title={ presenceReason(memberPresence, presence.service, Boolean(presence.unresolved[member.ownerId])) }
+                >
+                  { presenceLabel(memberPresence) }
+                </span>
+              ) : null
+            }
+            { showPresence ? ' · ' : null }
             已加载 { allItems.length } 条
             { room.fromCache ? ' · 含本地缓存' : '' }
             { room.syncing ? ' · 正在取新消息…' : '' }
@@ -246,15 +292,38 @@ function ChatView(props: ChatViewProps): ReactElement {
               { room.opened && !room.hasMore && !room.cacheMore && !room.loading && allItems.length > 0 && chat.start === 0 ? '没有更早的消息了' : null }
             </div>
             {
-              items.map((item: RoomMessageItem): ReactElement => {
-                const clock: RoomClock = roomClock(item.raw.msgTime, zone);
+              items.map((entry: ChatTimelineItem): ReactElement => {
+                const clock: RoomClock = roomClock(entry.time, zone);
                 const showDay: boolean = clock.day !== lastDay;
+
+                lastDay = clock.day;
+
+                if (entry.kind === 'presence') {
+                  lastSender = undefined;
+                  lastTime = entry.time;
+
+                  const isOnline: boolean = entry.event.kind === 'online';
+
+                  return (
+                    <Fragment key={ entry.key }>
+                      { showDay ? <div className="room-day"><span>{ clock.day }</span></div> : null }
+                      <div className={ `room-presence-event${ isOnline ? ' is-online' : ' is-offline' }` }
+                        data-key={ entry.key }
+                      >
+                        <span className="room-presence-event-dot" aria-hidden="true" />
+                        <span>{ member.name } { isOnline ? '上线' : '下线' }</span>
+                        <time title={ clock.full }>{ clock.time }</time>
+                      </div>
+                    </Fragment>
+                  );
+                }
+
+                const item: RoomMessageItem = entry.item;
                 const senderId: number | undefined = item.message.user?.userId;
                 const isMember: boolean = item.message.user?.roleId === 3; // 成员（房主，或者来串门的别的成员）；其他的是粉丝
                 // 每条消息左边都有头像；只有同一个人在 2 分钟内连着发的几条，才省略后面几条的头像
                 const showAvatar: boolean = showDay || senderId !== lastSender || item.raw.msgTime - lastTime > 120_000;
 
-                lastDay = clock.day;
                 lastSender = senderId;
                 lastTime = item.raw.msgTime;
 
@@ -278,7 +347,7 @@ function ChatView(props: ChatViewProps): ReactElement {
             }
             { !room.opened && room.loading ? <div className="room-center"><Spin /></div> : null }
             {
-              room.opened && allItems.length === 0 && !room.loading && !room.error
+              room.opened && timelineItems.length === 0 && !room.loading && !room.error
                 ? <Empty className="pt-[60px]" description="这个房间还没有消息" />
                 : null
             }

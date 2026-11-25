@@ -47,9 +47,11 @@ function fromSaved(): void {
 
 if (typeof localStorage !== 'undefined') fromSaved();
 
-/* 需要时更新名单（一天一次）；页面打开时调用，多次调用没关系 */
+/* 需要时更新名单（一天一次）；旧缓存还没带 serverId 字段时立即刷新一次 */
 export async function loadMemberDirectory(): Promise<void> {
-  if (loading || (state.members.length > 0 && Date.now() - fetchedAt < REFRESH_AFTER)) return;
+  const hasServerIds: boolean = state.members.some((item: DirectoryMember): boolean => typeof item.serverId === 'number');
+
+  if (loading || (state.members.length > 0 && hasServerIds && Date.now() - fetchedAt < REFRESH_AFTER)) return;
 
   loading = true;
 
@@ -62,7 +64,9 @@ export async function loadMemberDirectory(): Promise<void> {
         name: item.ownerName,
         team: item.team,
         group: item.groupName,
-        pinyin: item.pinyin
+        pinyin: item.pinyin,
+        account: item.account,
+        serverId: item.serverId
       }));
 
     if (members.length > 0) {
