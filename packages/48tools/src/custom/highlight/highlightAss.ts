@@ -498,6 +498,19 @@ export function frameFilter(fonts: FontSet, assFile: string, time: number): stri
 }
 
 /**
+ * 别的封面候选（上传的截图、播放时选的一帧、电台封面库的照片）：已经排好的一帧（[0:v]）左边的画面换成这张图（[1:v]），输出 [out]。
+ * 右边那一刻的字幕和弹幕留着：做封面时会被磨砂玻璃盖住，看不清
+ */
+export function pictureFrameFilter(): string {
+  return [
+    '[0:v]scale=out_range=tv,format=yuv420p[base]',
+    `[1:v]scale=${ LEFT_WIDTH }:${ H }:force_original_aspect_ratio=decrease:flags=lanczos:out_range=tv,format=yuv420p,`
+      + `pad=${ LEFT_WIDTH }:${ H }:(ow-iw)/2:(oh-ih)/2:color=0x1B2030,setsar=1[vs]`,
+    '[base][vs]overlay=0:0[out]'
+  ].join(';');
+}
+
+/**
  * 换掉一条字：这一块填成纯色（color 是成片里量出来的 YUV），再压上新的字幕文件，输出 [vout]
  */
 export function retitleFilter(strip: Strip, color: { y: number; u: number; v: number }, fonts: FontSet, assFile: string): string {

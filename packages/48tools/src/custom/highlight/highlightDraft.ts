@@ -47,6 +47,7 @@ export interface DraftInput {
   timing: string;
   whole: boolean;
   frames: Array<number>;
+  pictures?: Array<string>; // 别的封面候选（电台封面库的照片）
   frame: number;
 }
 
@@ -74,6 +75,7 @@ export function newDraft(highlight: Pick<Highlight, 'title' | 'reason' | 'coverT
     points: script.points,
     people: script.people ?? [],
     frames: input.frames,
+    ...(input.pictures && input.pictures.length > 0 ? { pictures: input.pictures } : {}),
     title: highlight.coverTitle ?? script.title,
     ...(highlight.coverTitle ? { ownTitle: highlight.coverTitle } : {}),
     frame: input.frame
@@ -133,6 +135,21 @@ export function editCoverLine(highlight: Highlight, draft: ClipDraft, index: num
   const next: Array<string> | undefined = editList(wrote, ownCoverLines ?? wrote, index, text);
 
   return next ? { ...rest, ownCoverLines: next } : rest;
+}
+
+/* 封面候选一共几个：录播里取的，加上别的图（上传的、播放时选的、电台封面库的） */
+export function candidateCount(draft: Pick<ClipDraft, 'frames' | 'pictures'>): number {
+  return draft.frames.length + (draft.pictures?.length ?? 0);
+}
+
+/* 加一张别的图当封面候选，并且就用它；已经有了就直接用 */
+export function pickPicture(draft: ClipDraft, entry: string): ClipDraft {
+  const pictures: Array<string> = draft.pictures ?? [];
+  const at: number = pictures.indexOf(entry);
+
+  if (at >= 0) return { ...draft, frame: draft.frames.length + at };
+
+  return { ...draft, pictures: [...pictures, entry], frame: draft.frames.length + pictures.length };
 }
 
 /* 改一句字幕的字；清空就是这一句不显示（声音还在） */

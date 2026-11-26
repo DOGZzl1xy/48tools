@@ -607,6 +607,26 @@ export function readScript(data: any, highlight: Highlight, member: string = '')
   };
 }
 
+/* 电台切片的封面照片：她以前直播、电台的封面和轮播图排个序（见 ./radioPhotos） */
+export function photoRankRequest(member: string, imagesBase64: Array<string>): GeminiAsk {
+  return {
+    parts: [
+      {
+        text: `下面是 ${ member } 的 ${ imagesBase64.length } 张照片（她以前直播、电台的封面和轮播图，按顺序是第 1 到第 ${ imagesBase64.length } 张），`
+          + '要从里面给她的电台切片挑封面照片。按适合做封面的程度排序：她一个人、脸清楚不糊、眼睛睁开、表情自然好看的排前面；'
+          + '看不清她的脸、没有人、主要是文字或截图、表情包、多人合照里认不出是她的，都不要写进去。'
+          + 'order 按从好到差填第几张，最多 12 个。'
+      },
+      ...imagesBase64.map((data: string): GeminiPart => ({ inlineData: { mimeType: 'image/jpeg', data } }))
+    ],
+    schema: {
+      type: 'OBJECT',
+      properties: { order: { type: 'ARRAY', items: { type: 'INTEGER' } }, reason: { type: 'STRING' } },
+      required: ['order', 'reason']
+    }
+  };
+}
+
 /* 第 3 步：挑封面 */
 export function coverRequest(imagesBase64: Array<string>): GeminiAsk {
   return {

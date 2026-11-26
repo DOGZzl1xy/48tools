@@ -1,7 +1,10 @@
+import { createHash } from 'node:crypto';
 import { promises as fsP } from 'node:fs';
 import * as path from 'node:path';
 import { runFfmpeg } from './highlightFfmpeg';
-import { buildCoverAss, buildVideoAss, coverFilter, frameFilter, COVER_WIDTHS, LEFT_WIDTH, type FontSet, type PlacedDanmu } from './highlightAss';
+import {
+  buildCoverAss, buildVideoAss, coverFilter, frameFilter, pictureFrameFilter, COVER_WIDTHS, LEFT_WIDTH, type FontSet, type PlacedDanmu
+} from './highlightAss';
 import { buildStageCoverAss, stageCoverFilter, stageFrameFilter, STAGE_VIDEO, type StageInfo } from './highlightStageAss';
 import { coverTag, draftCoverLines, draftPoints, draftSegments, fromOut, lookOf, videoTag } from './highlightDraft';
 import type { ClipDraft, Highlight } from './highlightTypes';
@@ -10,9 +13,13 @@ import type { ClipDraft, Highlight } from './highlightTypes';
  * 切片的封面。写完标题、还没渲染时就要给人看真的封面，所以不从成片里取画面：写的时候从录播里取几帧，
  * 照成片的样子排好（左边画面，右边那一刻的字幕和弹幕，没有标题），存在切片文件夹的 .covers 里；
  * 定标题时预览、渲染完的封面、渲染完再改标题，都从这几帧做，看到的和最后的是同一张。
- * 接入点：./highlightPipeline（写、渲染、改标题），./coverPreview（预览）。
+ * 除了从录播里取的，还可以用别的图（用户 2026-11-26 要的）：自己上传的截图、播放时停在哪一帧就用哪一帧、电台封面库里的照片（./radioPhotos），
+ * 记在草稿的 pictures 里，排在录播取的后面；用到的时候才照成片的样子排好（ensureFrame）。
+ * 接入点：./highlightPipeline（写、渲染、改标题），./coverPreview（预览），./DraftPanel（加图）。
  */
 const COVER_FOLDER: string = '.covers';
+
+export const LIBRARY_FOLDER: string = '封面库'; // 电台封面库（./radioPhotos）：切片保存位置下面的这个文件夹
 
 export interface CoverJob {
   member: string;
@@ -41,6 +48,135 @@ export function thumbFile(dir: string, index: number): string {
 /* 做好的封面：16:9 和 4:3 */
 export function coverFiles(dir: string): { wide: string; standard: string } {
   return { wide: path.join(dir, 'cover-wide.jpg'), standard: path.join(dir, 'cover-standard.jpg') };
+}
+
+/* ---------- 别的图（pictures） ---------- */
+type Candidates = Pick<ClipDraft, 'frames' | 'pictures'>;
+
+/* pictures 里的一项是哪个文件：coverDir 里的只记名字，封面库的记完整路径 */
+export function picturePath(dir: string, entry: string): string {
+  return path.isAbsolute(entry) ? entry : path.join(dir, entry);
+}
+
+/* 封面库里一张照片的小图：放在库里（几个切片共用） */
+export function libraryThumb(file: string): string {
+  return path.join(path.dirname(file), '.thumbs', path.basename(file));
+}
+
+function pictureId(entry: string): string {
+  return path.isAbsolute(entry) ? `lib-${ createHash('sha1').update(entry.toLowerCase()).digest('hex').slice(0, 12) }` : path.parse(entry).name;
+}
+
+function pictureOf(draft: Candidates, index: number): string | undefined {
+  return index >= draft.frames.length ? draft.pictures?.[index - draft.frames.length] : undefined;
+}
+
+/* 第几个候选给人挑的小图 */
+export function candidateThumb(dir: string, draft: Candidates, index: number): string {
+  const entry: string | undefined = pictureOf(draft, index);
+
+  if (!entry) return thumbFile(dir, index);
+
+  return path.isAbsolute(entry) ? libraryThumb(entry) : path.join(dir, `${ pictureId(entry) }.thumb.jpg`);
+}
+
+/* 第几个候选排好的整张（做封面用） */
+export function candidateFrame(dir: string, draft: Candidates, index: number): string {
+  const entry: string | undefined = pictureOf(draft, index);
+
+  return entry ? path.join(dir, `${ pictureId(entry) }.frame.jpg`) : frameFile(dir, index);
+}
+
+/* 小图：直播、电台和录播取的一样大（竖的，左边那一块），公演是横的 */
+export async function makePictureThumb(ffmpeg: string, picture: string, thumb: string, stage: boolean, signal?: AbortSignal): Promise<void> {
+  const [width, height, color]: [number, number, string] = stage ? [480, 270, '0x101215'] : [304, 540, '0x1B2030'];
+
+  await fsP.mkdir(path.dirname(thumb), { recursive: true });
+  await runFfmpeg(ffmpeg, [
+    '-y', '-v', 'error', '-i', picture,
+    '-vf', `scale=${ width }:${ height }:force_original_aspect_ratio=decrease:flags=lanczos,pad=${ width }:${ height }:(ow-iw)/2:(oh-ih)/2:color=${ color },setsar=1`,
+    '-frames:v', '1', '-q:v', '4', `${ thumb }.part.jpg`
+  ], { signal });
+  await fsP.rename(`${ thumb }.part.jpg`, thumb);
+}
+
+function exists(file: string): Promise<boolean> {
+  return fsP.access(file).then((): boolean => true, (): boolean => false);
+}
+
+/* 是封面库里的照片（库在切片保存位置下面的「封面库」，见 ./radioPhotos） */
+export function isLibraryFile(file: string): boolean {
+  return path.resolve(file).split(path.sep).includes(LIBRARY_FOLDER);
+}
+
+/**
+ * 自己选的一张图（上传的截图、封面库里的照片）当封面候选：封面库里的直接用（记完整路径），别的转成 jpg 存进 coverDir；做好小图
+ * @return { Promise<string> } 记在草稿 pictures 里的
+ */
+export async function addPicture(ffmpeg: string, dir: string, file: string, stage: boolean, signal?: AbortSignal): Promise<string> {
+  if (isLibraryFile(file)) {
+    (await exists(libraryThumb(file))) || await makePictureThumb(ffmpeg, file, libraryThumb(file), stage, signal);
+
+    return path.resolve(file);
+  }
+
+  const name: string = `picture-${ Date.now() }.jpg`;
+
+  await fsP.mkdir(dir, { recursive: true });
+  // 太大的照片缩一下（高最多 2160）；读不了的格式 ffmpeg 会报错
+  await runFfmpeg(ffmpeg, [
+    '-y', '-v', 'error', '-i', file, '-vf', 'scale=-2:\'2*trunc(min(ih,2160)/2)\':flags=lanczos', '-frames:v', '1', '-q:v', '2', path.join(dir, name)
+  ], { signal });
+  await makePictureThumb(ffmpeg, path.join(dir, name), candidateThumb(dir, { frames: [], pictures: [name] }, 0), stage, signal);
+
+  return name;
+}
+
+/**
+ * 播放录播时停在的那一帧当封面候选：原样存进 coverDir
+ * @param { number } time - 录播文件里的时间（秒）
+ * @return { Promise<string> } 记在草稿 pictures 里的
+ */
+export async function capturePicture(ffmpeg: string, dir: string, source: string, time: number, stage: boolean, signal?: AbortSignal): Promise<string> {
+  const name: string = `picture-${ Date.now() }.jpg`;
+
+  await fsP.mkdir(dir, { recursive: true });
+  await runFfmpeg(ffmpeg, ['-y', '-v', 'error', '-ss', Math.max(0, time).toFixed(3), '-i', source, '-frames:v', '1', '-q:v', '2', path.join(dir, name)], { signal });
+  await makePictureThumb(ffmpeg, path.join(dir, name), candidateThumb(dir, { frames: [], pictures: [name] }, 0), stage, signal);
+
+  return name;
+}
+
+/**
+ * 封面用的那一帧（排好的整张）。别的图第一次用的时候才排：直播、电台把第一个候选的左边换成这张图，公演直接放进画面那一块。
+ * 这张图不在了（封面库里删了）时用第一个候选
+ */
+export async function ensureFrame(
+  ffmpeg: string, dir: string, draft: Pick<ClipDraft, 'frames' | 'pictures' | 'frame'>, stage: boolean, signal?: AbortSignal
+): Promise<string> {
+  const entry: string | undefined = pictureOf(draft, draft.frame);
+
+  if (!entry) return frameFile(dir, Math.min(draft.frame, Math.max(0, draft.frames.length - 1)));
+
+  const out: string = candidateFrame(dir, draft, draft.frame);
+
+  if (await exists(out)) return out;
+
+  const picture: string = picturePath(dir, entry);
+
+  if (!(await exists(picture))) {
+    console.warn('封面用的图不在了，用第一个候选', picture);
+
+    return frameFile(dir, 0);
+  }
+
+  await runFfmpeg(ffmpeg, stage
+    ? ['-y', '-v', 'error', '-i', picture, '-filter_complex', stageFrameFilter(), '-map', '[out]', '-frames:v', '1', '-q:v', '2', `${ out }.part.jpg`]
+    : ['-y', '-v', 'error', '-i', frameFile(dir, 0), '-i', picture, '-filter_complex', pictureFrameFilter(), '-map', '[out]', '-frames:v', '1', '-q:v', '2', `${ out }.part.jpg`],
+  { signal });
+  await fsP.rename(`${ out }.part.jpg`, out);
+
+  return out;
 }
 
 interface FrameInput {
@@ -121,6 +257,9 @@ export async function makeCovers(input: CoverInput): Promise<{ wide: string; sta
   }
 
   await fsP.rm(keyFile, { force: true }); // 做到一半停了的不算做好
+
+  const frame: string = await ensureFrame(ffmpeg, dir, draft, Boolean(job.stage), signal);
+
   await Promise.all((Object.entries(COVER_WIDTHS) as Array<['wide' | 'standard', number]>).map(async ([shape, width]: ['wide' | 'standard', number]): Promise<void> => {
     const ass: string = `cover-${ counter++ }.ass`;
     const part: string = `${ files[shape] }.part.jpg`; // 做好了再换上去，看的人不会看到一半的图
@@ -131,7 +270,7 @@ export async function makeCovers(input: CoverInput): Promise<{ wide: string; sta
 
     try {
       await runFfmpeg(ffmpeg, [
-        '-y', '-v', 'error', '-i', frameFile(dir, draft.frame),
+        '-y', '-v', 'error', '-i', frame,
         // 候选是 jpg（全范围的颜色），先转成和成片一样的标准范围，不然白字会发灰
         '-filter_complex', `[0:v]scale=out_range=tv,format=yuv420p[tv];${
           (job.stage ? stageCoverFilter(fonts, ass, width) : coverFilter(fonts, ass, width)).replace('[0:v]', '[tv]') }`,

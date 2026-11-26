@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import type { Readable } from 'node:stream';
 // @ts-expect-error
 import got from 'got';
-import { requestLiveRoomInfo, requestDownloadFile, type LiveRoomInfo } from '@48tools-api/48';
+import { requestLiveRoomInfo, requestDownloadFile, requestLiveList, type LiveRoomInfo, type LiveData, type LiveInfo } from '@48tools-api/48';
 import { getFFmpeg } from '../../utils/utils';
 import { engineUserAgent, source } from '../../utils/snh48';
 import { getSetting } from '../settings/settingsStore';
@@ -31,6 +31,7 @@ import { getMemberDirectory, loadMemberDirectory } from '../room/memberDirectory
 import { beijingDate } from '../time/timeZone';
 import { sleep } from '../common/util';
 import type { HighlightCount } from './highlightTypes';
+import type { MemberPhoto } from './radioPhotos';
 import { getLiveRecordDir } from '../live/liveRecording';
 import { keptReplayOf } from '../live/replayGrabCore';
 
@@ -184,6 +185,56 @@ async function fetchImage(url: string, file: string, signal?: AbortSignal): Prom
   await fsP.rename(`${ file }.part`, file);
 }
 
+const PAST_PAGES: number = 2;      // 往期直播、电台取几页（一页 20 场左右）
+const PAST_CAROUSELS: number = 6;  // 最近几场电台的轮播图也取
+
+/* 一场直播的轮播图（电台播放时轮着放的几张，成员自己设的） */
+function carouselsOf(content: LiveRoomInfo['content'] | undefined, time: number, title: string): Array<MemberPhoto> {
+  return (content?.carousels?.carousels ?? []).map((url: string): MemberPhoto => ({ url: source(url), time, kind: '电台', title }));
+}
+
+/**
+ * 电台切片封面库的照片（见 ./radioPhotos）：这场电台的轮播图，她以前直播、电台的封面，最近几场电台的轮播图。
+ * 她在房间里发的照片不要（用户 2026-11-26 定的）。哪一路取不到都不要紧
+ */
+async function memberPhotos(liveId: string): Promise<Array<MemberPhoto>> {
+  const room: LiveRoomInfo = await requestLiveRoomInfo(liveId);
+  const userId: number = Number(room.content?.user?.userId);
+  const photos: Array<MemberPhoto> = carouselsOf(room.content, Number(room.content?.ctime), room.content?.title ?? '');
+
+  if (!userId) return photos;
+
+  const lives: Array<LiveInfo> = [];
+  let next: string = '0';
+
+  try {
+    for (let page: number = 0; page < PAST_PAGES; page++) {
+      const res: LiveData = await requestLiveList(next, false, undefined, userId);
+
+      lives.push(...(res.content?.liveList ?? []));
+      next = res.content?.next ?? '';
+
+      if (!next || next === '0') break;
+    }
+  } catch (err) {
+    console.warn('封面库：取不到她以前的直播', err);
+  }
+
+  for (const live of lives) {
+    live.coverPath && photos.push({ url: source(live.coverPath), time: Number(live.ctime), kind: Number(live.liveType) === 2 ? '电台' : '直播', title: live.title });
+  }
+
+  for (const live of lives.filter((item: LiveInfo): boolean => Number(item.liveType) === 2 && item.liveId !== liveId).slice(0, PAST_CAROUSELS)) {
+    try {
+      photos.push(...carouselsOf((await requestLiveRoomInfo(live.liveId)).content, Number(live.ctime), live.title));
+    } catch (err) {
+      console.warn('封面库：取不到这场电台的轮播图', live.liveId, err);
+    }
+  }
+
+  return photos.filter((photo: MemberPhoto): boolean => /^https?:\/\//.test(photo.url));
+}
+
 export const highlightDeps: HighlightDeps = {
   async liveInfo(liveId: string): Promise<{ playStreamPath: string; msgFilePath: string; coverUrl?: string }> {
     const res: LiveRoomInfo = await requestLiveRoomInfo(liveId);
@@ -196,6 +247,7 @@ export const highlightDeps: HighlightDeps = {
   },
   fetchText: (url: string): Promise<string> => requestDownloadFile(url),
   fetchImage,
+  memberPhotos,
   fetchSegment,
   // 装了本地打轴模型就用它给字幕定时间；没装时返回 null，流程用 Gemini 给的时间
   recognize: (audioFile: string, signal?: AbortSignal): Promise<Array<TimedToken> | null> => recognizeAudio(getFFmpeg(), audioFile, signal)

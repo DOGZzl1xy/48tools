@@ -26,7 +26,9 @@ import { stageFindRequest, stageKindOf, stageClipWindow, stageLengthProblem, sta
 import { buildStageVideoAss, stageRenderFilter, buildStageTitleAss, stageTitleStrip, type StageInfo } from './highlightStageAss';
 import { locateMistake, locateSong, lowBandLevels, type StageTiming } from './highlightStageTiming';
 import { draftPoints, draftPostTitles, draftSegments, isOwnTitle, newDraft, videoTag } from './highlightDraft';
-import { coverDir, makeCovers, makeFrames, thumbFile } from './highlightCover';
+import { coverDir, frameFile, makeCovers, makeFrames, thumbFile } from './highlightCover';
+import { sharpTimes } from './highlightSharp';
+import { collectRadioPhotos, radioChoice, type MemberPhoto, type RadioPhotos } from './radioPhotos';
 import {
   newShowInfo, readShowInfo, writeShowInfo, highlightOf, planCuts, readyToRender, withDraft, withResult, INFO_FILE, type ShowInfo, type ShowItem
 } from './highlightShow';
@@ -79,6 +81,8 @@ export interface HighlightDeps {
   fetchText: (url: string) => Promise<string>;
   /* 下载一张图存成文件（电台封面）；不是图片时报错 */
   fetchImage?: (url: string, file: string, signal?: AbortSignal) => Promise<void>;
+  /* 这场直播的成员以前直播、电台的封面和电台的轮播图（电台切片的封面库用，见 ./radioPhotos） */
+  memberPhotos?: (liveId: string, signal?: AbortSignal) => Promise<Array<MemberPhoto>>;
   /* 下载录播的一个分片；不给的话让 ffmpeg 自己下载整场（只有一条连接，慢） */
   fetchSegment?: SegmentFetcher;
   /* 本地打轴：用本机的识别模型认出一段音频里每个字的时间；没装模型时返回 null（见 ./alignerPlugin） */
@@ -151,7 +155,8 @@ export interface HighlightResult extends CutResult {
   infoFile?: string;           // 汇总说明
 }
 
-const COVER_CANDIDATES: number = 6;
+const COVER_CANDIDATES: number = 6;  // 公演：按字幕时间、均匀取
+const LIVE_CANDIDATES: number = 12;  // 直播：挑清楚的（见 ./highlightSharp）
 const NEED_ALIGNER: string = '通过本机的 agy 做切片时，要先在「设置 → 录播切片」里安装「本地打轴模型」（agy 说的时间不准，要靠它定时间）';
 
 /* 各步占总进度的多少 */
@@ -409,8 +414,11 @@ function clipWorkDir(job: HighlightJob, highlight: Pick<Highlight, 'start'>): st
  * @param { ClipContext } context
  * @param { Highlight } highlight
  * @param { (stage: string, part: number) => void } report - 做到哪一步了；part 是这个切片完成了多少（0 ~ 1）
+ * @param { { pictures: Array<string>; pick?: string } } [photos] - 电台：封面库里给这个切片的几张照片，默认用哪张（见 ./radioPhotos 的 radioChoice）
  */
-async function writeClip(context: ClipContext, highlight: Highlight, report: (stage: string, part: number) => void): Promise<ClipDraft | string> {
+async function writeClip(
+  context: ClipContext, highlight: Highlight, report: (stage: string, part: number) => void, photos?: { pictures: Array<string>; pick?: string }
+): Promise<ClipDraft | string> {
   const { job, signal, source, duration, danmu, fonts, deps }: ClipContext = context;
   const key: string = draftKey(highlight);
   const clipDir: string = clipWorkDir(job, highlight);
@@ -459,9 +467,27 @@ async function writeClip(context: ClipContext, highlight: Highlight, report: (st
     }
   }
 
-  // 封面候选：从录播里取几帧，让模型先挑一张（人可以换）；电台的画面是同一张图，不用挑
+  // 封面候选：从录播里取几帧，让模型先挑一张（人可以换）。直播挑清楚的；电台的画面是同一张图，另外给封面库里的几张照片
   report('取封面', 0.75);
 
+  let frames: Array<number> = [];
+
+  if (!context.still && !job.stage) {
+    try {
+      frames = await sharpTimes({
+        ffmpeg: job.ffmpeg, source, cwd: clipDir, start: cut.window.start, length: cut.window.length, segments: cut.segments, total: cut.total,
+        count: LIVE_CANDIDATES, signal
+      });
+    } catch (err) {
+      if (err instanceof HighlightStopped) throw err;
+
+      console.warn('挑清楚的帧失败，按字幕的时间取', err);
+    }
+  }
+
+  if (frames.length === 0) frames = coverTimes(cut.lines, cut.segments, cut.total).slice(0, context.still ? 1 : undefined);
+
+  const pictures: Array<string> = photos?.pictures ?? [];
   const draft: ClipDraft = newDraft(highlight, {
     key,
     window: cut.window,
@@ -469,8 +495,9 @@ async function writeClip(context: ClipContext, highlight: Highlight, report: (st
     lines: cut.lines,
     timing: cut.timing,
     whole: kind !== 'mc',
-    frames: coverTimes(cut.lines, cut.segments, cut.total).slice(0, context.still ? 1 : undefined),
-    frame: 0
+    frames,
+    pictures,
+    frame: photos?.pick ? frames.length + Math.max(0, pictures.indexOf(photos.pick)) : 0
   });
   const covers: string = coverDir(job.outDir, key);
 
@@ -588,7 +615,7 @@ async function renderClip(
   const covers: string = coverDir(job.outDir, draft.key);
 
   // 封面候选没了（文件夹被删）：照写的时候那样再取一遍
-  if (!(await exists(thumbFile(covers, draft.frame)))) {
+  if (!(await exists(frameFile(covers, 0)))) {
     await makeFrames({ ffmpeg: job.ffmpeg, source, still: context.still, cwd: clipDir, outDir: covers, job, draft, danmu: shared.danmu, fonts, signal });
   }
 
@@ -995,6 +1022,25 @@ export async function writeDrafts(
   const skipped: Array<string> = [];
   let written: number = 0;
   let recognizing: Promise<unknown> = Promise.resolve();
+  let photos: RadioPhotos | undefined;
+
+  // 电台：先把她以前的封面、照片存进封面库，交给 Gemini 排好；同一场的切片轮着用
+  if (job.radio && list.length > 0) {
+    onProgress({ percent: 0, detail: '整理封面库（她以前的封面和照片）…' });
+
+    try {
+      photos = await collectRadioPhotos({
+        showDir: job.outDir, member: job.member, title: job.title, date: job.date, liveId: job.liveId, picture: prepared.picture, ffmpeg: job.ffmpeg,
+        gemini: job.gemini, memberPhotos: deps.memberPhotos, fetchImage: deps.fetchImage, fetchImpl: deps.fetchImpl, signal
+      });
+    } catch (err) {
+      if (err instanceof HighlightStopped) throw err;
+
+      console.warn('封面库没整理好，电台只用这场的封面', err);
+    }
+  }
+
+  const before: number = info.items.filter((item: ShowItem): boolean => item.draft !== undefined).length; // 之前写好的占了排在前面的照片
 
   // 本地识别很吃 CPU，一个一个来
   const recognize: HighlightDeps['recognize'] = deps.recognize && ((audio: string, stop?: AbortSignal): Promise<Array<TimedToken> | null> => {
@@ -1015,7 +1061,7 @@ export async function writeDrafts(
 
   await together(list, WRITE_AT_ONCE, async (item: ShowItem, stop: AbortSignal): Promise<void> => {
     const draft: ClipDraft | string = await writeClip({ ...base, signal: stop, deps: { ...deps, recognize }, meta, glossary }, highlightOf(item),
-      (stage: string, part: number): void => report(item, stage, part));
+      (stage: string, part: number): void => report(item, stage, part), photos && radioChoice(photos, before + list.indexOf(item)));
 
     typeof draft === 'string' ? skipped.push(draft) : written++;
     // 问过 Gemini 的结果不留（写成的在草稿里）：没写成的改了说明再写、写好的「重新写」，都要真的再问一次

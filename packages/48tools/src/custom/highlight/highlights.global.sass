@@ -428,6 +428,19 @@
   align-items: flex-start
   gap: 8px
   width: 320px
+  border-radius: 8px
+  outline: 2px dashed transparent
+  outline-offset: 4px
+  transition: outline-color .12s
+
+  // 把图拖进来时
+  &.is-dragging
+    outline-color: var(--shell-primary)
+
+.picks-cover-actions
+  display: flex
+  flex-wrap: wrap
+  gap: 6px
 
 .picks-cover-image
   display: flex
@@ -521,6 +534,13 @@
   font-size: 18px
   font-weight: 600
   text-align: center
+
+.picks-player-foot
+  display: flex
+  flex-wrap: wrap
+  align-items: center
+  justify-content: center
+  gap: 8px 16px
 
 .picks-player-hint
   color: var(--shell-text-tertiary)

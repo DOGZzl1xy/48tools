@@ -1,20 +1,27 @@
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { Fragment, useState, type ReactElement, type Dispatch as D, type SetStateAction as S } from 'react';
-import { Button, Image, Input, Popconfirm, Radio, Segmented, Spin, Typography, type RadioChangeEvent } from 'antd';
+import { webUtils } from 'electron';
+import { Fragment, useState, type DragEvent, type ReactElement, type Dispatch as D, type SetStateAction as S } from 'react';
+import { App, Button, Image, Input, Popconfirm, Radio, Segmented, Spin, Typography, type RadioChangeEvent } from 'antd';
+import type { useAppProps } from 'antd/es/app/context';
 import {
   CloseOutlined as IconCloseOutlined,
   DownOutlined as IconDownOutlined,
+  FolderOpenOutlined as IconFolderOpenOutlined,
   PictureOutlined as IconPictureOutlined,
   PlayCircleOutlined as IconPlayCircleOutlined,
   PlusOutlined as IconPlusOutlined,
   RedoOutlined as IconRedoOutlined,
-  UpOutlined as IconUpOutlined
+  UpOutlined as IconUpOutlined,
+  UploadOutlined as IconUploadOutlined
 } from '@ant-design/icons';
 import {
-  draftCoverLines, draftPostTitles, editCoverLine, editLine, editPoint, isOwnTitle, pickTitle, MAX_POINTS, POINT_LENGTH
+  candidateCount, draftCoverLines, draftPostTitles, editCoverLine, editLine, editPoint, isOwnTitle, pickPicture, pickTitle, MAX_POINTS, POINT_LENGTH
 } from './highlightDraft';
-import { coverDir, thumbFile } from './highlightCover';
+import { candidateThumb, coverDir } from './highlightCover';
+import { addPictureFile, captureFrame, chooseImage, isImageFile } from './coverPick';
+import { libraryDir } from './radioPhotos';
 import { highlightOf, isRestyled, type ShowInfo, type ShowItem } from './highlightShow';
 import { useCoverPreview, type CoverPreview } from './coverPreview';
 import { useDraftField, type DraftField } from './useDraftField';
@@ -133,16 +140,88 @@ function TitlePicker(props: { readonly draft: ClipDraft; readonly locked: boolea
   );
 }
 
-/* 封面：当场做出来看，点开看大图；下面换一帧 */
+function reasonOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/* 这个候选叫什么（读屏、鼠标停上去时看） */
+function candidateLabel(draft: ClipDraft, index: number): string {
+  const entry: string | undefined = index >= draft.frames.length ? draft.pictures?.[index - draft.frames.length] : undefined;
+
+  if (!entry) return `第 ${ index + 1 } 帧`;
+
+  return path.isAbsolute(entry) ? `封面库：${ path.parse(entry).name }` : `第 ${ index + 1 } 张（自己选的）`;
+}
+
+/**
+ * 封面：当场做出来看，点开看大图。下面换一张：录播里挑的几帧（直播挑清楚的）、电台封面库的照片、自己上传的、播放时选的一帧；
+ * 也可以把图拖进来（用户 2026-11-26 要的）
+ */
 function Cover(props: Pick<DraftPanelProps, 'dir' | 'info' | 'item' | 'locked' | 'onDraft'>): ReactElement {
   const { dir, info, item, locked, onDraft }: Pick<DraftPanelProps, 'dir' | 'info' | 'item' | 'locked' | 'onDraft'> = props;
+  const { message: messageApi }: useAppProps = App.useApp();
   const [shape, setShape]: ['wide' | 'standard', D<S<'wide' | 'standard'>>] = useState<'wide' | 'standard'>('wide');
+  const [adding, setAdding]: [boolean, D<S<boolean>>] = useState(false);
+  const [dragging, setDragging]: [boolean, D<S<boolean>>] = useState(false);
   const preview: CoverPreview = useCoverPreview(dir, info, item);
   const draft: ClipDraft = item.draft!;
   const covers: string = coverDir(dir, draft.key);
+  const library: string = libraryDir(dir, info.member);
+  const hasLibrary: boolean = !info.stage && fs.existsSync(library);
+  const version: string = draft.frames.join('-');
+
+  async function add(task: () => Promise<string>): Promise<void> {
+    setAdding(true);
+
+    try {
+      const entry: string = await task();
+
+      await onDraft((now: ClipDraft): ClipDraft => pickPicture(now, entry));
+    } catch (err) {
+      console.error('封面换图失败', err);
+      messageApi.error(`这张图用不了：${ reasonOf(err) }`);
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function handleChooseClick(fromLibrary: boolean): Promise<void> {
+    const file: string | undefined = await chooseImage(fromLibrary ? library : undefined);
+
+    if (file) await add((): Promise<string> => addPictureFile(dir, info, draft, file));
+  }
+
+  function handleDragOver(event: DragEvent<HTMLDivElement>): void {
+    if (locked || !event.dataTransfer.types.includes('Files')) return;
+
+    event.preventDefault();
+    setDragging(true);
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>): void {
+    event.preventDefault();
+    setDragging(false);
+
+    const file: File | undefined = event.dataTransfer.files[0];
+    const filePath: string = file ? webUtils.getPathForFile(file) : '';
+
+    if (locked || adding) return;
+
+    if (!filePath || !isImageFile(filePath)) {
+      messageApi.warning('拖进来的不是图片（jpg、png、webp）');
+
+      return;
+    }
+
+    void add((): Promise<string> => addPictureFile(dir, info, draft, filePath));
+  }
 
   return (
-    <div className="picks-cover">
+    <div className={ `picks-cover${ dragging ? ' is-dragging' : '' }` }
+      onDragOver={ handleDragOver }
+      onDragLeave={ (): void => setDragging(false) }
+      onDrop={ handleDrop }
+    >
       <Spin spinning={ preview.loading } delay={ 300 }>
         <div className="picks-cover-image">
           {
@@ -158,32 +237,43 @@ function Cover(props: Pick<DraftPanelProps, 'dir' | 'info' | 'item' | 'locked' |
         onChange={ (value: string): void => setShape(value as 'wide' | 'standard') }
       />
       {
-        draft.frames.length > 1 ? (
-          <div className={ `picks-frames${ info.stage ? ' is-stage' : '' }` } role="radiogroup" aria-label="封面用哪一帧">
+        candidateCount(draft) > 1 ? (
+          <div className={ `picks-frames${ info.stage ? ' is-stage' : '' }` } role="radiogroup" aria-label="封面用哪一张">
             {
-              draft.frames.map((time: number, index: number): ReactElement => (
-                <button key={ time }
+              Array.from({ length: candidateCount(draft) }, (_item: unknown, index: number): ReactElement => (
+                <button key={ index }
                   className={ index === draft.frame ? 'is-active' : '' }
                   type="button"
                   role="radio"
                   aria-checked={ index === draft.frame }
-                  aria-label={ `第 ${ index + 1 } 帧` }
+                  aria-label={ candidateLabel(draft, index) }
+                  title={ candidateLabel(draft, index) }
                   disabled={ locked }
                   onClick={ (): Promise<unknown> => onDraft((now: ClipDraft): ClipDraft => ({ ...now, frame: index })) }
                 >
-                  <img src={ `${ pathToFileURL(thumbFile(covers, index)).href }?v=${ draft.frames.join('-') }` } alt="" />
+                  <img src={ `${ pathToFileURL(candidateThumb(covers, draft, index)).href }?v=${ version }` } alt="" loading="lazy" />
                 </button>
               ))
             }
           </div>
         ) : null
       }
+      <div className="picks-cover-actions">
+        <Button size="small" icon={ <IconUploadOutlined /> } loading={ adding } disabled={ locked } onClick={ (): Promise<void> => handleChooseClick(false) }>上传图片</Button>
+        {
+          hasLibrary ? (
+            <Button size="small" icon={ <IconFolderOpenOutlined /> } disabled={ locked || adding } title={ library } onClick={ (): Promise<void> => handleChooseClick(true) }>封面库</Button>
+          ) : null
+        }
+      </div>
+      <span className="picks-meta">{ info.radio ? '也可以把图拖到这里' : '播放这一段时也能选一帧，或者把图拖到这里' }</span>
     </div>
   );
 }
 
 function DraftPanel(props: DraftPanelProps): ReactElement {
   const { dir, info, item, locked, busy, onDraft, onRewrite, onRetitle }: DraftPanelProps = props;
+  const { message: messageApi }: useAppProps = App.useApp();
   const [playing, setPlaying]: [boolean, D<S<boolean>>] = useState(false);
   const [captions, setCaptions]: [boolean, D<S<boolean>>] = useState(false);
   const draft: ClipDraft = item.draft!;
@@ -200,6 +290,19 @@ function DraftPanel(props: DraftPanelProps): ReactElement {
 
   function editRow(index: number, text: string | undefined): Promise<unknown> {
     return onDraft((now: ClipDraft): ClipDraft => (info.stage ? editCoverLine(highlight, now, index, text) : editPoint(now, index, text)));
+  }
+
+  /* 播放时「用这一帧做封面」：录播里的这一刻存成一张图，封面换成它 */
+  async function handleCapture(time: number): Promise<void> {
+    try {
+      const entry: string = await captureFrame(dir, info, draft, source!, time);
+
+      await onDraft((now: ClipDraft): ClipDraft => pickPicture(now, entry));
+      messageApi.success('封面换成这一帧了');
+    } catch (err) {
+      console.error('取这一帧失败', err);
+      messageApi.error(`没取到这一帧：${ reasonOf(err) }`);
+    }
   }
 
   return (
@@ -284,7 +387,13 @@ function DraftPanel(props: DraftPanelProps): ReactElement {
       }
       {
         playing && source ? (
-          <DraftPlayer title={ draft.title } source={ source } picture={ info.picture } draft={ draft } onClose={ (): void => setPlaying(false) } />
+          <DraftPlayer title={ draft.title }
+            source={ source }
+            picture={ info.picture }
+            draft={ draft }
+            onCapture={ info.radio || locked ? undefined : handleCapture }
+            onClose={ (): void => setPlaying(false) }
+          />
         ) : null
       }
     </div>

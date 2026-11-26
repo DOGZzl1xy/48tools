@@ -70,10 +70,11 @@ export interface ClipDraft {
   description: string;
   points: Array<string>;         // Gemini 写的亮点
   people: Array<string>;
-  frames: Array<number>;         // 封面候选在成片里的时间（秒）
+  frames: Array<number>;         // 从录播里取的封面候选：在成片里的时间（秒）
+  pictures?: Array<string>;      // 别的封面候选，排在 frames 后面：自己上传的、播放时选的一帧（存在 coverDir 里的文件名），电台封面库里的照片（完整路径）
   title: string;                 // 定的标题：画面、封面、文件名用它
   ownTitle?: string;             // 自己写过的标题（选回 Gemini 的也记着，还能再选上）
-  frame: number;                 // 封面用第几个候选（从 0 起）
+  frame: number;                 // 封面用第几个候选（从 0 起；frames 的在前，pictures 的接在后面）
   ownPoints?: Array<string>;     // 改过的亮点
   ownCoverLines?: Array<string>; // 公演：改过的封面大字
 }
