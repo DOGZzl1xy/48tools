@@ -35,6 +35,8 @@ export interface CustomSettings {
   highlightAgyModel?: string;         // 录播切片：走 agy 时用的模型名（不填用 gemini-4-hydrogen-medium）
   highlightAutoScore?: number;        // 录播切片：选「自动」时，爆点分不低于它的才做（不设置用默认的 8.5）
   highlightCount?: number;            // 录播切片：上次选的数量（没选过或选了「自动」时不保存）
+  learnAuto?: boolean;                // 持续学习：隔几天让 Gemini 从切片的记录里更新一次背景文档（默认开，只有关掉时才保存成 false）
+  learnDays?: number;                 // 持续学习：隔几天学一次（不设置用 3 天）
   gongyanAuto?: boolean;              // B 站公演自动录制并切片（SNH48 SII、NII、HII、X；默认开，只有关掉时才保存成 false）
 }
 

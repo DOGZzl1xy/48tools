@@ -9,6 +9,7 @@ import { gongyanBaseDir } from '../bilibili/gongyanWatcher';
 import type { GongyanManifest, GongyanPart } from '../bilibili/gongyanRecorder';
 import { getMemberDirectory, loadMemberDirectory } from '../room/memberDirectory';
 import { readGlossaryFile } from './glossaryFile';
+import { readBackground } from '../learn/learnStore';
 import { membersPrompt } from './highlightMembers';
 import { memberTeamOf, teamColorOf } from './highlightTheme';
 import {
@@ -64,6 +65,7 @@ function jobOf(dir: string, info: ShowInfo): HighlightJob {
     ffmpeg: getFFmpeg(),
     gemini: highlightGeminiConfig(),
     glossary: readGlossaryFile(),
+    learned: readBackground(),
     members: membersPrompt(directory.members, info.stage ? '' : info.member),
     radio: info.radio,
     team,

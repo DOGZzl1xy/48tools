@@ -16,6 +16,7 @@ import { alignLines, envelopeOf, syllablePeaks } from './highlightAlign';
 import { timeLinesByTokens, type TimedToken, type TokenTiming } from './highlightTokens';
 import { fixHighlightTimes } from './highlightQuotes';
 import { parseGlossary, glossaryPrompt, applyGlossary, type Glossary } from './highlightGlossary';
+import { learnedPrompt } from '../learn/learnPrompt';
 import {
   placeDanmu, buildVideoAss, renderFilter, buildTitleAss, titleStrip, retitleFilter, retitlePatchFilter, type FontSet, type Strip
 } from './highlightAss';
@@ -73,6 +74,7 @@ export interface HighlightJob {
   gemini: GeminiConfig;
   glossary?: string;    // 专有词汇（本机那个文件的原文，见 ./glossaryFile、./highlightGlossary）
   members?: string;     // 成员名单那一段提示（./highlightMembers 的 membersPrompt）
+  learned?: string;     // 持续学习的背景文档（../learn/learnStore 的 readBackground），没有就不加
   stage?: StageInfo;    // 公演切片（B 站公演录像）：用公演版的提示、规则和排版（./highlightStage、./highlightStageAss）
   radio?: boolean;      // 电台：只下录音，成片左边放电台封面（见 saveRadioCover）
   team?: string;        // 直播/电台成员所属队伍（SII / NII / NIII / 预备生…），自动匹配团队色
@@ -873,7 +875,7 @@ export async function findHighlights(
   job: HighlightJob, deps: HighlightDeps, prepared: PreparedSource, onProgress: (progress: HighlightProgress) => void, signal?: AbortSignal
 ): Promise<ShowInfo> {
   const glossary: Glossary = parseGlossary(job.glossary);
-  const meta: LiveMeta = { member: job.member, title: job.title, glossary: glossaryPrompt(glossary), members: job.members };
+  const meta: LiveMeta = { member: job.member, title: job.title, glossary: glossaryPrompt(glossary), members: job.members, learned: learnedPrompt(job.learned) };
   const { source, danmu }: PreparedSource = prepared;
   const cacheFiles: Array<string> = [];
 
@@ -1065,7 +1067,7 @@ export async function writeDrafts(
   onProgress: (progress: HighlightProgress) => void, onWritten: (item: ShowItem, draft: ClipDraft | string) => Promise<void>, signal?: AbortSignal
 ): Promise<{ written: number; skipped: Array<string> }> {
   const glossary: Glossary = parseGlossary(job.glossary);
-  const meta: LiveMeta = { member: job.member, title: job.title, glossary: glossaryPrompt(glossary), members: job.members };
+  const meta: LiveMeta = { member: job.member, title: job.title, glossary: glossaryPrompt(glossary), members: job.members, learned: learnedPrompt(job.learned) };
   const base: CutContext = await cutContext(job, prepared, signal);
   const list: Array<ShowItem> = info.items.filter((item: ShowItem): boolean => item.cut && !item.draft);
   const parts: Map<ShowItem, number> = new Map();

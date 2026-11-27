@@ -113,7 +113,7 @@ try {
   await win.screenshot({ path: path.join(SHOTS, 'settings.png') });
   check('设置：分区导航', (await win.locator('.settings-nav button').count()) >= 8);
   check('设置：明暗主题可以直接选', (await win.locator('#settings-look .ant-segmented-item').count()) >= 3);
-  check('设置：录播切片', (await win.locator('#settings-highlight .settings-row').count()) === 6);
+  check('设置：录播切片', (await win.locator('#settings-highlight .settings-row').count()) === 7);
   check('设置：B 站公演自动录制并切片的开关', (await win.locator('#settings-live .settings-row', { hasText: 'B 站公演自动录制并切片' }).locator('.ant-switch').count()) === 1);
   check('设置：主题色里有四个团队色', (await win.locator('#settings-look .settings-color').count()) === 11
     && (await Promise.all(['SII 蓝', 'NII 紫', 'HII 橙', 'X 绿'].map((name) => win.locator(`.settings-color[aria-label="主题色：${ name }"]`).count())))

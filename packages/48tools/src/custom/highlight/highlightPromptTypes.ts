@@ -11,6 +11,7 @@ export interface LiveMeta {
   title: string;
   glossary?: string; // 专有词汇那一段提示（见 ./highlightGlossary 的 glossaryPrompt），没有就不加
   members?: string;  // 成员名单那一段提示（见 ./highlightMembers 的 membersPrompt）
+  learned?: string;  // 持续学习总结出来的偏好和背景那一段提示（见 ../learn/learnPrompt 的 learnedPrompt）
 }
 
 /* 第 1 步：找爆点 */

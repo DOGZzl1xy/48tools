@@ -12,6 +12,7 @@ import AlignerOption from './AlignerOption';
 import { agyDefaults } from './highlightAgy';
 import { ensureGlossaryFile } from './glossaryFile';
 import { onPackChange, pack } from '../sync/packRegistry';
+import LearnOption from '../learn/LearnOption';
 
 /**
  * 设置页面里的「录播切片」：用哪个 Gemini 模型、走接口还是本机的 agy、专有词汇、「自动」时多少分以上才推荐、切片保存在哪里、本地打轴模型装不装。
@@ -83,6 +84,7 @@ function HighlightOption(props: {}): ReactElement {
       <Row label="专有词汇" hint={ syncedGlossary ? '人名、昵称、圈内叫法。现在用的是同步下来的那一份：改了这个文件，要重新打包发布内容包才生效' : '人名、昵称、圈内叫法' }>
         <Button icon={ <IconFolderOpenOutlined /> } onClick={ (): void => shell.showItemInFolder(ensureGlossaryFile()) }>打开所在位置</Button>
       </Row>
+      <LearnOption />
       <AlignerOption />
     </Fragment>
   );

@@ -36,6 +36,7 @@ import HighlightsBadge from '../highlight/HighlightsBadge';
 import { startUnreadWatcher } from '../room/unreadWatcher';
 import { startPresenceWatcher } from '../room/presenceWatcher';
 import { startPackSync } from '../sync/packSync';
+import { startLearning } from '../learn/learnRunner';
 import { autoStartAutoGrab } from '../live/autoGrabRunner';
 import { resumeReplayGrabs } from '../live/replayGrab';
 import { startGongyanWatcher } from '../bilibili/gongyanWatcher';
@@ -166,6 +167,7 @@ function AppShell(props: Required<PropsWithChildren>): ReactElement {
   useEffect(startUnreadWatcher, []);
   useEffect(startPresenceWatcher, []);
   useEffect(startPackSync, []); // 个性化设置同步（custom/sync）：先装上本机存的那一版，再看服务器上有没有新的
+  useEffect(startLearning, []); // 持续学习（custom/learn）：隔几天从切片的记录里更新一次背景文档
 
   // 启动后：自动开始自动抓取（设置里可以关），清理很久以前存的语音文件
   useEffect(function(): void {

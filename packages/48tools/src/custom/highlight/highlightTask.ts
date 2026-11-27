@@ -23,6 +23,7 @@ import { highlightDefaults, type GeminiConfig } from './highlightGemini';
 import { StagedQueue, type QueueStage, type QueueOutcome } from './highlightQueue';
 import { recognizeAudio, isAlignerInstalled } from './alignerRun';
 import { readGlossaryFile } from './glossaryFile';
+import { readBackground } from '../learn/learnStore';
 import type { TimedToken } from './highlightTokens';
 import { safeFileName, parseLrc } from './highlightTime';
 import { downloadReplay, type DownloadProgress } from './highlightDownload';
@@ -118,6 +119,7 @@ export function highlightJobOf(record: HighlightRecord, count: HighlightCount, b
     ffmpeg: getFFmpeg(),
     gemini: highlightGeminiConfig(),
     glossary: readGlossaryFile(),
+    learned: readBackground(),
     members: membersPrompt(directory.members, record.userInfo.nickname),
     radio: isRadio(record),
     team,

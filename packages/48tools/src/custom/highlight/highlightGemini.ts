@@ -218,9 +218,9 @@ export function quoteTitle(quote: string, max: number = 12): string {
   return Array.from(out).slice(0, max + 4).join('');
 }
 
-/* 每个提示最后都附上的常识：称呼、专有词汇、成员名单 */
+/* 每个提示最后都附上的常识：称呼、专有词汇、成员名单、持续学习总结出来的偏好和背景 */
 export function knowledge(meta: LiveMeta): string {
-  return [pronoun(), meta.glossary, meta.members]
+  return [pronoun(), meta.glossary, meta.members, meta.learned]
     .filter((text: string | undefined): text is string => Boolean(text))
     .map((text: string): string => `\n${ text }`)
     .join('');

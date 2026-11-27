@@ -6,6 +6,7 @@ import { lookOf } from './highlightDraft';
 import type { ClipDraft, Highlight } from './highlightTypes';
 import type { StageInfo } from './highlightStageAss';
 import type { ClipResult, HighlightJob } from './highlightPipeline';
+import { saveShowRecord } from '../learn/learnStore';
 
 /**
  * 一场录播的爆点清单（输出文件夹里的 爆点.json）：找到的全部爆点、推荐切哪些、挑的人改过的标题和说明、做成了哪些切片。
@@ -191,6 +192,8 @@ export async function writeShowInfo(dir: string, info: ShowInfo): Promise<void> 
   await fsP.writeFile(`${ file }.part`, JSON.stringify(info, null, 2), { encoding: 'utf8' });
   await fsP.rename(`${ file }.part`, file);
   await fsP.writeFile(path.join(dir, INFO_FILE), showText(info), { encoding: 'utf8' });
+  // 持续学习：这一场的记录跟着更新（custom/learn）；存不上不影响切片
+  await saveShowRecord(info).catch((err: unknown): void => console.error('切片记录没存上', err));
 }
 
 /* 改标题或说明：空的不改；改回 Gemini 写的就不算改过 */

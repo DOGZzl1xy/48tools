@@ -5,6 +5,7 @@ import { getSetting } from '../settings/settingsStore';
 import { membersPrompt } from '../highlight/highlightMembers';
 import { teamColorOf } from '../highlight/highlightTheme';
 import { readGlossaryFile } from '../highlight/glossaryFile';
+import { readBackground } from '../learn/learnStore';
 import { highlightGeminiConfig, highlightUnavailable, enqueueHighlight, isHighlightQueued } from '../highlight/highlightTask';
 import { pickKey } from '../highlight/highlightShow';
 import { getMemberDirectory, loadMemberDirectory } from '../room/memberDirectory';
@@ -44,6 +45,7 @@ export function stageJobOf(manifest: GongyanManifest, dir: string): HighlightJob
     ffmpeg: getFFmpeg(),
     gemini: highlightGeminiConfig(),
     glossary: readGlossaryFile(),
+    learned: readBackground(),
     members: membersPrompt(getMemberDirectory().members, ''),
     stage: {
       team,
