@@ -1,22 +1,21 @@
 import { toOut } from './highlightCut';
 import {
-  assTime, assEscape, textWidth, charWidth, captionText, fontSize, rect, roundRect, assDocument, style, subtitlesFilter,
-  segmentFilters, wordBoundaries, LOUDNESS_FILTER, type FontSet, type PlacedDanmu, type Strip
+  assTime, assEscape, textWidth, charWidth, captionText, fontSize, rect, roundRect, slantedRect, assDocument, style, subtitlesFilter,
+  segmentFilters, wordBoundaries, LOUDNESS_FILTER, type CaptionLayout, type FontSet, type PlacedDanmu, type Strip
 } from './highlightAss';
+import { deriveTeamTokens, resolveTeam, type ResolvedTeam, type TeamVisualTokens } from './highlightTheme';
 import type { CaptionLine, Segment } from './highlightTypes';
 
 /**
- * 公演切片的排版（B 站公演直播是横屏的）。成片 1920×1080：
- *   左上：直播画面 1440×810
- *   左下：字幕（MC 时她们说的话，重点词变黄；唱歌的片段没有字幕，舞台上自己有歌词）
- *   右边一列（480 宽）：队伍标签、公演名、日期、标题，分隔线下面是当时的弹幕（新的从下面出现，旧的往上挪；只显示内容，不显示昵称）
- * 封面：画面里的一帧铺满、压得很暗、稍微模糊，左上角是队伍和公演名、日期，中间两三行大字；【】里的词白字、下面刷一道深团队色的荧光笔
- *   （只盖字的下半截，不是整块矩形垫在后面），别的字白色、最后一行浅团队色（用户 2026-11-23 给的参考图）。16:9 和 4:3 两个比例。
- * 画面和封面上都不写「公演切片」（发布用的标题里有），标签里不用「·」（2026-11 用户定的）。
- * 颜色用团队色（custom/theme/accent 的 teamColors）。都是纯计算，真正跑 ffmpeg 的在 ./highlightPipeline。
+ * 公演切片的排版（公演封面 A + 公演正片方案 2）。成片 1920×1080：
+ *   左上：直播画面 1440×810（无遮挡）
+ *   左下：深邃暗幕团队丝绒字幕区（MC 时她们说的话，重点词带斜切团队色荧光笔；唱歌没有字幕）
+ *   右边一列（480 宽）：暗幕电影丝绒侧栏（实心队色徽章、日期、公演名、左对齐竖线标题、通透气泡弹幕，不含 SNH48 与昵称）
+ * 封面（方案 A）：原片零模糊、不压暗人脸，右上角实心队色徽章 + 公演名 + 日期（不含 SNH48），左下角粗体大字 + 斜切渐变荧光笔。
+ * 16:9 和 4:3 两个比例。Electron 渲染进程下静态底板与封面由 ./highlightGraphics 用 Canvas 2D 高质感出图。
  */
 export interface StageInfo {
-  team: string;        // X / NII / HII
+  team: string;        // X / NII / HII / SII / G / NIII / Z / B / E / C / K
   teamColor: string;   // #a9ca27
   show: string;        // 《Fire X》2.0
   date: string;        // 2026.11.21
@@ -28,19 +27,14 @@ const H: number = 1_080;
 export const STAGE_VIDEO: { width: number; height: number } = { width: 1_440, height: 810 };
 
 const SIDE_X: number = STAGE_VIDEO.width;
-const SIDE_PAD: number = 40;
+const SIDE_PAD: number = 36;
 const BACKGROUND: string = '0x101215';
-const SIDE_BG: string = '&H1D1815&';     // #15181d（ASS 是 BBGGRR）
-const CAPTION_BG: string = '&H151210&';  // #101215
-const MUTED: string = '&HA6A09A&';       // #9aa0a6
-const BUBBLE: string = '&H332B26&';      // #262b33
+const MUTED: string = '&HA6A09A&';
+const BUBBLE: string = '&H0E0806&';
 const DANMU_TEXT: string = '&HEDEAE8&';
-const DARK_TEXT: string = '&H29231F&';   // #1f2329
-// 封面（用户 2026-11-23 给的参考图）：荧光笔用深一点的团队色，浅色字用浅一点的
-const COVER_INK_LIGHTNESS: number = 0.42;
-const COVER_TINT_LIGHTNESS: number = 0.87;
-const COVER_TINT_SATURATION: number = 0.42;
-const DANMU: { size: number; row: number; bottom: number; top: number; maxWidth: number } = { size: 30, row: 52, bottom: 1_036, top: 372, maxWidth: 400 };
+const DANMU: { size: number; row: number; bottom: number; top: number; maxWidth: number } = {
+  size: 27, row: 52, bottom: 1_036, top: 400, maxWidth: 408
+};
 
 /* #rrggbb → ASS 的 &HBBGGRR& */
 export function assColor(hex: string): string {
@@ -49,13 +43,6 @@ export function assColor(hex: string): string {
   return `&H${ value.slice(4, 6) }${ value.slice(2, 4) }${ value.slice(0, 2) }&`.toUpperCase();
 }
 
-/**
- * 团队色换成同一个色相、指定亮度的颜色（#rrggbb）。封面的荧光笔用深一点的（亮度 0.42），浅色字用浅一点的（0.87），
- * 照用户 2026-11-23 给的参考图：NII 的紫 #af83bb → 荧光笔 #7a4a8c 左右、浅紫字 #e6d2ec 左右
- * @param { string } hex - 团队色
- * @param { number } lightness - 0 ~ 1
- * @param { number } [minSaturation] - 饱和度至少多少（浅色太灰时提一点）
- */
 export function teamShade(hex: string, lightness: number, minSaturation: number = 0): string {
   const value: string = hex.replace('#', '').padStart(6, '0');
   const [r, g, b]: Array<number> = [0, 2, 4].map((at: number): number => Number.parseInt(value.slice(at, at + 2), 16) / 255);
@@ -81,12 +68,10 @@ export function teamShade(hex: string, lightness: number, minSaturation: number 
   return `#${ [r1, g1, b1].map((part: number): string => Math.round((part + m) * 255).toString(16).padStart(2, '0')).join('') }`;
 }
 
-/* 字在画面上有多宽（像素） */
 function pixelWidth(text: string, size: number, fonts: FontSet): number {
   return (textWidth(text) * size) / fonts.em;
 }
 
-/* 一行放不下就截断加省略号 */
 function fitText(text: string, size: number, maxWidth: number, fonts: FontSet): string {
   if (pixelWidth(text, size, fonts) <= maxWidth) return text;
 
@@ -104,15 +89,10 @@ function fitText(text: string, size: number, maxWidth: number, fonts: FontSet): 
   return `${ out }…`;
 }
 
-/* 画面上的公演名：「《Fire X》2.0」→「《Fire X》2.0 公演」；本来就以「公演」结尾的不再加 */
 export function stageShowLabel(show: string): string {
   return /公演$/.test(show) ? show : `${ show } 公演`;
 }
 
-/**
- * 标题分两行（第二行用团队色）：超过 8 个字时在靠中间的标点处断；
- * 中间附近没有标点时在词和词之间断（「不是那么 / 熟悉的前辈」，不要把「熟悉」拆开），第二行不以「的」「了」这类字开头
- */
 export function stageTitleRows(title: string): Array<string> {
   const chars: Array<string> = Array.from(title);
 
@@ -138,7 +118,6 @@ export function stageTitleRows(title: string): Array<string> {
 
       const cost: number = Math.abs(boundary - middle) + (/[的了地得着过吗呢吧啊]/.test(chars[boundary]) ? 2 : 0);
 
-      // 一样近时取靠后的：第二行（团队色）短一点，更像包袱
       if (cost <= 3 && cost <= best) {
         best = cost;
         at = boundary;
@@ -149,18 +128,17 @@ export function stageTitleRows(title: string): Array<string> {
   return [chars.slice(0, at).join('').replace(/[，,\s]+$/, ''), chars.slice(at).join('').trim()].filter((row: string): boolean => row !== '');
 }
 
-const TITLE_TOP: number = 206;
+const TITLE_TOP: number = 192;
 
-/* 右边一列里的标题：分两行时第二行用团队色 */
-function stageTitleEvents(title: string, team: string, total: number, fonts: FontSet): Array<string> {
+function stageTitleEvents(title: string, accentAss: string, total: number, fonts: FontSet): Array<string> {
   const rows: Array<string> = stageTitleRows(title);
-  const size: number = Math.round(Math.min(fontSize(48, fonts), (400 * fonts.em) / Math.max(1, ...rows.map(textWidth))));
+  const size: number = Math.round(Math.min(fontSize(42, fonts), (386 * fonts.em) / Math.max(1, ...rows.map(textWidth))));
 
   return rows.map((row: string, index: number): string => {
-    const color: string = index === rows.length - 1 && rows.length > 1 ? `\\c${ team }` : '';
+    const color: string = index === rows.length - 1 && rows.length > 1 ? `\\c${ accentAss }` : '';
 
-    return `Dialogue: 3,${ assTime(0) },${ assTime(total) },Side,,0,0,0,,{\\an7\\pos(${ SIDE_X + SIDE_PAD },${
-      TITLE_TOP + (index * Math.round(size * 1.25)) })\\fs${ size }\\b1${ color }}${ assEscape(row) }`;
+    return `Dialogue: 3,${ assTime(0) },${ assTime(total) },Side,,0,0,0,,{\\an7\\pos(${ SIDE_X + SIDE_PAD + 20 },${
+      TITLE_TOP + (index * Math.round(size * 1.24)) })\\fs${ size }\\b1${ color }}${ assEscape(row) }`;
   });
 }
 
@@ -168,30 +146,37 @@ function sideStyle(fonts: FontSet): string {
   return style('Side', fonts.text, fontSize(30, fonts), '&H00FFFFFF', '&H00000000', false, 0, 0, 7);
 }
 
-/* 标题那一块：日期下面、分隔线上面，底是纯色的（改标题时填回底色再写新的） */
 export function stageTitleStrip(): Strip {
-  return { x: SIDE_X + 8, y: TITLE_TOP - 8, w: W - SIDE_X - 8, h: 152 };
+  return { x: SIDE_X + 8, y: TITLE_TOP - 16, w: W - SIDE_X - 8, h: 152 };
 }
 
-/* 只有标题的字幕文件 */
 export function buildStageTitleAss(input: { stage: StageInfo; title: string; total: number; fonts: FontSet }): string {
-  return assDocument([sideStyle(input.fonts)], stageTitleEvents(input.title, assColor(input.stage.teamColor), input.total, input.fonts));
+  const tokens: TeamVisualTokens = deriveTeamTokens(resolveTeam(input.stage.team, input.stage.teamColor).color);
+
+  return assDocument([sideStyle(input.fonts)], stageTitleEvents(input.title, assColor(tokens.velvetAccent), input.total, input.fonts));
 }
 
 export interface StageVideoAssInput {
   stage: StageInfo;
   title: string;
-  lines: Array<CaptionLine>;   // 没有字幕（唱歌、失误）时是空数组
+  lines: Array<CaptionLine>;
   segments: Array<Segment>;
   total: number;
   danmu: Array<PlacedDanmu>;
   fonts: FontSet;
+  backdrop?: boolean; // true：静态丝绒侧栏与标题已由 Canvas PNG 绘制，ASS 只画动态字幕、荧光笔、气泡弹幕
 }
 
 export function buildStageVideoAss(input: StageVideoAssInput): string {
-  const { stage, title, lines, segments, total, danmu, fonts }: StageVideoAssInput = input;
+  const { stage, title, lines, segments, total, danmu, fonts, backdrop = false }: StageVideoAssInput = input;
+  const resolved: ResolvedTeam = resolveTeam(stage.team, stage.teamColor);
+  const tokens: TeamVisualTokens = deriveTeamTokens(resolved.color);
   const events: Array<string> = [];
-  const team: string = assColor(stage.teamColor);
+  const teamAss: string = assColor(tokens.hex);
+  const onTeamAss: string = assColor(tokens.onTeam);
+  const accentAss: string = assColor(tokens.velvetAccent);
+  const hlAss: string = assColor(tokens.hlStart);
+  const velvetDeepAss: string = assColor(tokens.velvetDeep);
   const x: number = SIDE_X + SIDE_PAD;
 
   function add(layer: number, start: number, end: number, styleName: string, text: string): void {
@@ -204,28 +189,29 @@ export function buildStageVideoAss(input: StageVideoAssInput): string {
     add(layer, start, end, 'Shape', `{\\an7\\pos(0,0)\\p1\\c${ color }${ extra }}${ path }{\\p0}`);
   }
 
-  // 底色：字幕区、右边一列、团队色的竖条
-  shape(0, CAPTION_BG, rect(0, STAGE_VIDEO.height, SIDE_X, H));
-  shape(0, SIDE_BG, rect(SIDE_X, 0, W, H));
-  shape(1, team, rect(SIDE_X, 0, SIDE_X + 6, H));
+  // 无 Canvas 底板时（纯 Node/Jest 回退）用 ASS 画方案 2 暗幕丝绒侧栏
+  if (!backdrop) {
+    shape(0, velvetDeepAss, rect(0, STAGE_VIDEO.height, SIDE_X, H));
+    shape(0, velvetDeepAss, rect(SIDE_X, 0, W, H));
+    shape(1, teamAss, rect(SIDE_X, 0, SIDE_X + 3, H));
 
-  // 右上：队伍标签、公演名、日期、标题
-  const badge: string = `SNH48 TEAM ${ stage.team }`;
-  const badgeSize: number = fontSize(30, fonts);
+    const badge: string = resolved.badge || `TEAM ${ stage.team }`;
+    const badgeSize: number = fontSize(26, fonts);
 
-  shape(2, team, roundRect(x, 40, Math.round(pixelWidth(badge, badgeSize, fonts) + 36), 50, 12));
-  add(3, 0, total, 'Side', `{\\an7\\pos(${ x + 18 },${ 47 })\\fs${ badgeSize }\\b1\\c${ DARK_TEXT }}${ assEscape(badge) }`);
-  // 公演名太长时缩小字号放下（不截断）
-  const showText: string = stageShowLabel(stage.show);
-  const showSize: number = Math.round(Math.min(fontSize(30, fonts), (400 * fonts.em) / Math.max(1, textWidth(showText))));
+    shape(2, teamAss, roundRect(x, 36, Math.round(pixelWidth(badge, badgeSize, fonts) + 28), 38, 6));
+    add(3, 0, total, 'Side', `{\\an7\\pos(${ x + 14 },${ 41 })\\fs${ badgeSize }\\b1\\c${ onTeamAss }}${ assEscape(badge) }`);
+    add(3, 0, total, 'Side', `{\\an9\\pos(${ W - SIDE_PAD },${ 42 })\\fs${ fontSize(24, fonts) }\\c${ MUTED }}${ assEscape(stage.date) }`);
 
-  add(3, 0, total, 'Side', `{\\an7\\pos(${ x },${ 108 })\\fs${ showSize }\\b1}${ assEscape(showText) }`);
-  add(3, 0, total, 'Side', `{\\an7\\pos(${ x },${ 150 })\\fs${ fontSize(24, fonts) }\\c${ MUTED }}${ assEscape(stage.date) }`);
+    const showSize: number = Math.round(Math.min(fontSize(36, fonts), (408 * fonts.em) / Math.max(1, textWidth(stage.show))));
 
-  events.push(...stageTitleEvents(title, team, total, fonts));
-  shape(2, '&H372F2A&', rect(x, 352, W - SIDE_PAD, 354));
+    add(3, 0, total, 'Side', `{\\an7\\pos(${ x },${ 88 })\\fs${ showSize }\\b1}${ assEscape(stage.show) }`);
+    shape(2, '&HFFFFFF&', rect(x, 152, W - SIDE_PAD, 153), 0, total, '\\1a&HD6&');
+    shape(2, accentAss, roundRect(x, TITLE_TOP + 6, 4, 96, 2));
+    events.push(...stageTitleEvents(title, accentAss, total, fonts));
+    shape(2, '&HFFFFFF&', rect(x, 342, W - SIDE_PAD, 343), 0, total, '\\1a&HD8&');
+  }
 
-  // 字幕：左下居中
+  // 左下角居中字幕（重点词带斜切团队色荧光笔）
   const kept: Array<CaptionLine> = lines.filter((line: CaptionLine): boolean => line.keep);
 
   kept.forEach((line: CaptionLine, index: number): void => {
@@ -240,15 +226,31 @@ export function buildStageVideoAss(input: StageVideoAssInput): string {
 
     if (nextStart !== null && nextStart > start) end = Math.min(Math.max(end, Math.min(nextStart, end + 0.8)), nextStart);
 
-    if (line.text.trim() === '') return; // 改字幕时清空的：不显示
+    if (line.text.trim() === '') return;
 
-    const caption: { text: string; size: number } = captionText(line, fonts, team); // 重点词用队伍的颜色
+    const endTime: number = Math.min(end, total);
+    const caption: CaptionLayout = captionText(line, fonts, '&HFFFFFF&', '&HFFFFFF&', 1_280);
+    const capSize: number = Math.min(caption.size, fontSize(88, fonts));
+    const glyphPx: number = capSize / fonts.em;
+    const lineStep: number = Math.round(capSize * 1.12);
+    const blockH: number = caption.rows.length * lineStep;
+    const topY: number = Math.round((STAGE_VIDEO.height + 135) - (blockH / 2));
 
-    add(4, start, Math.min(end, total), 'Caption', `{\\an5\\pos(${ SIDE_X / 2 },${ STAGE_VIDEO.height + 135 })\\fs${
-      Math.min(caption.size, fontSize(92, fonts)) }\\fad(80,0)}${ caption.text }`);
+    for (const span of caption.highlights) {
+      const rowPx: number = caption.rowWidths[span.row] * glyphPx;
+      const rowLeft: number = (SIDE_X / 2) - (rowPx / 2);
+      const hx: number = rowLeft + (span.startUnits * glyphPx) - 8;
+      const hw: number = (span.widthUnits * glyphPx) + 16;
+      const hy: number = topY + (span.row * lineStep) + Math.round(capSize * 0.54);
+      const hh: number = Math.round(capSize * 0.36);
+
+      shape(3, hlAss, slantedRect(hx, hy, hw, hh), start, endTime, '\\1a&H14&\\fad(80,0)');
+    }
+
+    add(4, start, endTime, 'Caption', `{\\an5\\pos(${ SIDE_X / 2 },${ STAGE_VIDEO.height + 135 })\\fs${ capSize }\\fad(80,0)}${ caption.text }`);
   });
 
-  // 弹幕：一条一个圆角底，新的从下面出现、旧的往上挪，挪出弹幕区就不画；只显示内容
+  // 弹幕：通透深丝绒圆角气泡，只显示内容，不显示昵称
   const size: number = fontSize(DANMU.size, fonts);
   const items: Array<PlacedDanmu & { text: string; width: number }> = danmu.map((item: PlacedDanmu): PlacedDanmu & { text: string; width: number } => {
     const text: string = fitText(item.message, size, DANMU.maxWidth - 32, fonts);
@@ -258,7 +260,7 @@ export function buildStageVideoAss(input: StageVideoAssInput): string {
 
   items.forEach((item: PlacedDanmu & { text: string; width: number }, index: number): void => {
     for (let k: number = index; k < items.length; k++) {
-      const steps: number = k - index; // 后面又来了几条：往上挪几行
+      const steps: number = k - index;
       const y: number = DANMU.bottom - ((steps + 1) * DANMU.row);
 
       if (y < DANMU.top) break;
@@ -267,42 +269,48 @@ export function buildStageVideoAss(input: StageVideoAssInput): string {
       const to: number = k + 1 < items.length ? items[k + 1].at : total;
       const prevY: number = y + DANMU.row;
       const move: (dx: number, dy: number) => string = (dx: number, dy: number): string => (from > 0
-        ? `\\move(${ x + dx },${ (steps === 0 ? y + 24 : prevY) + dy },${ x + dx },${ y + dy },0,180)${ steps === 0 ? '\\fad(160,0)' : '' }`
+        ? `\\move(${ x + dx },${ (steps === 0 ? y + 22 : prevY) + dy },${ x + dx },${ y + dy },0,180)${ steps === 0 ? '\\fad(160,0)' : '' }`
         : `\\pos(${ x + dx },${ y + dy })`);
 
-      add(5, from, to, 'Shape', `{\\an7${ move(0, 0) }\\p1\\c${ BUBBLE }}${ roundRect(0, 0, item.width, 42, 10) }{\\p0}`);
+      add(5, from, to, 'Shape', `{\\an7${ move(0, 0) }\\p1\\c${ BUBBLE }\\1a&HB2&}${ roundRect(0, 0, item.width, 40, 9) }{\\p0}`);
       add(6, from, to, 'Danmu', `{\\an7${ move(16, 4) }\\fs${ size }}${ assEscape(item.text) }`);
     }
   });
 
   return assDocument([
-    style('Caption', fonts.text, fontSize(76, fonts), '&H00FFFFFF', '&H66000000', false, 2, 3, 5),
+    style('Caption', fonts.text, fontSize(76, fonts), '&H00FFFFFF', '&H55000000', false, 1, 2, 5),
     sideStyle(fonts),
     style('Danmu', fonts.regular, size, `&H00${ DANMU_TEXT.slice(2, 8) }`, '&H00000000', false, 0, 0, 7),
     style('Shape', 'Arial', 20, '&H00FFFFFF', '&H00000000', false, 0, 0, 7)
   ], events);
 }
 
-/* 合成公演切片的滤镜：剪好的画面缩到 1440×810 放在左上，压上字幕；声音统一响度 */
-export function stageRenderFilter(segments: Array<Segment>, fonts: FontSet, assFile: string = 'overlay.ass'): string {
-  return [
+/* 合成公演切片的滤镜：支持传入 Canvas 生成的静态底板 PNG */
+export function stageRenderFilter(segments: Array<Segment>, fonts: FontSet, assFile: string = 'overlay.ass', backdropInput?: number): string {
+  const parts: Array<string> = [
     ...segmentFilters(segments),
     `[vc]fps=30,scale=${ STAGE_VIDEO.width }:${ STAGE_VIDEO.height }:force_original_aspect_ratio=decrease:flags=lanczos,`
-      + `pad=${ STAGE_VIDEO.width }:${ STAGE_VIDEO.height }:(ow-iw)/2:(oh-ih)/2:color=${ BACKGROUND },setsar=1[vs]`,
-    `color=c=${ BACKGROUND }:s=${ W }x${ H }:r=30[bg]`,
-    '[bg][vs]overlay=0:0:shortest=1[base]',
-    `[base]${ subtitlesFilter(assFile, fonts) }[vout]`,
-    LOUDNESS_FILTER
-  ].join(';');
+      + `pad=${ STAGE_VIDEO.width }:${ STAGE_VIDEO.height }:(ow-iw)/2:(oh-ih)/2:color=${ BACKGROUND },setsar=1[vs]`
+  ];
+
+  if (backdropInput !== undefined) {
+    parts.push(`[${ backdropInput }:v]scale=out_range=tv,format=yuv420p,setsar=1[bg]`);
+  } else {
+    parts.push(`color=c=${ BACKGROUND }:s=${ W }x${ H }:r=30[bg]`);
+  }
+
+  parts.push('[bg][vs]overlay=0:0:shortest=1[base]');
+  parts.push(`[base]${ subtitlesFilter(assFile, fonts) }[vout]`);
+  parts.push(LOUDNESS_FILTER);
+
+  return parts.join(';');
 }
 
-/* 封面候选的一帧：直播画面放在左上（封面只用这一块，见 stageCoverFilter），输出 [out]。输入已经定位到那一帧 */
 export function stageFrameFilter(): string {
   return `[0:v]setpts=PTS-STARTPTS,scale=${ STAGE_VIDEO.width }:${ STAGE_VIDEO.height }:force_original_aspect_ratio=decrease:flags=lanczos,format=yuv420p,`
     + `pad=${ STAGE_VIDEO.width }:${ STAGE_VIDEO.height }:(ow-iw)/2:(oh-ih)/2:color=${ BACKGROUND },pad=${ W }:${ H }:0:0:color=${ BACKGROUND },setsar=1[out]`;
 }
 
-/* 封面上的一行：【】里的是要用色块突出的词 */
 export function coverSegments(line: string): Array<{ text: string; mark: boolean }> {
   const out: Array<{ text: string; mark: boolean }> = [];
   const pattern: RegExp = /【([^】]+)】/g;
@@ -323,60 +331,69 @@ export function coverSegments(line: string): Array<{ text: string; mark: boolean
 
 export interface StageCoverInput {
   stage: StageInfo;
-  lines: Array<string>;  // 1 ~ 3 行大字（按需要）
+  lines: Array<string>;
   fonts: FontSet;
-  width: number;         // 1920（16:9）或 1440（4:3）
+  width: number;
 }
 
+/* 公演封面回退 ASS（方案 A：无黑底、右上角实心队色标 + 公演名 + 日期不含 SNH48、左下大字 + 斜切荧光笔） */
 export function buildStageCoverAss(input: StageCoverInput): string {
   const { stage, fonts, width }: StageCoverInput = input;
+  const resolved: ResolvedTeam = resolveTeam(stage.team, stage.teamColor);
+  const tokens: TeamVisualTokens = deriveTeamTokens(resolved.color);
   const events: Array<string> = [];
-  const left: number = width >= W ? 110 : 90;
-  const ink: string = assColor(teamShade(stage.teamColor, COVER_INK_LIGHTNESS));                  // 荧光笔：深一点的团队色
-  const tint: string = assColor(teamShade(stage.teamColor, COVER_TINT_LIGHTNESS, COVER_TINT_SATURATION)); // 浅色字
+  const padX: number = width >= W ? 92 : 68;
+  const teamAss: string = assColor(tokens.hex);
+  const onTeamAss: string = assColor(tokens.onTeam);
+  const inkAss: string = assColor(tokens.hlStart);
+  const tintAss: string = assColor(tokens.stageTint);
 
   function add(layer: number, styleName: string, text: string): void {
     events.push(`Dialogue: ${ layer },0:00:00.00,0:00:10.00,${ styleName },,0,0,0,,${ text }`);
   }
 
-  /* 字下面刷一道荧光笔：只盖住字的下半截，左右比字宽一点 */
-  function highlighter(layer: number, at: { x: number; y: number }, w: number, fs: number): void {
-    const padX: number = Math.round(fs * 0.07);
+  // 右上角：实心队伍色徽章 + 公演名 + 日期 + 发光竖条（不含 SNH48）
+  const badge: string = resolved.badge || `TEAM ${ stage.team }`;
+  const badgeSize: number = fontSize(width >= W ? 32 : 28, fonts);
+  const showSize: number = fontSize(width >= W ? 44 : 40, fonts);
+  const dateSize: number = fontSize(width >= W ? 28 : 25, fonts);
+  const railX: number = width - padX - 7;
+  const contentRight: number = railX - 20;
+  const showW: number = Math.round(pixelWidth(stage.show, showSize, fonts));
+  const badgeW: number = Math.round(pixelWidth(badge, badgeSize, fonts) + 36);
+  const badgeX: number = contentRight - showW - 18 - badgeW;
 
-    add(layer, 'Shape', `{\\an7\\pos(0,0)\\p1\\c${ ink }}${
-      roundRect(Math.round(at.x - padX), Math.round(at.y + (fs * 0.56)), Math.round(w + (2 * padX)), Math.round(fs * 0.37), Math.max(2, Math.round(fs * 0.03))) }{\\p0}`);
-  }
+  add(1, 'Shape', `{\\an7\\pos(0,0)\\p1\\c${ teamAss }}${ roundRect(railX, 48, 7, 88, 3) }{\\p0}`);
+  add(1, 'Shape', `{\\an7\\pos(0,0)\\p1\\c${ teamAss }}${ roundRect(badgeX, 50, badgeW, 44, 6) }{\\p0}`);
+  add(2, 'Text', `{\\an7\\pos(${ badgeX + 18 },54)\\fs${ badgeSize }\\b1\\c${ onTeamAss }\\shad0}${ assEscape(badge) }`);
+  add(2, 'Text', `{\\an9\\pos(${ contentRight },48)\\fs${ showSize }\\b1\\shad3\\4c&H000000&\\4a&H60&}${ assEscape(stage.show) }`);
+  add(2, 'Text', `{\\an9\\pos(${ contentRight },104)\\fs${ dateSize }\\shad2\\4c&H000000&\\4a&H60&}${ assEscape(stage.date) }`);
 
-  // 左上角：队伍和公演名（白字、下面刷一道荧光笔）、日期
-  const badge: string = `SNH48 TEAM ${ stage.team }  ${ stage.show }`;
-  const badgeSize: number = fontSize(40, fonts);
-
-  highlighter(1, { x: left, y: 92 }, pixelWidth(badge, badgeSize, fonts), badgeSize);
-  add(2, 'Text', `{\\an7\\pos(${ left },${ 92 })\\fs${ badgeSize }\\b1\\shad2\\4c&H000000&\\4a&H80&}${ assEscape(badge) }`);
-  add(2, 'Text', `{\\an7\\pos(${ left },${ 172 })\\fs${ fontSize(34, fonts) }\\c${ tint }\\shad0}${ assEscape(stage.date) }`);
-
-  // 大字：每行按最宽的一行定字号。【】里的词白字、下面刷荧光笔；别的字白色，最后一行（两行以上时）浅色
+  // 左下大字 + 斜切荧光笔
   const rows: Array<Array<{ text: string; mark: boolean }>> = input.lines.map(coverSegments).filter((row: Array<{ text: string; mark: boolean }>): boolean => row.length > 0).slice(0, 3);
   const units: (row: Array<{ text: string; mark: boolean }>) => number = (row: Array<{ text: string; mark: boolean }>): number =>
-    row.reduce((sum: number, part: { text: string; mark: boolean }): number => sum + textWidth(part.text) + 0.2, 0.2);
-  const room: number = width - left - 80;
-  // 只有一个要突出的词（唱歌的片段只写「《歌名》」）：字更大，照用户定的《轨迹》那张
+    row.reduce((sum: number, part: { text: string; mark: boolean }): number => sum + textWidth(part.text) + 0.25, 0.25);
+  const room: number = width - (padX * 2);
   const solo: boolean = rows.length === 1 && rows[0].length === 1 && rows[0][0].mark;
-  const largest: number = solo ? (width >= W ? 250 : 220) : (width >= W ? 124 : 108);
+  const largest: number = solo ? (width >= W ? 220 : 190) : (width >= W ? 118 : 104);
   const size: number = Math.round(Math.min(fontSize(largest, fonts), (room * fonts.em) / Math.max(1, ...rows.map(units))));
-  const gap: number = Math.round(size * 0.14);
-  let y: number = Math.round((H - (rows.length * (size + gap))) / 2) + 60;
+  const gap: number = Math.round(size * 0.12);
+  const totalH: number = (rows.length * size) + (Math.max(0, rows.length - 1) * gap);
+  let y: number = H - 68 - totalH;
 
   rows.forEach((row: Array<{ text: string; mark: boolean }>, index: number): void => {
-    const plainColor: string = rows.length >= 2 && index === rows.length - 1 ? `\\c${ tint }` : '';
-    let x: number = left + Math.round(size * 0.07);
+    const plainColor: string = rows.length >= 2 && index === rows.length - 1 ? `\\c${ tintAss }` : '';
+    let x: number = padX;
 
     for (const part of row) {
       const w: number = pixelWidth(part.text, size, fonts);
+      const padH: number = Math.round(size * 0.08);
 
-      if (part.mark) highlighter(3, { x, y }, w, size);
+      if (part.mark) {
+        add(3, 'Shape', `{\\an7\\pos(0,0)\\p1\\c${ inkAss }}${ slantedRect(x - padH, y + (size * 0.56), w + (2 * padH), size * 0.36) }{\\p0}`);
+      }
 
-      add(4, 'Text', `{\\an7\\pos(${ Math.round(x) },${ y })\\fs${ size }\\b1${ part.mark ? '' : plainColor }\\shad4\\4c&H000000&\\4a&H70&}${ assEscape(part.text) }`);
+      add(4, 'Text', `{\\an7\\pos(${ Math.round(x) },${ y })\\fs${ size }\\b1${ part.mark ? '' : plainColor }\\shad4\\4c&H000000&\\4a&H66&}${ assEscape(part.text) }`);
       x += w + Math.round(size * (part.mark ? 0.16 : 0.08));
     }
 
@@ -389,14 +406,10 @@ export function buildStageCoverAss(input: StageCoverInput): string {
   ], events, width);
 }
 
-/**
- * 做公演封面的滤镜：输入是成片里的一帧（取左上的直播画面），放大铺满、压暗、稍微模糊，再压上字。输出 [out]
- * @param { number } width - 1920（16:9）或 1440（4:3，取中间）
- */
+/* 公演封面滤镜（方案 A）：原图零模糊、不压暗人脸，仅轻微提透 */
 export function stageCoverFilter(fonts: FontSet, assFile: string, width: number): string {
   return [
-    `[0:v]crop=${ STAGE_VIDEO.width }:${ STAGE_VIDEO.height }:0:0,scale=${ W }:${ H }:flags=lanczos,crop=${ width }:${ H },`
-      + 'boxblur=6:1,eq=brightness=-0.42:saturation=0.75[bg]',
+    `[0:v]crop=${ STAGE_VIDEO.width }:${ STAGE_VIDEO.height }:0:0,scale=${ W }:${ H }:flags=lanczos,crop=${ width }:${ H },eq=contrast=1.04:saturation=1.07[bg]`,
     `[bg]${ subtitlesFilter(assFile, fonts) }[out]`
   ].join(';');
 }

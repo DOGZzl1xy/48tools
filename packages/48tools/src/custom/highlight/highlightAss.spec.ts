@@ -50,8 +50,8 @@ describe('captionText', (): void => {
     const short: { text: string; size: number } = captionText({ text: '太过分了', emphasis: [] }, fonts);
 
     expect(long.text).toBe('还说我一笑就变老了，\\N这个话太过分了');
-    expect(short.size).toBe(120);
-    expect(long.size).toBeLessThanOrEqual(120);
+    expect(short.size).toBe(116);
+    expect(long.size).toBeLessThanOrEqual(116);
   });
 
   test('英文单词、数字不从中间断开', (): void => {
@@ -128,11 +128,11 @@ describe('buildVideoAss / renderFilter', (): void => {
     const sizeOf: (title: string) => number = (title: string): number => Number(/,Title,.*\\fs(\d+)/.exec(buildVideoAss({
       title, tag: 'SNH48 测试成员  2026.11.15', lines: [], segments, total: 20, danmu: [], fonts
     }))?.[1]);
-    const normal: number = sizeOf('被说一笑就老气到回怼');
+    const normal: number = sizeOf('好萌');
 
-    expect(sizeOf('好萌')).toBe(normal);
-    expect(sizeOf('没人叫妈怎么了，小孩就不能打瓦吗')).toBeLessThan(normal * 0.8);
-    expect(sizeOf('没人叫妈怎么了，小孩就不能打瓦吗')).toBeGreaterThan(normal * 0.5);
+    expect(sizeOf('被说一笑就老气到回怼')).toBe(normal);
+    expect(sizeOf('这是一个特别特别特别长的测试标题用来验证自动缩小逻辑')).toBeLessThan(normal * 0.8);
+    expect(sizeOf('这是一个特别特别特别长的测试标题用来验证自动缩小逻辑')).toBeGreaterThan(normal * 0.4);
   });
 
   test('字幕的时间是成片里的时间', (): void => {
@@ -186,23 +186,30 @@ describe('封面', (): void => {
     expect(splitTitle('这是一个特别特别长的标题，长到快要四十个字了，看看在封面上会不会小到看不清楚啊')).toEqual(['这是一个特别特别长的标题', '长到快要四十个字了', '看看在封面上会不会小到看不清楚啊']);
   });
 
-  test('封面上有标题、成员和最多三个看点', (): void => {
+  test('封面上有成员名、标题、类型时间标和最多三个下对齐看点（无磨砂玻璃）', (): void => {
     const ass: string = buildCoverAss({
       title: '被说一笑就老气到回怼',
-      tag: '测试成员  直播切片  2026.11.15',
+      tag: 'SNH48 测试成员  直播切片  2026.11.15',
+      member: 'SNH48 测试成员',
+      date: '2026.11.15',
+      team: 'NII',
       points: ['怀疑自己变苍老了', '', '被说一笑就老气急了', '这并不搞笑这很雷霆', '第四个不要'],
       fonts
     });
 
     expect(ass).toContain('被说一笑就');
-    expect(ass).toContain('测试成员  直播切片  2026.11.15');
+    expect(ass).toContain('测试成员');
+    expect(ass).toContain('TEAM NII');
+    expect(ass).toContain('LIVE / 直播');
+    expect(ass).toContain('2026.11.15');
     expect(ass).toContain('这并不搞笑这很雷霆');
     expect(ass).not.toContain('第四个不要');
     expect(coverFilter(fonts)).toContain('subtitles=cover.ass:fontsdir=../fonts[out]');
+    expect(coverFilter(fonts)).not.toContain('gblur');
   });
 
   test('4:3 的封面：画布 1440 宽，只取成片左边的部分，字比 16:9 的小', (): void => {
-    const input: Parameters<typeof buildCoverAss>[0] = { title: '被说一笑就老气到回怼', tag: '测试成员', points: ['怀疑自己变苍老了'], fonts };
+    const input: Parameters<typeof buildCoverAss>[0] = { title: '被说一笑就老气到回怼', tag: '测试成员', member: '测试成员', points: ['怀疑自己变苍老了'], fonts };
     const wide: string = buildCoverAss(input);
     const standard: string = buildCoverAss({ ...input, width: COVER_WIDTHS.standard });
     const titleSize: (ass: string) => number = (ass: string): number => Number(/,Title,.*\\fs(\d+)/.exec(ass)?.[1]);
@@ -211,8 +218,7 @@ describe('封面', (): void => {
     expect(wide).toContain('PlayResX: 1920');
     expect(standard).toContain('PlayResX: 1440');
     expect(titleSize(standard)).toBeLessThan(titleSize(wide));
-    expect(filter).toContain('[0:v]crop=1440:1080:0:0,split=3');
-    expect(filter).toContain('crop=768:1000:640:40');
-    expect(coverFilter(fonts)).toContain('crop=1248:1000:640:40');
+    expect(filter).toContain('[0:v]crop=1440:1080:0:0');
+    expect(filter).not.toContain('gblur');
   });
 });

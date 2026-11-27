@@ -10,6 +10,7 @@ import type { GongyanManifest, GongyanPart } from '../bilibili/gongyanRecorder';
 import { getMemberDirectory, loadMemberDirectory } from '../room/memberDirectory';
 import { readGlossaryFile } from './glossaryFile';
 import { membersPrompt } from './highlightMembers';
+import { memberTeamOf, teamColorOf } from './highlightTheme';
 import {
   endWaiting, enqueueHighlight, findKeptReplay, highlightBaseDir, highlightDeps, highlightGeminiConfig, highlightUnavailable, isHighlightQueued,
   localSource, prepareLive, stopHighlight
@@ -49,6 +50,9 @@ setShowRoots((): Array<{ dir: string; sub?: string }> => {
 });
 
 function jobOf(dir: string, info: ShowInfo): HighlightJob {
+  const directory: ReturnType<typeof getMemberDirectory> = getMemberDirectory();
+  const team: string | undefined = info.stage ? info.stage.team : memberTeamOf(directory.members, info.member);
+
   return {
     liveId: info.liveId,
     member: info.member,
@@ -60,8 +64,10 @@ function jobOf(dir: string, info: ShowInfo): HighlightJob {
     ffmpeg: getFFmpeg(),
     gemini: highlightGeminiConfig(),
     glossary: readGlossaryFile(),
-    members: membersPrompt(getMemberDirectory().members, info.stage ? '' : info.member),
+    members: membersPrompt(directory.members, info.stage ? '' : info.member),
     radio: info.radio,
+    team,
+    teamColor: info.stage ? info.stage.teamColor : teamColorOf(team),
     stage: info.stage
   };
 }

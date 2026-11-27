@@ -6,24 +6,31 @@ import {
   buildCoverAss, buildVideoAss, coverFilter, frameFilter, pictureFrameFilter, COVER_WIDTHS, LEFT_WIDTH, type FontSet, type PlacedDanmu
 } from './highlightAss';
 import { buildStageCoverAss, stageCoverFilter, stageFrameFilter, STAGE_VIDEO, type StageInfo } from './highlightStageAss';
+import { renderLiveCoverCanvas, renderRadioCoverCanvas, renderStageCoverCanvas } from './highlightGraphics';
+import { resolveTeam } from './highlightTheme';
 import { coverTag, draftCoverLines, draftPoints, draftSegments, fromOut, lookOf, videoTag } from './highlightDraft';
 import type { ClipDraft, Highlight } from './highlightTypes';
 
 /**
  * 切片的封面。写完标题、还没渲染时就要给人看真的封面，所以不从成片里取画面：写的时候从录播里取几帧，
- * 照成片的样子排好（左边画面，右边那一刻的字幕和弹幕，没有标题），存在切片文件夹的 .covers 里；
- * 定标题时预览、渲染完的封面、渲染完再改标题，都从这几帧做，看到的和最后的是同一张。
+ * 存在切片文件夹的 .covers 里；定标题时预览、渲染完的封面、渲染完再改标题，都从这几帧做，看到的和最后的是同一张。
+ * Electron 渲染进程下由 ./highlightGraphics 用 Canvas 2D 生成定稿封面（公演 A / 电台 B / 直播 C3-A），
+ * 无 DOM 的测试环境下自动回退到 FFmpeg + ASS。
  * 除了从录播里取的，还可以用别的图（用户 2026-11-26 要的）：自己上传的截图、播放时停在哪一帧就用哪一帧、电台封面库里的照片（./radioPhotos），
  * 记在草稿的 pictures 里，排在录播取的后面；用到的时候才照成片的样子排好（ensureFrame）。
  * 接入点：./highlightPipeline（写、渲染、改标题），./coverPreview（预览），./DraftPanel（加图）。
  */
 const COVER_FOLDER: string = '.covers';
+const COVER_STYLE_VERSION: string = 'v2';
 
 export const LIBRARY_FOLDER: string = '封面库'; // 电台封面库（./radioPhotos）：切片保存位置下面的这个文件夹
 
 export interface CoverJob {
   member: string;
   date: string;
+  radio?: boolean;
+  team?: string;
+  teamColor?: string;
   stage?: StageInfo;
 }
 
@@ -203,7 +210,8 @@ export async function makeFrames(input: FrameInput): Promise<void> {
 
   if (!job.stage) {
     await fsP.writeFile(path.join(cwd, 'frame.ass'), buildVideoAss({
-      title: '', tag: videoTag(job), lines: draft.lines, segments, total, danmu, fonts
+      title: '', tag: videoTag(job), lines: draft.lines, segments, total, danmu, fonts,
+      radio: job.radio, team: job.team, teamColor: job.teamColor
     }));
   }
 
@@ -234,8 +242,18 @@ interface CoverInput {
 /* 这张封面是照什么做的（和上次一样就不用重做） */
 function coverKey(input: Pick<CoverInput, 'job' | 'highlight' | 'draft'>): string {
   const { job, highlight, draft }: Pick<CoverInput, 'job' | 'highlight' | 'draft'> = input;
+  const team: { code: string; color: string } = job.stage
+    ? resolveTeam(job.stage.team, job.stage.teamColor)
+    : resolveTeam(job.team, job.teamColor);
 
-  return JSON.stringify([lookOf(draft), job.stage ? draftCoverLines(highlight, draft) : coverTag(job)]);
+  return JSON.stringify([
+    COVER_STYLE_VERSION,
+    Boolean(job.radio),
+    team.code,
+    team.color,
+    lookOf(draft),
+    job.stage ? draftCoverLines(highlight, draft) : coverTag(job)
+  ]);
 }
 
 let counter: number = 0;
@@ -259,19 +277,39 @@ export async function makeCovers(input: CoverInput): Promise<{ wide: string; sta
   await fsP.rm(keyFile, { force: true }); // 做到一半停了的不算做好
 
   const frame: string = await ensureFrame(ffmpeg, dir, draft, Boolean(job.stage), signal);
+  const stageLines: Array<string> = job.stage ? draftCoverLines(highlight, draft) : [];
+  const points: Array<string> = job.stage ? [] : draftPoints(draft);
 
   await Promise.all((Object.entries(COVER_WIDTHS) as Array<['wide' | 'standard', number]>).map(async ([shape, width]: ['wide' | 'standard', number]): Promise<void> => {
-    const ass: string = `cover-${ counter++ }.ass`;
     const part: string = `${ files[shape] }.part.jpg`; // 做好了再换上去，看的人不会看到一半的图
 
+    // 优先用 Chromium Canvas 2D 高质感出图（Electron 渲染进程）
+    const rendered: Buffer | null = job.stage
+      ? await renderStageCoverCanvas({ frameFile: frame, stage: job.stage, lines: stageLines, width })
+      : (job.radio
+        ? await renderRadioCoverCanvas({ frameFile: frame, meta: job, title: draft.title, points, width })
+        : await renderLiveCoverCanvas({ frameFile: frame, meta: job, title: draft.title, points, width }));
+
+    if (rendered) {
+      await fsP.writeFile(part, rendered);
+      await fsP.rename(part, files[shape]);
+
+      return;
+    }
+
+    // 无 DOM 的 Node / Jest 环境回退到 FFmpeg + ASS
+    const ass: string = `cover-${ counter++ }.ass`;
+
     await fsP.writeFile(path.join(cwd, ass), job.stage
-      ? buildStageCoverAss({ stage: job.stage, lines: draftCoverLines(highlight, draft), fonts, width })
-      : buildCoverAss({ title: draft.title, tag: coverTag(job), points: draftPoints(draft), fonts, width }));
+      ? buildStageCoverAss({ stage: job.stage, lines: stageLines, fonts, width })
+      : buildCoverAss({
+        title: draft.title, tag: coverTag(job), member: job.member, date: job.date, radio: job.radio, team: job.team, teamColor: job.teamColor,
+        points, fonts, width
+      }));
 
     try {
       await runFfmpeg(ffmpeg, [
         '-y', '-v', 'error', '-i', frame,
-        // 候选是 jpg（全范围的颜色），先转成和成片一样的标准范围，不然白字会发灰
         '-filter_complex', `[0:v]scale=out_range=tv,format=yuv420p[tv];${
           (job.stage ? stageCoverFilter(fonts, ass, width) : coverFilter(fonts, ass, width)).replace('[0:v]', '[tv]') }`,
         '-map', '[out]', '-frames:v', '1', '-q:v', '2', part

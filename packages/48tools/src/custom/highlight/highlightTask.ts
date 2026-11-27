@@ -27,6 +27,7 @@ import type { TimedToken } from './highlightTokens';
 import { safeFileName, parseLrc } from './highlightTime';
 import { downloadReplay, type DownloadProgress } from './highlightDownload';
 import { membersPrompt } from './highlightMembers';
+import { memberTeamOf, teamColorOf } from './highlightTheme';
 import { getMemberDirectory, loadMemberDirectory } from '../room/memberDirectory';
 import { beijingDate } from '../time/timeZone';
 import { sleep } from '../common/util';
@@ -101,10 +102,13 @@ export function highlightJobOf(record: HighlightRecord, count: HighlightCount, b
   const day: string = beijingDate(Number(record.ctime)); // 文件夹名、画面和发布标题上的日期都按北京时间
   const folder: string = safeFileName(`${ record.userInfo.nickname }_${ record.title }_${ day }_${ record.liveId }`, 90);
   const outDir: string = path.join(baseDir, folder);
+  const member: string = memberName(record.userInfo.nickname);
+  const directory: ReturnType<typeof getMemberDirectory> = getMemberDirectory();
+  const team: string | undefined = memberTeamOf(directory.members, member);
 
   return {
     liveId: record.liveId,
-    member: memberName(record.userInfo.nickname),
+    member,
     title: record.title,
     date: day.replace(/-/g, '.'),
     count,
@@ -114,8 +118,10 @@ export function highlightJobOf(record: HighlightRecord, count: HighlightCount, b
     ffmpeg: getFFmpeg(),
     gemini: highlightGeminiConfig(),
     glossary: readGlossaryFile(),
-    members: membersPrompt(getMemberDirectory().members, record.userInfo.nickname),
-    radio: isRadio(record)
+    members: membersPrompt(directory.members, record.userInfo.nickname),
+    radio: isRadio(record),
+    team,
+    teamColor: teamColorOf(team)
   };
 }
 
@@ -418,7 +424,13 @@ export async function prepareLive(
 ): Promise<PreparedSource> {
   // 成员名单一天更新一次：开始下载前确认是新的（取不到时用本机存的那份）
   await loadMemberDirectory();
-  job.members = membersPrompt(getMemberDirectory().members, nickname) || job.members;
+
+  const directory: ReturnType<typeof getMemberDirectory> = getMemberDirectory();
+  const team: string | undefined = memberTeamOf(directory.members, job.member);
+
+  job.members = membersPrompt(directory.members, nickname) || job.members;
+  job.team = team ?? job.team;
+  job.teamColor = teamColorOf(job.team);
 
   const kept: { file: string; danmuFile?: string } | undefined = findKeptReplay(job.liveId, Boolean(job.radio));
 

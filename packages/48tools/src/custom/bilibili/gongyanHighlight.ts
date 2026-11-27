@@ -2,8 +2,8 @@ import { promises as fsP } from 'node:fs';
 import * as path from 'node:path';
 import { getFFmpeg } from '../../utils/utils';
 import { getSetting } from '../settings/settingsStore';
-import { teamColors, type Team } from '../theme/accent';
 import { membersPrompt } from '../highlight/highlightMembers';
+import { teamColorOf } from '../highlight/highlightTheme';
 import { readGlossaryFile } from '../highlight/glossaryFile';
 import { highlightGeminiConfig, highlightUnavailable, enqueueHighlight, isHighlightQueued } from '../highlight/highlightTask';
 import { pickKey } from '../highlight/highlightShow';
@@ -47,7 +47,7 @@ export function stageJobOf(manifest: GongyanManifest, dir: string): HighlightJob
     members: membersPrompt(getMemberDirectory().members, ''),
     stage: {
       team,
-      teamColor: teamColors[team.toLowerCase() as Team]?.color ?? teamColors.x.color,
+      teamColor: teamColorOf(team),
       show,
       date: dotDate(manifest.show.day)
     }

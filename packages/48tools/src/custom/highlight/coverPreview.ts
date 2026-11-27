@@ -4,8 +4,10 @@ import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { useEffect, useState, type Dispatch as D, type SetStateAction as S } from 'react';
 import { getFFmpeg } from '../../utils/utils';
+import { teamOfName, useMemberDirectory } from '../room/memberDirectory';
 import { pickFonts } from './highlightFfmpeg';
-import { coverDir, makeCovers } from './highlightCover';
+import { coverDir, makeCovers, type CoverJob } from './highlightCover';
+import { shortMemberName, teamColorOf } from './highlightTheme';
 import { draftCoverLines, lookOf } from './highlightDraft';
 import { highlightOf, type ShowInfo, type ShowItem } from './highlightShow';
 import type { FontSet } from './highlightAss';
@@ -55,14 +57,14 @@ async function takeTurn<T>(run: () => Promise<T>): Promise<T> {
 type Covers = { wide: string; standard: string };
 
 /* 做一次预览；signal 停了（又改了）就不做 */
-function previewCovers(dir: string, info: ShowInfo, item: ShowItem, signal: AbortSignal): Promise<Covers | undefined> {
+function previewCovers(dir: string, job: CoverJob, item: ShowItem, signal: AbortSignal): Promise<Covers | undefined> {
   const covers: string = coverDir(dir, item.draft!.key);
 
   async function run(): Promise<Covers | undefined> {
     if (signal.aborted) return undefined;
 
     return makeCovers({
-      ffmpeg: getFFmpeg(), cwd: WORK_DIR, dir: covers, job: info, highlight: highlightOf(item), draft: item.draft!, fonts: await previewFonts(), signal
+      ffmpeg: getFFmpeg(), cwd: WORK_DIR, dir: covers, job, highlight: highlightOf(item), draft: item.draft!, fonts: await previewFonts(), signal
     });
   }
 
@@ -83,8 +85,18 @@ export interface CoverPreview {
 /* 一个切片的封面预览 */
 export function useCoverPreview(dir: string, info: ShowInfo, item: ShowItem): CoverPreview {
   const [preview, setPreview]: [CoverPreview, D<S<CoverPreview>>] = useState<CoverPreview>({ loading: true });
+  const directory: ReturnType<typeof useMemberDirectory> = useMemberDirectory();
+  const memberTeam: string | undefined = info.stage ? info.stage.team : teamOfName(directory, shortMemberName(info.member))?.label;
+  const coverJob: CoverJob = {
+    member: info.member,
+    date: info.date,
+    radio: info.radio,
+    team: memberTeam,
+    teamColor: info.stage ? info.stage.teamColor : teamColorOf(memberTeam),
+    stage: info.stage
+  };
   const highlight: Highlight = highlightOf(item);
-  const look: string = `${ item.draft!.key } ${ lookOf(item.draft!) } ${ info.stage ? draftCoverLines(highlight, item.draft!).join('\n') : '' }`;
+  const look: string = `${ item.draft!.key } ${ memberTeam ?? '' } ${ Boolean(info.radio) } ${ lookOf(item.draft!) } ${ info.stage ? draftCoverLines(highlight, item.draft!).join('\n') : '' }`;
 
   useEffect((): (() => void) => {
     const controller: AbortController = new AbortController();
@@ -92,7 +104,7 @@ export function useCoverPreview(dir: string, info: ShowInfo, item: ShowItem): Co
     setPreview((now: CoverPreview): CoverPreview => ({ ...now, loading: true }));
 
     const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
-      previewCovers(dir, info, item, controller.signal).then((covers: Covers | undefined): void => {
+      previewCovers(dir, coverJob, item, controller.signal).then((covers: Covers | undefined): void => {
         if (!covers || controller.signal.aborted) return;
 
         const version: number = Date.now();

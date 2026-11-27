@@ -17,13 +17,14 @@ import { timeLinesByTokens, type TimedToken, type TokenTiming } from './highligh
 import { fixHighlightTimes } from './highlightQuotes';
 import { parseGlossary, glossaryPrompt, applyGlossary, type Glossary } from './highlightGlossary';
 import {
-  placeDanmu, buildVideoAss, renderFilter, buildTitleAss, titleStrip, retitleFilter, type FontSet, type Strip
+  placeDanmu, buildVideoAss, renderFilter, buildTitleAss, titleStrip, retitleFilter, retitlePatchFilter, type FontSet, type Strip
 } from './highlightAss';
 import type {
   AudioWindow, CaptionLine, ClipDraft, ClipScript, DanmuLine, Highlight, HighlightCount, Segment, Silence, StageKind
 } from './highlightTypes';
 import { stageFindRequest, stageKindOf, stageClipWindow, stageLengthProblem, stageScript, stageQuota, type StageQuota } from './highlightStage';
 import { buildStageVideoAss, stageRenderFilter, buildStageTitleAss, stageTitleStrip, type StageInfo } from './highlightStageAss';
+import { renderRetitlePatchCanvas, renderVideoBackdropCanvas } from './highlightGraphics';
 import { locateMistake, locateSong, lowBandLevels, type StageTiming } from './highlightStageTiming';
 import { draftPoints, draftPostTitles, draftSegments, isOwnTitle, newDraft, videoTag } from './highlightDraft';
 import { coverDir, frameFile, makeCovers, makeFrames, thumbFile } from './highlightCover';
@@ -71,6 +72,8 @@ export interface HighlightJob {
   members?: string;     // 成员名单那一段提示（./highlightMembers 的 membersPrompt）
   stage?: StageInfo;    // 公演切片（B 站公演录像）：用公演版的提示、规则和排版（./highlightStage、./highlightStageAss）
   radio?: boolean;      // 电台：只下录音，成片左边放电台封面（见 saveRadioCover）
+  team?: string;        // 直播/电台成员所属队伍（SII / NII / NIII / 预备生…），自动匹配团队色
+  teamColor?: string;   // 队伍主色（留空时由 team 自动查表，预备生与未知队伍默认 SII 蓝）
   local?: { file: string; danmuFile?: string }; // 用本机已经下好的录播和弹幕（自动抓取），不再下载
 }
 
@@ -595,14 +598,28 @@ async function renderClip(
   };
 
   await fsP.mkdir(clipDir, { recursive: true });
+
+  const backdropBuffer: Buffer | null = await renderVideoBackdropCanvas(job, draft.title);
+  const hasBackdrop: boolean = backdropBuffer !== null;
+  const backdropArgs: Array<string> = [];
+  let backdropInput: number | undefined;
+
+  if (backdropBuffer) {
+    await fsP.writeFile(path.join(clipDir, 'backdrop.png'), backdropBuffer);
+    backdropInput = job.stage ? 1 : (context.still ? 2 : 1);
+    backdropArgs.push('-loop', '1', '-framerate', '30', '-i', 'backdrop.png');
+  }
+
   await fsP.writeFile(path.join(clipDir, 'overlay.ass'), job.stage
-    ? buildStageVideoAss({ ...shared, stage: job.stage })
-    : buildVideoAss({ ...shared, tag: videoTag(job) }));
+    ? buildStageVideoAss({ ...shared, stage: job.stage, backdrop: hasBackdrop })
+    : buildVideoAss({ ...shared, tag: videoTag(job), radio: job.radio, team: job.team, teamColor: job.teamColor, backdrop: hasBackdrop }));
   report('合成', 0);
   await runFfmpeg(job.ffmpeg, [
     '-y', '-v', 'error', '-nostats', '-progress', 'pipe:1',
-    '-ss', draft.start.toFixed(3), '-t', draft.length.toFixed(3), '-i', source, ...(context.still ?? []),
-    '-filter_complex', job.stage ? stageRenderFilter(segments, fonts) : renderFilter(segments, fonts, 'overlay.ass', Boolean(context.still)),
+    '-ss', draft.start.toFixed(3), '-t', draft.length.toFixed(3), '-i', source, ...(context.still ?? []), ...backdropArgs,
+    '-filter_complex', job.stage
+      ? stageRenderFilter(segments, fonts, 'overlay.ass', backdropInput)
+      : renderFilter(segments, fonts, 'overlay.ass', Boolean(context.still), backdropInput),
     '-map', '[vout]', '-map', '[aout]', ...ENCODE, '-crf', '20',
     '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-movflags', '+faststart', 'out.mp4'
   ], {
@@ -657,21 +674,38 @@ export async function retitleClip(
 
     if (draft.title !== clip.title) {
       const total: number = await mediaDuration(job.ffmpeg, video, signal);
-      const strip: Strip = job.stage ? stageTitleStrip() : titleStrip(videoTag(job));
+      const patch: { buffer: Buffer; rect: { x: number; y: number; w: number; h: number } } | null = await renderRetitlePatchCanvas(job, draft.title);
 
-      await fsP.writeFile(path.join(workDir, 'title.ass'), job.stage
-        ? buildStageTitleAss({ stage: job.stage, title: draft.title, total: total + 1, fonts })
-        : buildTitleAss({ title: draft.title, tag: videoTag(job), total: total + 1, fonts }));
       onProgress({ percent: 1, detail: '换标题' });
-      await runFfmpeg(job.ffmpeg, [
-        '-y', '-v', 'error', '-nostats', '-progress', 'pipe:1', '-i', video,
-        '-filter_complex', retitleFilter(strip, await pixelAt(job.ffmpeg, video, total / 2, strip.x + 2, strip.y + 2, signal), fonts, 'title.ass'),
-        '-map', '[vout]', '-map', '0:a', ...ENCODE, '-crf', '18', '-c:a', 'copy', '-movflags', '+faststart', 'out.mp4'
-      ], {
-        cwd: workDir,
-        signal,
-        onTime: (seconds: number): void => onProgress({ percent: 1 + (Math.min(1, seconds / total) * 92), detail: '换标题' })
-      });
+
+      if (patch) {
+        await fsP.writeFile(path.join(workDir, 'patch.png'), patch.buffer);
+        await runFfmpeg(job.ffmpeg, [
+          '-y', '-v', 'error', '-nostats', '-progress', 'pipe:1', '-i', video, '-i', 'patch.png',
+          '-filter_complex', retitlePatchFilter(patch.rect.x, patch.rect.y),
+          '-map', '[vout]', '-map', '0:a', ...ENCODE, '-crf', '18', '-c:a', 'copy', '-movflags', '+faststart', 'out.mp4'
+        ], {
+          cwd: workDir,
+          signal,
+          onTime: (seconds: number): void => onProgress({ percent: 1 + (Math.min(1, seconds / total) * 92), detail: '换标题' })
+        });
+      } else {
+        const strip: Strip = job.stage ? stageTitleStrip() : titleStrip(videoTag(job));
+
+        await fsP.writeFile(path.join(workDir, 'title.ass'), job.stage
+          ? buildStageTitleAss({ stage: job.stage, title: draft.title, total: total + 1, fonts })
+          : buildTitleAss({ title: draft.title, tag: videoTag(job), total: total + 1, fonts, radio: job.radio, team: job.team, teamColor: job.teamColor }));
+        await runFfmpeg(job.ffmpeg, [
+          '-y', '-v', 'error', '-nostats', '-progress', 'pipe:1', '-i', video,
+          '-filter_complex', retitleFilter(strip, await pixelAt(job.ffmpeg, video, total / 2, strip.x + 2, strip.y + 2, signal), fonts, 'title.ass'),
+          '-map', '[vout]', '-map', '0:a', ...ENCODE, '-crf', '18', '-c:a', 'copy', '-movflags', '+faststart', 'out.mp4'
+        ], {
+          cwd: workDir,
+          signal,
+          onTime: (seconds: number): void => onProgress({ percent: 1 + (Math.min(1, seconds / total) * 92), detail: '换标题' })
+        });
+      }
+
       file = path.join(workDir, 'out.mp4');
     }
 
