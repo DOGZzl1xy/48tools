@@ -390,7 +390,20 @@ export async function loadOlder(member: RoomMember, stream: RoomStream = 'owner'
 }
 
 /**
- * 把本地缓存里从 time 到「已经加载的最早一条」之间的消息都读进来（跳到搜索结果、跳到某一天时用：
+ * 进房间时「上次看到哪」（divider，一条消息的时间）是不是还在没读进来的本地缓存里。
+ * 打开房间只读本地最新的一批（CACHE_CHUNK 条），未读比这还多时，读进来的全是没看过的，
+ * 「以下是新消息」那条线该画的位置还在更早的地方：这时要先把本地缓存读到那里（loadBackTo），线和「N 条新消息」按钮才有地方放。
+ */
+export function dividerBeyondLoaded(room: RoomData | undefined, divider: number | undefined): boolean {
+  if (divider === undefined || !room?.opened || room.loading || !room.cacheMore) return false;
+
+  const oldest: number | undefined = room.items[0]?.raw.msgTime;
+
+  return oldest !== undefined && oldest > divider;
+}
+
+/**
+ * 把本地缓存里从 time 到「已经加载的最早一条」之间的消息都读进来（跳到搜索结果、跳到某一天、进房间时找「上次看到哪」时用：
  * 页面上的消息必须从那里一直连到最新，中间不能有空档）。time 比已加载的还新时什么都不做。
  * @return { boolean } 读完后 time 那里的消息是不是已经在列表里了
  */

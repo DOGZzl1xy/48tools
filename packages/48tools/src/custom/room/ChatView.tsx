@@ -34,6 +34,7 @@ import {
 import {
   loadOlder,
   loadBackTo,
+  dividerBeyondLoaded,
   syncNewest,
   resetRoomCache,
   setMode,
@@ -101,6 +102,17 @@ function ChatView(props: ChatViewProps): ReactElement {
   useEffect(function(): void {
     void loadPresenceHistory(member.ownerId);
   }, [member.ownerId]);
+
+  // 未读比打开房间时读进来的第一批还多：「上次看到哪」还在没读进来的本地缓存里，把缓存读到那里为止，
+  // 这样一进房间分隔线和「N 条新消息」按钮就都在，不用自己往上滚。每次进房间（每条分隔线）只做一次
+  const backfilledFor: RefObject<number | undefined> = useRef(undefined);
+
+  useEffect(function(): void {
+    if (divider === undefined || backfilledFor.current === divider || !dividerBeyondLoaded(room, divider)) return;
+
+    backfilledFor.current = divider;
+    void loadBackTo(member, mode, divider);
+  }, [divider, room]);
 
   // 「以下是新消息」画在哪条真实消息上面：进入房间时没看过的第一条（上下线记录不算消息，不挂分隔线）
   const dividerMsgIndex: number = divider === undefined

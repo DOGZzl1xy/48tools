@@ -36,7 +36,19 @@ jest.mock('./roomCache', (): object => ({
 }));
 jest.mock('./unreadStore', (): object => ({ noteMessages: jest.fn(), getChannel: (): undefined => undefined, setChannel: jest.fn() }));
 
-import { loadOlder, syncNewest, mergeItems, toItems, getRoomState, resetRoomStoreForTest, type RoomMember, type RoomMessageItem } from './roomStore';
+import {
+  loadOlder,
+  loadBackTo,
+  dividerBeyondLoaded,
+  syncNewest,
+  mergeItems,
+  toItems,
+  getRoomState,
+  resetRoomStoreForTest,
+  type RoomData,
+  type RoomMember,
+  type RoomMessageItem
+} from './roomStore';
 
 const member: RoomMember = { ownerId: 7, name: '成员', avatar: '' };
 
@@ -146,5 +158,32 @@ describe('roomStore', function(): void {
 
     expect(times()).toEqual([6, 7, 8, 9, 10]);
     expect(getRoomState().rooms[7]).toMatchObject({ syncing: false, error: undefined });
+  });
+
+  test('dividerBeyondLoaded is true only when the last-read position is still in the unread part of the local cache', function(): void {
+    const room: RoomData = { items: toItems(batch(10, 6)), nextTime: 0, hasMore: true, loading: false, opened: true, cacheMore: true };
+
+    expect(dividerBeyondLoaded(room, 3_000)).toBe(true);   // 看到第 3 条，读进来的最早是第 6 条
+    expect(dividerBeyondLoaded(room, 6_000)).toBe(false);  // 看到的那条已经在列表里
+    expect(dividerBeyondLoaded(room, undefined)).toBe(false);
+    expect(dividerBeyondLoaded({ ...room, cacheMore: false }, 3_000)).toBe(false); // 本地没有更早的了
+    expect(dividerBeyondLoaded({ ...room, loading: true }, 3_000)).toBe(false);
+    expect(dividerBeyondLoaded({ ...room, opened: false }, 3_000)).toBe(false);
+    expect(dividerBeyondLoaded(undefined, 3_000)).toBe(false);
+  });
+
+  test('loadBackTo reads the local cache back to the given time and joins it to what is loaded', async function(): Promise<void> {
+    pages[0] = { messages: batch(10, 6), nextTime: 6_000 };
+    await loadOlder(member);
+
+    const cache: { readRoomCache: jest.Mock; readRoomCacheBetween: jest.Mock } = jest.requireMock('./roomCache');
+
+    cache.readRoomCacheBetween.mockResolvedValueOnce(batch(5, 2).reverse()); // 缓存返回的顺序是从旧到新
+    cache.readRoomCache.mockResolvedValueOnce({ messages: batch(1, 1), more: false });
+
+    expect(await loadBackTo(member, 'owner', 3_000)).toBe(true);
+    expect(times()).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(getRoomState().rooms[7]).toMatchObject({ cacheMore: true, loading: false });
+    expect(dividerBeyondLoaded(getRoomState().rooms[7], 3_000)).toBe(false);
   });
 });
