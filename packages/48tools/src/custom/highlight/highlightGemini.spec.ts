@@ -171,7 +171,9 @@ describe('片段的字幕、标题、简介', (): void => {
 
     expect(prompt).toContain('SNH48 TEAM NII 《示例公演》 公演（2026.11.22）在 B 站直播的录像里，MC 环节的一段');
     expect(prompt).toContain('剪出一个发到 B 站的公演切片');
-    expect(prompt).toContain('【SNH48 TEAM NII｜甲&乙】');
+    // 发布用的标题前面只有队伍名（【恩兔】标题 | 公演名 日期），不再带成员名字
+    expect(prompt).toContain('发布时前面只加队伍名，不带成员的名字');
+    expect(prompt).not.toContain('｜甲&乙');
     expect(prompt).toContain('台上大家的反应');
     expect(prompt).not.toMatch(/口袋48|主播|连麦/);
     // 找片段时听了 20 分钟，谁在讲认得更准：把那时的说明带上，认人以它为准
@@ -179,6 +181,13 @@ describe('片段的字幕、标题、简介', (): void => {
     expect(live).not.toContain('对它的说明是');
     expect(live).toContain('测试成员 在口袋48的直播「测试直播」');
     expect(live).toContain('除了主播以外的主角');
+    // 公演的标题要标出一处突出的词（封面上刷荧光笔）；直播、电台不用；标题已经自己取好、只要发布标题时也不用
+    expect(prompt).toContain('每个标题里用【】标出最想突出的一处');
+    expect(live).not.toContain('用【】标出');
+    expect(scriptRequest({ member: 'SNH48 TEAM NII', title: '《示例公演》' }, { ...highlight, coverTitle: '自己取的' }, 120, 'QUJD', [], undefined, stage).parts[0].text)
+      .not.toContain('用【】标出');
+    expect(stageTitlesRequest({ member: 'SNH48 TEAM NII', title: '《示例公演》' }, { ...highlight, kind: 'mistake' }, stage).parts[0].text)
+      .toContain('每个标题里用【】标出最想突出的一处');
   });
 
   test('提示里有主题和关键的那句话；弹幕没有昵称', (): void => {
@@ -234,6 +243,11 @@ describe('片段的字幕、标题、简介', (): void => {
     expect(cleanTitle('「忘切小号？用大号自吹好萌」')).toBe('忘切小号？用大号自吹好萌');
     expect(cleanTitle('北大不比北芭差（bushi）。')).toBe('北大不比北芭差（bushi）');
     expect(cleanTitle('这算不算一种自产自销?')).toBe('这算不算一种自产自销？');
+    // 【】：整个包起来的是模型加的包装，去掉；标题中间的是公演封面上刷荧光笔的记号，留着；不成对的去掉
+    expect(cleanTitle('【整个包起来】')).toBe('整个包起来');
+    expect(cleanTitle('娜姐【耳朵红了】')).toBe('娜姐【耳朵红了】');
+    expect(cleanTitle('【撞号】现场争姐一。')).toBe('【撞号】现场争姐一');
+    expect(cleanTitle('娜姐【耳朵红了')).toBe('娜姐耳朵红了');
     expect(readScript({ lines: [], title: '卡凳还卡电梯有多社死？！' }, highlight).title).toBe('卡凳还卡电梯有多社死？');
   });
 

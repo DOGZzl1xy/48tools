@@ -2,8 +2,8 @@
  * 写好、等人定标题的切片：选标题、改亮点、改字幕、封面上写什么、发布用的标题、播放时跳过剪掉的地方。
  */
 import {
-  basisOf, draftCoverLines, draftPoints, draftPostTitles, draftSegments, editCoverLine, editLine, editPoint, fromOut, isOwnTitle, lineAt, lookOf, newDraft,
-  pickTitle, playAt, type DraftInput
+  basisOf, draftCoverLines, draftPoints, draftPostTitles, draftSegments, editLine, editPoint, fromOut, isOwnTitle, lineAt, lookOf, newDraft,
+  pickTitle, playAt, shownTitle, type DraftInput
 } from './highlightDraft';
 import { toOut } from './highlightCut';
 import type { CaptionLine, ClipDraft, ClipScript, Highlight, Segment } from './highlightTypes';
@@ -63,22 +63,35 @@ describe('写好的草稿', (): void => {
     expect(draftPoints({ points: ['一', '二', '三', '四'] })).toEqual(['一', '二', '三']);
   });
 
-  test('公演的封面大字：Gemini 的标题用 Gemini 的大字，自己取的标题就只写它，改过的用改过的', (): void => {
-    const stage: Highlight = { ...highlight, kind: 'mc', coverLines: ['模型的', '【大字】'] };
-
-    expect(draftCoverLines(stage, draftOf())).toEqual(['模型的', '【大字】']);
-    expect(draftCoverLines(stage, pickTitle(draftOf(), '我取的'))).toEqual(['我取的']);
-
-    const edited: ClipDraft = editCoverLine(stage, draftOf(), 0, '改过的');
-
-    expect(draftCoverLines(stage, edited)).toEqual(['改过的', '【大字】']);
-    expect(draftCoverLines(stage, pickTitle(edited, '我取的'))).toEqual(['改过的', '【大字】']);
-    expect(editCoverLine(stage, edited, 0, '模型的').ownCoverLines).toBeUndefined();
-    // 唱歌的只写歌名；自己取了标题就写标题
+  test('公演的封面大字就是定的标题，唱歌的只写歌名；【】只在封面上刷荧光笔，画面、文件名、发布标题里没有', (): void => {
+    const stage: { team: string; teamColor: string; show: string; date: string } = { team: 'X', teamColor: '#a9ca27', show: '《示例公演》', date: '2026.11.24' };
+    const mc: Highlight = { ...highlight, kind: 'mc' };
     const song: Highlight = { ...highlight, kind: 'song', song: '《示例歌》' };
 
+    expect(draftCoverLines(mc, draftOf())).toEqual(['第一个']);
+    expect(draftCoverLines(mc, pickTitle(draftOf(), '第二个'))).toEqual(['第二个']);
+    expect(draftCoverLines(mc, pickTitle(draftOf(), '我取的'))).toEqual(['我取的']);
+    expect(draftCoverLines(mc, pickTitle(draftOf(), '这一个标题有点长，一行放不下要分开'))).toEqual(['这一个标题有点长', '一行放不下要分开']);
+
+    // 唱歌的：选 Gemini 起的哪个都只写歌名；自己写了标题就写标题
     expect(draftCoverLines(song, draftOf())).toEqual(['【《示例歌》】']);
+    expect(draftCoverLines(song, pickTitle(draftOf(), '第二个'))).toEqual(['【《示例歌》】']);
     expect(draftCoverLines(song, pickTitle(draftOf(), '我取的'))).toEqual(['我取的']);
+
+    // 带记号的标题（Gemini 起的、自己写的都可以带）
+    const marked: ClipDraft = draftOf({ script: { ...script, title: '娜姐【耳朵红了】', titles: ['娜姐【耳朵红了】', '第二个'] } });
+
+    expect(draftCoverLines(mc, marked)).toEqual(['娜姐【耳朵红了】']);
+    expect(shownTitle({ stage }, marked)).toBe('娜姐耳朵红了');
+    expect(shownTitle({ stage }, pickTitle(marked, '我写的【重点】'))).toBe('我写的重点');
+    expect(shownTitle({}, marked)).toBe('娜姐【耳朵红了】'); // 直播、电台的标题不动
+    expect(draftPostTitles({ member: '', date: '', stage }, marked).post).toBe('【TeamX】娜姐耳朵红了 | 《示例公演》 2026.11.24');
+
+    // 以前存下来的草稿里可能还记着改过的大字：不看它，封面还是照标题；做好的切片记的样子也不因为它变
+    const old: ClipDraft = { ...draftOf(), ownCoverLines: ['以前改的', '【大字】'] } as ClipDraft;
+
+    expect(draftCoverLines(mc, old)).toEqual(['第一个']);
+    expect(lookOf(old)).toBe(lookOf(draftOf()));
   });
 
   test('发布用的标题：选的是 Gemini 的就用选的，另外的当备选；自己取的不写进去', (): void => {
@@ -95,13 +108,13 @@ describe('写好的草稿', (): void => {
     expect(own.others).toHaveLength(2);
     expect(JSON.stringify(own)).not.toContain('我取的');
     expect(draftPostTitles({ ...job, stage: { team: 'X', teamColor: '#a9ca27', show: '《示例公演》', date: '2026.11.24' } }, draftOf()).post)
-      .toBe('【SNH48 TEAM X｜成员乙】第一个 | 《示例公演》 2026.11.24 公演切片');
+      .toBe('【TeamX】第一个 | 《示例公演》 2026.11.24');
   });
 
-  test('看得见的东西变了没有：标题、亮点、画面、大字算，字幕不算，加了一个空的亮点不算', (): void => {
+  test('看得见的东西变了没有：标题、亮点、画面算，字幕不算，加了一个空的亮点不算', (): void => {
     const draft: ClipDraft = draftOf();
 
-    for (const changed of [pickTitle(draft, '第二个'), editPoint(draft, 0, '改了'), { ...draft, frame: 0 }, { ...draft, ownCoverLines: ['大字'] }]) {
+    for (const changed of [pickTitle(draft, '第二个'), editPoint(draft, 0, '改了'), { ...draft, frame: 0 }]) {
       expect(lookOf(changed)).not.toBe(lookOf(draft));
     }
 

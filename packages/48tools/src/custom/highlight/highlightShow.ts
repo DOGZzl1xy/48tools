@@ -208,13 +208,11 @@ export function editItem(item: ShowItem, patch: Partial<Pick<Highlight, 'title' 
     : { ...rest, title, reason, edited: true, original };
 }
 
-/* 交给切片流程的爆点。改过的标题直接写在画面和封面上（coverTitle）；封面上别的大字是照 Gemini 原来的标题写的，改了标题就不用了 */
+/* 交给切片流程的爆点。改过的标题直接写在画面和封面上（coverTitle） */
 export function highlightOf(item: ShowItem): Highlight {
-  const { recommended: _recommended, cut: _cut, original, draft: _draft, clip: _clip, problem: _problem, coverLines, ...highlight }: ShowItem = item;
+  const { recommended: _recommended, cut: _cut, original, draft: _draft, clip: _clip, problem: _problem, ...highlight }: ShowItem = item;
 
-  return original && original.title !== item.title
-    ? { ...highlight, cover: '', coverTitle: item.title }
-    : { ...highlight, ...(coverLines ? { coverLines } : {}) };
+  return original && original.title !== item.title ? { ...highlight, cover: '', coverTitle: item.title } : highlight;
 }
 
 /* 选了切、还没写标题的 */

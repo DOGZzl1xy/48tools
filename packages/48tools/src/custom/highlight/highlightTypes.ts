@@ -25,7 +25,6 @@ export interface Highlight {
   kind?: StageKind;
   song?: string;               // 歌名（kind 是 song 时）
   singers?: Array<string>;     // 演唱的成员
-  coverLines?: Array<string>;  // 封面上的 1 ~ 3 行大字（按需要），【】里的词下面刷荧光笔
   reaction?: number;           // 失误：模型从弹幕里抄的代表性反应的时间（在录像里的秒数），按它找弹幕的高峰（见 ./highlightStageTiming）
   timing?: string;             // 失误、唱歌的起止是怎么定的（写进切片说明）
 }
@@ -76,7 +75,6 @@ export interface ClipDraft {
   ownTitle?: string;             // 自己写过的标题（选回 Gemini 的也记着，还能再选上）
   frame: number;                 // 封面用第几个候选（从 0 起；frames 的在前，pictures 的接在后面）
   ownPoints?: Array<string>;     // 改过的亮点
-  ownCoverLines?: Array<string>; // 公演：改过的封面大字
 }
 
 /* 成片里连续的一段：from、to 是句子的下标，start、end 是片段里的时间，out 是它在成片里开始的时间 */

@@ -101,6 +101,27 @@ function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: n
   ctx.closePath();
 }
 
+/**
+ * 一团椭圆形的柔光（压暗或者提亮一块地方，给上面的字垫一下）：从中心往外淡，到椭圆的边上正好淡完。
+ * 画在照片上的柔光都用这个，不要画一个正圆再用矩形去截：截的地方如果还没淡完，就会留下一道看得见的直边。
+ * @param { number } rx - 横向多远淡完
+ * @param { number } ry - 纵向多远淡完
+ * @param { Array<[number, string]> } stops - 从中心（0）到边上（1）的颜色，最后一个要是全透明的
+ */
+function fillSoftEllipse(ctx: CanvasRenderingContext2D, cx: number, cy: number, rx: number, ry: number, stops: Array<[number, string]>): void {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(1, ry / rx);
+
+  const glow: CanvasGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
+
+  for (const [at, color] of stops) glow.addColorStop(at, color);
+
+  ctx.fillStyle = glow;
+  ctx.fillRect(-rx, -rx, rx * 2, rx * 2);
+  ctx.restore();
+}
+
 /* 斜切渐变荧光笔（-10°） */
 function drawSlantedHighlighter(
   ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, startColor: string, endColor: string, radius: number = 4
@@ -324,21 +345,19 @@ export async function renderStageCoverCanvas(input: {
   ctx.fillStyle = bottomScrim;
   ctx.fillRect(0, H * 0.46, width, H * 0.54);
 
-  const blGlow: CanvasGradient = ctx.createRadialGradient(width * 0.24, H * 0.88, 0, width * 0.24, H * 0.88, width * 0.55);
+  // 左下大字后面的柔光：横向铺开到 0.55 个画面宽，往上到 0.4 的高度正好淡完
+  // （以前画的是正圆，再用矩形在 0.4 的高度截掉：圆在那里还没淡完，画面上留下一道横贯人脸的直线，用户 2026-11-27 指出）
+  fillSoftEllipse(ctx, width * 0.24, H * 0.88, width * 0.55, H * 0.48, [
+    [0, 'rgba(10, 18, 30, 0.28)'],
+    [1, 'rgba(10, 18, 30, 0)']
+  ]);
 
-  blGlow.addColorStop(0, 'rgba(10, 18, 30, 0.28)');
-  blGlow.addColorStop(1, 'rgba(10, 18, 30, 0)');
-  ctx.fillStyle = blGlow;
-  ctx.fillRect(0, H * 0.4, width, H * 0.6);
-
-  // 右上角局部轻柔护字（避开左上角 SNH48 官摄水印）
-  const trScrim: CanvasGradient = ctx.createRadialGradient(width, 0, 0, width, 0, 760);
-
-  trScrim.addColorStop(0, 'rgba(6, 12, 20, 0.56)');
-  trScrim.addColorStop(0.55, 'rgba(6, 12, 20, 0.16)');
-  trScrim.addColorStop(1, 'rgba(6, 12, 20, 0)');
-  ctx.fillStyle = trScrim;
-  ctx.fillRect(width - 800, 0, 800, 320);
+  // 右上角局部轻柔护字（避开左上角 SNH48 官摄水印）：往左 760、往下 320 淡完，同样不用矩形去截
+  fillSoftEllipse(ctx, width, 0, 760, 320, [
+    [0, 'rgba(6, 12, 20, 0.56)'],
+    [0.55, 'rgba(6, 12, 20, 0.16)'],
+    [1, 'rgba(6, 12, 20, 0)']
+  ]);
 
   // 右上角杂志眉标：实心队伍色标 + 公演名 + 日期 + 发光团队色竖条（不含 SNH48）
   const headerTop: number = 48;

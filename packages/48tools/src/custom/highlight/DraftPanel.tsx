@@ -17,7 +17,7 @@ import {
   UploadOutlined as IconUploadOutlined
 } from '@ant-design/icons';
 import {
-  candidateCount, draftCoverLines, draftPostTitles, editCoverLine, editLine, editPoint, isOwnTitle, pickPicture, pickTitle, MAX_POINTS, POINT_LENGTH
+  candidateCount, draftPostTitles, editLine, editPoint, isOwnTitle, pickPicture, pickTitle, MAX_POINTS, POINT_LENGTH
 } from './highlightDraft';
 import { candidateThumb, coverDir } from './highlightCover';
 import { addPictureFile, captureFrame, chooseImage, isImageFile } from './coverPick';
@@ -31,7 +31,7 @@ import type { CaptionLine, ClipDraft, Highlight } from './highlightTypes';
 
 /**
  * 切片页面里一个写好了的爆点（用户 2026-11-24 定的：先定标题和亮点，再渲染）：
- * 选 Gemini 起的标题或者自己写，亮点（公演是封面大字）可以改、删、加，封面当场看、可以换一帧，字幕能改错字，能直接放录播里的这一段。
+ * 选 Gemini 起的标题或者自己写，亮点可以改、删、加（公演没有亮点这一栏：封面上的大字就是标题），封面当场看、可以换一帧，字幕能改错字，能直接放录播里的这一段。
  * 渲染完还能回来改标题、亮点、封面的画面，点「重做标题和封面」只换那一条，不用重新渲染。
  */
 export const TITLE_MAX: number = 40;
@@ -47,7 +47,7 @@ interface TextRowProps {
   onRemove?(): void;
 }
 
-/* 一行亮点（封面大字），右边可以删 */
+/* 一行亮点，右边可以删 */
 function TextRow(props: TextRowProps): ReactElement {
   const { value, label, maxLength, locked, placeholder, onSave, onRemove }: TextRowProps = props;
   const field: DraftField = useDraftField(value, onSave);
@@ -106,9 +106,24 @@ interface DraftPanelProps {
   onRetitle(): void;
 }
 
+/* 公演的标题：【】里的词是封面上要刷荧光笔的，这里不显示括号，把词标出来 */
+function MarkedTitle(props: { readonly text: string }): ReactElement {
+  const parts: Array<string> = props.text.split(/【([^【】]*)】/);
+
+  return (
+    <span>
+      {
+        parts.map((part: string, index: number): ReactElement | string => (index % 2 === 1
+          ? <mark key={ index } className="picks-title-mark" title="封面上这个词下面刷荧光笔">{ part }</mark>
+          : part.replace(/[【】]/g, '')))
+      }
+    </span>
+  );
+}
+
 /* 选标题：Gemini 起的三个，或者自己写 */
-function TitlePicker(props: { readonly draft: ClipDraft; readonly locked: boolean; onDraft: DraftPanelProps['onDraft'] }): ReactElement {
-  const { draft, locked, onDraft }: { draft: ClipDraft; locked: boolean; onDraft: DraftPanelProps['onDraft'] } = props;
+function TitlePicker(props: { readonly draft: ClipDraft; readonly locked: boolean; readonly stage: boolean; onDraft: DraftPanelProps['onDraft'] }): ReactElement {
+  const { draft, locked, stage, onDraft }: { draft: ClipDraft; locked: boolean; stage: boolean; onDraft: DraftPanelProps['onDraft'] } = props;
   const own: boolean = isOwnTitle(draft);
   const field: DraftField = useDraftField(draft.ownTitle ?? '', (text: string): Promise<unknown> => onDraft((now: ClipDraft): ClipDraft => pickTitle(now, text)));
 
@@ -120,7 +135,7 @@ function TitlePicker(props: { readonly draft: ClipDraft; readonly locked: boolea
 
   return (
     <Radio.Group className="picks-titles" value={ own ? OWN_VALUE : draft.title } disabled={ locked } onChange={ handleChange }>
-      { draft.titles.map((title: string): ReactElement => <Radio key={ title } value={ title }>{ title }</Radio>) }
+      { draft.titles.map((title: string): ReactElement => <Radio key={ title } value={ title }>{ stage ? <MarkedTitle text={ title } /> : title }</Radio>) }
       <div className="picks-row">
         <Radio value={ OWN_VALUE } disabled={ locked || !draft.ownTitle } aria-label="用自己写的标题" />
         <Input className="picks-edit"
@@ -128,7 +143,7 @@ function TitlePicker(props: { readonly draft: ClipDraft; readonly locked: boolea
           aria-label="自己写标题"
           value={ field.value }
           maxLength={ TITLE_MAX }
-          placeholder="自己写"
+          placeholder={ stage ? '自己写（用【】括起来的词，封面上会刷荧光笔，括号不显示）' : '自己写' }
           spellCheck={ false }
           disabled={ locked }
           onChange={ field.onChange }
@@ -285,11 +300,11 @@ function DraftPanel(props: DraftPanelProps): ReactElement {
     .map((line: CaptionLine, index: number): { line: CaptionLine; index: number } => ({ line, index }))
     .filter(({ line }: { line: CaptionLine }): boolean => line.keep);
 
-  // 封面上写的：直播、电台是亮点，公演是大字
-  const rows: Array<string> = info.stage ? draft.ownCoverLines ?? draftCoverLines(highlight, draft) : draft.ownPoints ?? draft.points;
+  // 封面上写的亮点（直播、电台）。公演的封面只写标题，没有另外要定的东西
+  const rows: Array<string> = draft.ownPoints ?? draft.points;
 
   function editRow(index: number, text: string | undefined): Promise<unknown> {
-    return onDraft((now: ClipDraft): ClipDraft => (info.stage ? editCoverLine(highlight, now, index, text) : editPoint(now, index, text)));
+    return onDraft((now: ClipDraft): ClipDraft => editPoint(now, index, text));
   }
 
   /* 播放时「用这一帧做封面」：录播里的这一刻存成一张图，封面换成它 */
@@ -311,33 +326,37 @@ function DraftPanel(props: DraftPanelProps): ReactElement {
         <div className="picks-draft-fields">
           <div className="picks-field">
             <span className="picks-field-name">标题</span>
-            <TitlePicker draft={ draft } locked={ locked } onDraft={ onDraft } />
+            <TitlePicker draft={ draft } locked={ locked } stage={ Boolean(info.stage) } onDraft={ onDraft } />
           </div>
-          <div className="picks-field">
-            <span className="picks-field-name">{ info.stage ? '封面大字' : '亮点' }</span>
-            <div className="picks-field-body">
-              {
-                rows.map((row: string, index: number): ReactElement => (
-                  <TextRow key={ `${ index }-${ rows.length }` }
-                    value={ row }
-                    label={ `${ info.stage ? '封面大字' : '亮点' } ${ index + 1 }` }
-                    maxLength={ POINT_LENGTH }
-                    locked={ locked }
-                    placeholder={ info.stage ? '【】里的词会突出' : '写一句' }
-                    onSave={ (text: string): Promise<unknown> => editRow(index, text) }
-                    onRemove={ info.stage && rows.length === 1 ? undefined : (): void => void editRow(index, undefined) }
-                  />
-                ))
-              }
-              {
-                rows.length < MAX_POINTS ? (
-                  <Button type="text" size="small" icon={ <IconPlusOutlined /> } disabled={ locked || rows.at(-1)?.trim() === '' } onClick={ (): Promise<unknown> => editRow(rows.length, '') }>
-                    加一个
-                  </Button>
-                ) : null
-              }
-            </div>
-          </div>
+          {
+            info.stage ? null : (
+              <div className="picks-field">
+                <span className="picks-field-name">亮点</span>
+                <div className="picks-field-body">
+                  {
+                    rows.map((row: string, index: number): ReactElement => (
+                      <TextRow key={ `${ index }-${ rows.length }` }
+                        value={ row }
+                        label={ `亮点 ${ index + 1 }` }
+                        maxLength={ POINT_LENGTH }
+                        locked={ locked }
+                        placeholder="写一句"
+                        onSave={ (text: string): Promise<unknown> => editRow(index, text) }
+                        onRemove={ (): void => void editRow(index, undefined) }
+                      />
+                    ))
+                  }
+                  {
+                    rows.length < MAX_POINTS ? (
+                      <Button type="text" size="small" icon={ <IconPlusOutlined /> } disabled={ locked || rows.at(-1)?.trim() === '' } onClick={ (): Promise<unknown> => editRow(rows.length, '') }>
+                        加一个
+                      </Button>
+                    ) : null
+                  }
+                </div>
+              </div>
+            )
+          }
           <div className="picks-field">
             <span className="picks-field-name">发布</span>
             <div className="picks-field-body">

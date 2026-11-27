@@ -355,7 +355,6 @@ export function readFound(data: any, window: AudioWindow): { summary: string; hi
       ...(['mc', 'mistake', 'song'].includes(item?.kind) ? { kind: item.kind } : {}),
       ...(item?.song ? { song: String(item.song).trim() } : {}),
       ...(Array.isArray(item?.singers) ? { singers: item.singers.map((name: unknown): string => String(name).trim()).filter(Boolean) } : {}),
-      ...(Array.isArray(item?.cover_lines) ? { coverLines: item.cover_lines.map((line: unknown): string => String(line).trim()).filter(Boolean).slice(0, 3) } : {}),
       ...(Number.isFinite(toSeconds(item?.reaction)) && item?.reaction !== '' ? { reaction: toSeconds(item.reaction) + window.start } : {})
     }))
     .filter((item: Highlight): boolean => Number.isFinite(item.start) && Number.isFinite(item.end)
@@ -373,6 +372,7 @@ interface ScriptWording {
   fan: string;        // 起标题的人是谁的老粉
   noName: string;     // 标题里不用写什么
   quoteTitle: string; // 截原话的标题怎么截（直播、电台）
+  mark: string;       // 标题里要不要标出突出的词（公演：封面上刷荧光笔）
   people: string;     // people 字段怎么写
 }
 
@@ -402,9 +402,12 @@ function scriptWording(meta: LiveMeta, highlight: Highlight, clipLength: number,
       reaction: '台上大家的反应',
       asides: '念粉丝代口、流程上的话、跑题',
       fan: `TEAM ${ stage.team } 的老粉`,
-      noName: `不用写队名（发布时会在前面加上【SNH48 TEAM ${ stage.team }｜主角】）`,
+      noName: '不用写队名（发布时前面只加队伍名，不带成员的名字；主角是谁要让人一眼看出来时，把粉丝对她的叫法写进标题里）',
       quoteTitle: '',
-      people: `- people：这个片段的主角是谁（发布时标题前面会写成【SNH48 TEAM ${ stage.team }｜甲&乙】），最多三个：
+      mark: `
+  · 每个标题里用【】标出最想突出的一处：一个 2 到 6 个字的词或短语（例如「娜姐【耳朵红了】」「【撞号】现场争姐一」），每个标题只标一处。`
+        + '封面上这个词下面会刷一道队伍颜色的荧光笔；【】只是记号，不会显示出来，也不算字数。',
+      people: `- people：这个片段的主角是谁，最多三个：
   在留下来的这部分里说了好几句话的成员，或者大家围着在讲的那个成员（比如讲自己的外卖被拿走、被调侃的那个人，不能只写拿走外卖的人）。只是顺口提到名字、念到名字的不算。
   只写名字，不带队伍名，以成员名单为准。听声音认不出是谁时看弹幕：粉丝常在弹幕里刷正在说话的人的名字或昵称；还是拿不准就不要写。`
     };
@@ -419,6 +422,7 @@ function scriptWording(meta: LiveMeta, highlight: Highlight, clipLength: number,
     fan: '这个成员的老粉',
     noName: '不用写主播自己的名字（发布时会在前面加上【主播名字】）',
     quoteTitle: `截${ meta.member }的原话（连麦时别人的话也行）的时候，${ QUOTE_RULE }`,
+    mark: '',
     people: `- people：留下来的这部分里，除了主播以外的主角是谁（发布时标题前面会写成【主播&她】）。只有两种人算：
   一是和主播连麦、在这段里说了话的人；二是主播花了好几句话在讲的其他成员（讲她做了什么事、两个人之间的故事）。
   只是顺口提到名字、念到名字、拿来打个比方的不算；粉丝、工作人员、家人不算。
@@ -428,7 +432,7 @@ function scriptWording(meta: LiveMeta, highlight: Highlight, clipLength: number,
 }
 
 /* 三个标题怎么起 */
-function titleRules(highlight: Highlight, wording: Pick<ScriptWording, 'fan' | 'noName' | 'quoteTitle'>): string {
+function titleRules(highlight: Highlight, wording: Pick<ScriptWording, 'fan' | 'noName' | 'quoteTitle' | 'mark'>): string {
   return `- titles：三个标题，让发视频的人挑。第一个放你最满意的（${ highlight.coverTitle ? '发布时用它' : '画面和封面上用它' }）。
   你是${ wording.fan }，也是很会起标题的切片手。标题要像粉丝自己发视频时随手起的：有梗、有态度、让人想点进来，而不是把事情概括一遍。放开写，不要套公式。
   · 可以怎么写（只是举例，想到更好的写法就用你自己的，三个标题的写法必须互不相同）：
@@ -439,7 +443,7 @@ function titleRules(highlight: Highlight, wording: Pick<ScriptWording, 'fan' | '
   · 不要把包袱讲完，留一点让人想看；也不要解释梗。越短越有劲：6 到 12 个字最好，最长 16 个字。
   · 不要这样写：「A，但是B」「A的尽头是B」「谁家…啊」「…还得靠…」这类已经用烂的句式；「竟然」「当场破防」「笑疯了」「太好笑了」这类替观众下结论的词；把事情经过概括一遍的标题。
   · 结尾的括号吐槽（「（确信）」「（bushi）」这类）已经用烂了，基本不要用；三个标题里最多一个带括号，而且不能是「确信」。
-  · 梗要来自这段里真的说过、发生过的事，不能编造；不低俗，不攻击成员和粉丝。${ wording.noName }。结尾不要句号和感叹号。`;
+  · 梗要来自这段里真的说过、发生过的事，不能编造；不低俗，不攻击成员和粉丝。${ wording.noName }。结尾不要句号和感叹号。${ highlight.coverTitle ? '' : wording.mark }`;
 }
 
 /**
@@ -535,7 +539,12 @@ ${ danmu.map((item: DanmuLine): string => item.message.slice(0, DANMU_TEXT_LENGT
 
 /* 短标题：去掉模型有时还是会加的书名号、结尾的句号感叹号等（发布时前后还要拼上名字和日期）；结尾的问号和括号吐槽是标题的一部分，留着 */
 export function cleanTitle(title: string): string {
-  return title.trim().replace(/^[【「『《]+|[】」』》]+$/g, '').replace(/[！!。，,、~～…\s]+$/g, '').replace(/[?？][！!?？]*$/, '？').trim();
+  const text: string = title.trim()
+    .replace(/^【([^【】]*)】$/, '$1') // 整个标题包在【】里：是模型加的包装
+    .replace(/^[「『《]+|[」』》]+$/g, '').replace(/[！!。，,、~～…\s]+$/g, '').replace(/[?？][！!?？]*$/, '？').trim();
+
+  // 标题中间的【】是公演封面上刷荧光笔的记号（见 ./highlightStage 的 plainTitle），留着；不成对的没法用，去掉
+  return (text.match(/【/g)?.length ?? 0) === (text.match(/】/g)?.length ?? 0) ? text : text.replace(/[【】]/g, '').trim();
 }
 
 /* 三个标题：去掉空的和重复的 */

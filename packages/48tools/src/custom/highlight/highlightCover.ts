@@ -21,7 +21,7 @@ import type { ClipDraft, Highlight } from './highlightTypes';
  * 接入点：./highlightPipeline（写、渲染、改标题），./coverPreview（预览），./DraftPanel（加图）。
  */
 const COVER_FOLDER: string = '.covers';
-const COVER_STYLE_VERSION: string = 'v2';
+const COVER_STYLE_VERSION: string = 'v3'; // 封面的画法变了就加一，做好的封面预览会重做（v3：去掉公演封面上柔光被截出来的直线）
 
 export const LIBRARY_FOLDER: string = '封面库'; // 电台封面库（./radioPhotos）：切片保存位置下面的这个文件夹
 

@@ -1,5 +1,5 @@
 import { buildSegments, toOut } from './highlightCut';
-import { stageCoverLines, stagePostTitle } from './highlightStage';
+import { plainTitle, stageCoverLines, stagePostTitle } from './highlightStage';
 import { postTitle } from './highlightTime';
 import type { StageInfo } from './highlightStageAss';
 import type { CaptionLine, ClipDraft, ClipScript, Highlight, Segment } from './highlightTypes';
@@ -96,11 +96,14 @@ export function draftPoints(draft: Pick<ClipDraft, 'points' | 'ownPoints'>): Arr
   return tidy(draft.ownPoints ?? draft.points);
 }
 
-/* 公演封面上的大字：改过用改的；没改过，自己取的标题就只写它，Gemini 起的照原来的规则 */
-export function draftCoverLines(highlight: Highlight, draft: Pick<ClipDraft, 'title' | 'titles' | 'ownCoverLines'>): Array<string> {
-  if (draft.ownCoverLines) return tidy(draft.ownCoverLines);
+/* 公演封面上的大字：就是定的标题，唱歌的只写歌名（用户 2026-11-27 定的，不再另外写、另外改；见 ./highlightStage 的 stageCoverLines） */
+export function draftCoverLines(highlight: Highlight, draft: Pick<ClipDraft, 'title' | 'titles'>): Array<string> {
+  return stageCoverLines(highlight, draft.title, isOwnTitle(draft));
+}
 
-  return stageCoverLines({ ...highlight, coverTitle: isOwnTitle(draft) ? draft.title : undefined }, draft.title);
+/* 画面、文件名上写的标题：公演的标题里可能有【】（封面上刷荧光笔的记号），不显示出来 */
+export function shownTitle(job: { stage?: StageInfo }, draft: Pick<ClipDraft, 'title'>): string {
+  return job.stage ? plainTitle(draft.title) : draft.title;
 }
 
 /* 选标题、自己写标题；空的不改 */
@@ -112,7 +115,7 @@ export function pickTitle(draft: ClipDraft, title: string): ClipDraft {
   return { ...draft, title: text, ...(draft.titles.includes(text) ? {} : { ownTitle: text }) };
 }
 
-/* 改第几个亮点（封面大字）；写到最后一个后面就是加一个，undefined 是删掉。改回 Gemini 写的就不算改过 */
+/* 改第几个亮点；写到最后一个后面就是加一个，undefined 是删掉。改回 Gemini 写的就不算改过 */
 function editList(wrote: Array<string>, now: Array<string>, index: number, text: string | undefined): Array<string> | undefined {
   const next: Array<string> = [...now];
 
@@ -127,14 +130,6 @@ export function editPoint(draft: ClipDraft, index: number, text: string | undefi
   const next: Array<string> | undefined = editList(draft.points, ownPoints ?? draft.points, index, text);
 
   return next ? { ...rest, ownPoints: next } : rest;
-}
-
-export function editCoverLine(highlight: Highlight, draft: ClipDraft, index: number, text: string | undefined): ClipDraft {
-  const { ownCoverLines, ...rest }: ClipDraft = draft;
-  const wrote: Array<string> = draftCoverLines(highlight, rest);
-  const next: Array<string> | undefined = editList(wrote, ownCoverLines ?? wrote, index, text);
-
-  return next ? { ...rest, ownCoverLines: next } : rest;
 }
 
 /* 封面候选一共几个：录播里取的，加上别的图（上传的、播放时选的、电台封面库的） */
@@ -157,9 +152,12 @@ export function editLine(draft: ClipDraft, index: number, text: string): ClipDra
   return { ...draft, lines: draft.lines.map((line: CaptionLine, order: number): CaptionLine => (order === index ? { ...line, text: text.trim() } : line)) };
 }
 
-/* 看得见的东西（标题、亮点、大字、封面的画面）有没有变：和做好的切片里记的不一样，就要重做标题和封面 */
+/**
+ * 看得见的东西（标题、亮点、封面的画面）有没有变：和做好的切片里记的不一样，就要重做标题和封面。
+ * 最后一项以前是公演改过的封面大字，现在没有这样东西了；留着一个 null，这样以前做好的切片记的还对得上，不会都变成「要重做」
+ */
 export function lookOf(draft: ClipDraft): string {
-  return JSON.stringify([draft.title, draft.frame, draftPoints(draft), draft.ownCoverLines ?? null]);
+  return JSON.stringify([draft.title, draft.frame, draftPoints(draft), null]);
 }
 
 /* 画面右上角和封面上的小字 */
@@ -180,7 +178,7 @@ export function draftPostTitles(
 ): { post: string; others: Array<string> } {
   const main: string = isOwnTitle(draft) ? draft.titles[0] ?? draft.title : draft.title;
   const full: (title: string) => string = (title: string): string => (job.stage
-    ? stagePostTitle(job.stage, title, draft.people)
+    ? stagePostTitle(job.stage, title)
     : postTitle(job.member, job.date, title, draft.people, draft.more));
 
   return { post: full(main), others: draft.titles.filter((title: string): boolean => title !== main).map(full) };

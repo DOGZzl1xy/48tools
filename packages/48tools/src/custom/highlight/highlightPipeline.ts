@@ -22,11 +22,13 @@ import {
 import type {
   AudioWindow, CaptionLine, ClipDraft, ClipScript, DanmuLine, Highlight, HighlightCount, Segment, Silence, StageKind
 } from './highlightTypes';
-import { stageFindRequest, stageKindOf, stageClipWindow, stageLengthProblem, stageScript, stageQuota, type StageQuota } from './highlightStage';
+import {
+  plainTitle, stageFindRequest, stageKindOf, stageClipWindow, stageLengthProblem, stageScript, stageSongTitle, stageQuota, type StageQuota
+} from './highlightStage';
 import { buildStageVideoAss, stageRenderFilter, buildStageTitleAss, stageTitleStrip, type StageInfo } from './highlightStageAss';
 import { renderRetitlePatchCanvas, renderVideoBackdropCanvas } from './highlightGraphics';
 import { locateMistake, locateSong, lowBandLevels, type StageTiming } from './highlightStageTiming';
-import { draftPoints, draftPostTitles, draftSegments, isOwnTitle, newDraft, videoTag } from './highlightDraft';
+import { draftPoints, draftPostTitles, draftSegments, isOwnTitle, newDraft, shownTitle, videoTag } from './highlightDraft';
 import { coverDir, frameFile, makeCovers, makeFrames, thumbFile } from './highlightCover';
 import { sharpTimes } from './highlightSharp';
 import { collectRadioPhotos, radioChoice, type MemberPhoto, type RadioPhotos } from './radioPhotos';
@@ -347,6 +349,9 @@ async function scriptAndCut(
   // 专有词汇里「错 → 对」的替换（存下来的是 Gemini 的原文，每次用的时候换，改了词汇表重做也生效）
   script = glossaryScript(script, context.glossary);
 
+  // 【】只有公演的标题用（封面上刷荧光笔的记号）；直播、电台没让模型写，它自己写了就去掉
+  if (!job.stage) script = { ...script, title: plainTitle(script.title), titles: script.titles?.map(plainTitle) };
+
   // 模型标的时间不稳（偶尔整段早一两秒），用声音里的停顿和音节把每句话对回去，再定剪辑点
   const silences: Array<Silence> = await detectSilences(job.ffmpeg, audio, signal);
   const peaks: Array<number> = syllablePeaks(envelopeOf(await readPcm(job.ffmpeg, audio, signal), PCM_RATE));
@@ -391,7 +396,11 @@ async function stageClipScript(context: ClipContext, highlight: Highlight): Prom
     const answer: { titles?: unknown } = await geminiJson<{ titles?: unknown }>(
       job.gemini, stageTitlesRequest(meta, highlight, job.stage), signal, deps.fetchImpl);
     const asked: Array<string> = readTitles(answer.titles).map((title: string): string => applyGlossary(title, glossary));
-    const titles: Array<string> = readTitles(highlight.coverTitle ? asked : [highlight.title, ...asked]);
+    const songTitle: string | undefined = stageSongTitle(highlight); // 唱歌的：「《歌名》」排第一个
+    const titles: Array<string> = [
+      ...(songTitle ? [songTitle] : []),
+      ...readTitles(highlight.coverTitle ? asked : [highlight.title, ...asked]).filter((title: string): boolean => title !== songTitle)
+    ];
 
     return titles.length > 0 ? { ...script, title: titles[0], titles } : script;
   } catch (err) {
@@ -533,11 +542,11 @@ async function writeClip(
 function clipResultOf(job: HighlightJob, highlight: Highlight, draft: ClipDraft, index: number): ClipResult {
   const { segments, total }: ReturnType<typeof draftSegments> = draftSegments(draft);
   const { post, others }: ReturnType<typeof draftPostTitles> = draftPostTitles(job, draft);
-  const name: string = `${ String(index).padStart(2, '0') }-${ safeFileName(draft.title) }`;
+  const name: string = `${ String(index).padStart(2, '0') }-${ safeFileName(shownTitle(job, draft)) }`;
 
   return {
     index,
-    title: draft.title,
+    title: shownTitle(job, draft),
     ...(isOwnTitle(draft) ? { ownTitle: true } : {}),
     postTitle: post,
     otherTitles: others,
@@ -594,12 +603,12 @@ async function renderClip(
   const clipDir: string = path.join(job.workDir, `clip-${ draft.key }`);
   const { segments, total }: ReturnType<typeof draftSegments> = draftSegments(draft);
   const shared: { title: string; lines: Array<CaptionLine>; segments: Array<Segment>; total: number; danmu: ReturnType<typeof placeDanmu>; fonts: FontSet } = {
-    title: draft.title, lines: draft.lines, segments, total, danmu: placeDanmu(danmu, draft.start, segments, total), fonts
+    title: shownTitle(job, draft), lines: draft.lines, segments, total, danmu: placeDanmu(danmu, draft.start, segments, total), fonts
   };
 
   await fsP.mkdir(clipDir, { recursive: true });
 
-  const backdropBuffer: Buffer | null = await renderVideoBackdropCanvas(job, draft.title);
+  const backdropBuffer: Buffer | null = await renderVideoBackdropCanvas(job, shownTitle(job, draft));
   const hasBackdrop: boolean = backdropBuffer !== null;
   const backdropArgs: Array<string> = [];
   let backdropInput: number | undefined;
@@ -672,9 +681,9 @@ export async function retitleClip(
     const fonts: FontSet = await pickFonts(workDir);
     let file: string = video;
 
-    if (draft.title !== clip.title) {
+    if (shownTitle(job, draft) !== clip.title) {
       const total: number = await mediaDuration(job.ffmpeg, video, signal);
-      const patch: { buffer: Buffer; rect: { x: number; y: number; w: number; h: number } } | null = await renderRetitlePatchCanvas(job, draft.title);
+      const patch: { buffer: Buffer; rect: { x: number; y: number; w: number; h: number } } | null = await renderRetitlePatchCanvas(job, shownTitle(job, draft));
 
       onProgress({ percent: 1, detail: '换标题' });
 
@@ -693,8 +702,8 @@ export async function retitleClip(
         const strip: Strip = job.stage ? stageTitleStrip() : titleStrip(videoTag(job));
 
         await fsP.writeFile(path.join(workDir, 'title.ass'), job.stage
-          ? buildStageTitleAss({ stage: job.stage, title: draft.title, total: total + 1, fonts })
-          : buildTitleAss({ title: draft.title, tag: videoTag(job), total: total + 1, fonts, radio: job.radio, team: job.team, teamColor: job.teamColor }));
+          ? buildStageTitleAss({ stage: job.stage, title: shownTitle(job, draft), total: total + 1, fonts })
+          : buildTitleAss({ title: shownTitle(job, draft), tag: videoTag(job), total: total + 1, fonts, radio: job.radio, team: job.team, teamColor: job.teamColor }));
         await runFfmpeg(job.ffmpeg, [
           '-y', '-v', 'error', '-nostats', '-progress', 'pipe:1', '-i', video,
           '-filter_complex', retitleFilter(strip, await pixelAt(job.ffmpeg, video, total / 2, strip.x + 2, strip.y + 2, signal), fonts, 'title.ass'),
@@ -918,8 +927,7 @@ export async function findHighlights(
       found = {
         summary: applyGlossary(found.summary, glossary),
         highlights: found.highlights.map((item: Highlight): Highlight => ({
-          ...item, title: applyGlossary(item.title, glossary), cover: applyGlossary(item.cover, glossary), reason: applyGlossary(item.reason, glossary),
-          ...(item.coverLines ? { coverLines: item.coverLines.map((line: string): string => applyGlossary(line, glossary)) } : {})
+          ...item, title: applyGlossary(item.title, glossary), cover: applyGlossary(item.cover, glossary), reason: applyGlossary(item.reason, glossary)
         }))
       };
 

@@ -34,7 +34,7 @@ export const STAGE_QUOTA: Record<StageKind, { max: number; below: number }> = {
   mistake: { max: 2, below: 0 }
 };
 
-const OWN_LINE_WIDTH: number = 12; // 自己取的封面标题，一行最多这么多字
+const COVER_LINE_WIDTH: number = 12; // 封面上的标题，一行最多这么多字
 
 const STAGE_KINDS: Array<StageKind> = ['mc', 'song', 'mistake'];
 const STAGE_FALLBACK_SCORE: number = 7; // 一个够分的都没有时，最高的那个不低于它也做一个
@@ -97,24 +97,6 @@ export function stageLengthProblem(kind: StageKind, length: number): string | un
   return undefined;
 }
 
-/* 唱歌、失误的片段不问第二次模型：标题、简介、看点用第一步给的 */
-export function stageScript(highlight: Highlight): ClipScript {
-  const singers: Array<string> = highlight.singers ?? [];
-  const points: Array<string> = stageKindOf(highlight) === 'song'
-    ? [highlight.song && highlight.song !== '未知' ? `《${ highlight.song.replace(/^《|》$/g, '') }》` : '', singers.join('、')]
-    : [highlight.cover];
-
-  return {
-    lines: [],
-    title: highlight.title,
-    titles: [highlight.title],
-    more: [],
-    description: highlight.reason,
-    points: points.filter(Boolean),
-    people: singers
-  };
-}
-
 /* 唱的是哪首歌（不带书名号）：模型给的 song；没给（或者「未知」）时从标题、选它的理由里找第一个《》；都没有返回 undefined */
 export function songNameOf(highlight: Highlight): string | undefined {
   const given: string = (highlight.song ?? '').replace(/^《|》$/g, '').trim();
@@ -130,34 +112,164 @@ export function songNameOf(highlight: Highlight): string | undefined {
   return undefined;
 }
 
-/* 自己取的标题：一行放得下就一行，太长分两行；带【】的照他标的来，不拆 */
-function ownCoverLines(title: string): Array<string> {
-  return textWidth(title) > OWN_LINE_WIDTH && !title.includes('【') ? splitTitle(title) : [title];
+/* 唱歌的片段，歌名认得出来时的标题：「《歌名》」。排在备选标题的第一个（发布时就叫【队伍】《歌名》 | 公演名 日期） */
+export function stageSongTitle(highlight: Highlight): string | undefined {
+  const song: string | undefined = stageKindOf(highlight) === 'song' ? songNameOf(highlight) : undefined;
+
+  return song ? `《${ song }》` : undefined;
+}
+
+/* 唱歌、失误的片段不问第二次模型：标题、简介、看点用第一步给的 */
+export function stageScript(highlight: Highlight): ClipScript {
+  const singers: Array<string> = highlight.singers ?? [];
+  const points: Array<string> = stageKindOf(highlight) === 'song'
+    ? [highlight.song && highlight.song !== '未知' ? `《${ highlight.song.replace(/^《|》$/g, '') }》` : '', singers.join('、')]
+    : [highlight.cover];
+
+  // 唱歌的先放「《歌名》」（用户 2026-11-27 给的发布标题的例子就是这样叫的），找爆点时起的那个排在后面
+  const songTitle: string | undefined = stageSongTitle(highlight);
+  const titles: Array<string> = songTitle && songTitle !== highlight.title ? [songTitle, highlight.title] : [highlight.title];
+
+  return {
+    lines: [],
+    title: titles[0],
+    titles,
+    more: [],
+    description: highlight.reason,
+    points: points.filter(Boolean),
+    people: singers
+  };
 }
 
 /**
- * 封面上的大字：挑片的人自己取了标题就只写它（用户 2026-11-24 定的，唱歌的也是；太长分两行）；
- * 没有就用模型给的 cover_lines；再没有就用标题和封面的话。
- * 唱歌的片段只写歌名（用户 2026-11-23 定的，照《轨迹》那张）：一行「《歌名》」放在团队色的色块里，字比平常大（见 ./highlightStageAss）；
- * 认不出歌名时和别的片段一样
+ * 标题里的【】只是记号：标出封面上要刷荧光笔的词（用户 2026-11-27 定的）。括号本身哪里都不显示：
+ * 封面上换成荧光笔（./highlightStageAss、./highlightGraphics 的 coverSegments），画面上的标题、文件名、发布用的标题用这个去掉
  */
-export function stageCoverLines(highlight: Highlight, title: string): Array<string> {
-  if (highlight.coverTitle) return ownCoverLines(highlight.coverTitle);
+export function plainTitle(title: string): string {
+  return title.replace(/[【】]/g, '').trim();
+}
 
-  const song: string | undefined = stageKindOf(highlight) === 'song' ? songNameOf(highlight) : undefined;
+/* 带记号的标题拆成一个个字，记下每个字在不在【】里 */
+function markedChars(title: string): Array<{ ch: string; mark: boolean }> {
+  const out: Array<{ ch: string; mark: boolean }> = [];
+  let mark: boolean = false;
+
+  for (const ch of Array.from(title.trim())) {
+    if (ch === '【') mark = true;
+    else if (ch === '】') mark = false;
+    else out.push({ ch, mark });
+  }
+
+  return out;
+}
+
+/* 一段字写回带【】的样子 */
+function withMarks(chars: Array<{ ch: string; mark: boolean }>): string {
+  let text: string = '';
+
+  chars.forEach((item: { ch: string; mark: boolean }, index: number): void => {
+    if (item.mark && !chars[index - 1]?.mark) text += '【';
+
+    text += item.ch;
+
+    if (item.mark && !chars[index + 1]?.mark) text += '】';
+  });
+
+  return text;
+}
+
+/**
+ * 太长的标题分行：照不带记号的字来分（和画面上的标题一样，在标点、词和词之间断，见 ./highlightAss 的 splitTitle），记号跟着字走。
+ * 断的地方正好落在一个【】中间时，挪到这个词的前面或者后面（哪边近挪哪边），不把要突出的词拆成两半
+ */
+function splitMarked(title: string): Array<string> {
+  const chars: Array<{ ch: string; mark: boolean }> = markedChars(title);
+  const rows: Array<string> = splitTitle(chars.map((item: { ch: string }): string => item.ch).join(''));
+
+  if (rows.length < 2) return [withMarks(chars)];
+
+  // 每一行是从第几个字到第几个字（分行时行尾的逗号、空格会去掉，所以要一行行对回去）
+  const ranges: Array<{ start: number; end: number }> = [];
+  let from: number = 0;
+
+  for (const row of rows) {
+    const want: Array<string> = Array.from(row);
+    let start: number = from;
+
+    while (start + want.length <= chars.length && !want.every((ch: string, index: number): boolean => chars[start + index].ch === ch)) start++;
+
+    if (start + want.length > chars.length) return [withMarks(chars)]; // 对不回去：不分了
+
+    ranges.push({ start, end: start + want.length });
+    from = start + want.length;
+  }
+
+  for (let i: number = 0; i < ranges.length - 1; i++) {
+    const upper: { start: number; end: number } = ranges[i];
+    const lower: { start: number; end: number } = ranges[i + 1];
+    const joined: boolean = chars.slice(upper.end - 1, lower.start + 1).every((item: { mark: boolean }): boolean => item.mark);
+
+    if (!joined) continue;
+
+    let head: number = upper.end - 1; // 这个词从哪开始
+    let tail: number = lower.start;   // 到哪结束（不含）
+
+    while (head > 0 && chars[head - 1].mark) head--;
+
+    while (tail < chars.length && chars[tail].mark) tail++;
+
+    const toLower: boolean = head > upper.start; // 整个词放到下一行：上一行还剩得下字
+    const toUpper: boolean = tail < lower.end;   // 整个词放到上一行：下一行还剩得下字
+
+    if (toLower && (!toUpper || upper.end - head <= tail - lower.start)) {
+      upper.end = head;
+      lower.start = head;
+    } else if (toUpper) {
+      upper.end = tail;
+      lower.start = tail;
+    }
+  }
+
+  return ranges.map((range: { start: number; end: number }): string => withMarks(chars.slice(range.start, range.end))).filter((row: string): boolean => row !== '');
+}
+
+/**
+ * 封面上的大字就是定的标题（用户 2026-11-27 定的：不再另外写「封面大字」。以前 Gemini 单独写 1～3 行、定标题时还能一行行改，
+ * 标题和封面各说各的；现在标题是什么封面就写什么）。一行放得下就一行，太长分行；【】里的词下面刷荧光笔，括号不显示。
+ * 唱歌的片段还是只写歌名（用户 2026-11-23 定的，11-27 又确认过，照《轨迹》那张）：一行「《歌名》」放在团队色的色块里，字比平常大
+ * （见 ./highlightStageAss）；认不出歌名，或者标题是自己写的（own，用户 2026-11-24 定的：自己取了标题就写它），就和别的片段一样写标题
+ */
+export function stageCoverLines(highlight: Highlight, title: string, own: boolean = false): Array<string> {
+  const song: string | undefined = !own && stageKindOf(highlight) === 'song' ? songNameOf(highlight) : undefined;
 
   if (song) return [`【《${ song }》】`];
 
-  if (highlight.coverLines && highlight.coverLines.length > 0) return highlight.coverLines;
+  const plain: string = plainTitle(title);
 
-  return [title, highlight.cover].filter((line: string): boolean => Boolean(line && line.trim()));
+  if (plain === '') return [];
+
+  return textWidth(plain) > COVER_LINE_WIDTH ? splitMarked(title) : [withMarks(markedChars(title))];
 }
 
-/* 发布用的标题：【SNH48 TEAM X｜甲&乙】标题 | 《Fire X》2.0 2026.11.21 公演切片 */
-export function stagePostTitle(stage: StageInfo, title: string, people: Array<string> = []): string {
-  const who: string = people.length > 0 ? `｜${ people.slice(0, 3).join('&') }` : '';
+/* 发布用的标题前面的队伍怎么叫（用户 2026-11-27 定的）：NII 写「恩兔」，X 写「TeamX」，别的直接写队伍名（SII、HII、G……） */
+export function stageTeamTag(team: string): string {
+  const code: string = team.trim().replace(/^(?:SNH|GNZ|BEJ|CKG|CGT|SHY)48\s*/i, '').replace(/^TEAM\s*/i, '').trim().toUpperCase();
 
-  return `【SNH48 TEAM ${ stage.team }${ who }】${ title } | ${ stage.show } ${ stage.date } 公演切片`;
+  if (code === 'NII') return '恩兔';
+
+  if (code === 'X') return 'TeamX';
+
+  return code || team.trim();
+}
+
+/**
+ * 发布用的标题：【队伍】标题 | 公演名 日期（用户 2026-11-27 定的），例如
+ *   【恩兔】《光芒》 | 《新芽之契》十三周年庆特别公演 2026.11.22
+ *   【恩兔】草姐：我好像没读过大学 | 《新芽之契》十三周年庆特别公演 2026.11.22
+ * 以前是「【SNH48 TEAM X｜甲&乙】标题 | 公演名 日期 公演切片」：前面不再带团名和成员名字，后面不再写「公演切片」
+ */
+export function stagePostTitle(stage: StageInfo, title: string): string {
+  return `【${ stageTeamTag(stage.team) }】${ plainTitle(title) } | ${ stage.show } ${ stage.date }`;
 }
 
 /**
@@ -194,7 +306,7 @@ ${ TASTE }
 1. start、end 用这段音频里的时间，格式 MM:SS，必须是你真的听到的时间。
 2. quote：mc 写最有传播力的一句原话；mistake、song 写一句能代表它的话或歌词。
 3. title 是给切片用的标题，12 个字以内，口语化，有梗，不要标题党，不要标点，不用写队名。
-4. cover 是写在封面上的一句话，10 个字以内。cover_lines 是封面上的大字，按内容需要写 1～3 行（每行 4～10 个字；一句话能说清的只写一行，不要为了凑三行硬拆或者加废话），每行最多一处用【】标出要用色块突出的词，例如「娜姐【耳朵红了】」。
+4. cover 是概括看点的一句话，10 个字以内。
 5. score 是 1 到 10 的分，可以用半分。打分要严格、拉开差距：9 分以上是路人刷到也会笑或者想转发的；8～8.5 分是粉丝会主动转发的名场面；7～7.5 分是粉丝看了觉得有意思；6.5 分以下不要选。${ REASON_RULE }
 6. 按 score 从高到低给出 3 到 8 个；真的没有就少给，不要凑数。片段之间不要重叠。
 7. summary 用两三句话概括这段公演在做什么（第几首歌、哪个 MC 环节）。
@@ -226,7 +338,6 @@ ${ heat.join('\n') }
               end: { type: 'STRING' },
               title: { type: 'STRING' },
               cover: { type: 'STRING' },
-              cover_lines: { type: 'ARRAY', items: { type: 'STRING' } },
               quote: { type: 'STRING' },
               reason: { type: 'STRING' },
               score: { type: 'NUMBER' },
@@ -235,7 +346,7 @@ ${ heat.join('\n') }
               reaction: { type: 'STRING' },
               ...(quotes ? { first: { type: 'STRING' }, last: { type: 'STRING' } } : {})
             },
-            required: ['kind', 'start', 'end', 'title', 'cover', 'cover_lines', 'quote', 'reason', 'score', 'reaction', ...(quotes ? ['first', 'last'] : [])]
+            required: ['kind', 'start', 'end', 'title', 'cover', 'quote', 'reason', 'score', 'reaction', ...(quotes ? ['first', 'last'] : [])]
           }
         }
       },

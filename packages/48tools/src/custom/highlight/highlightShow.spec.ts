@@ -61,7 +61,7 @@ describe('找完爆点的清单', (): void => {
 });
 
 describe('改标题和说明', (): void => {
-  const item: ShowItem = infoOf([found('原来的', 100, 8, { coverLines: ['原来的大字'] })], [0]).items[0];
+  const item: ShowItem = infoOf([found('原来的', 100, 8)], [0]).items[0];
 
   test('改了记着原来的；改回去就不算改过；清空、只差空格不改', (): void => {
     const edited: ShowItem = editItem(item, { title: ' 新标题 ' });
@@ -75,16 +75,15 @@ describe('改标题和说明', (): void => {
     expect(editItem(item, { title: '  ', reason: '原来的的说明 ' })).toBe(item);
   });
 
-  test('交给切片流程时：带上改过的标记；改了标题就不用照旧标题写的封面大字；清单自己的字段不带', (): void => {
-    expect(highlightOf(item)).toEqual(found('原来的', 100, 8, { coverLines: ['原来的大字'] }));
+  test('交给切片流程时：带上改过的标记；改了标题就照改过的写；清单自己的字段不带', (): void => {
+    expect(highlightOf(item)).toEqual(found('原来的', 100, 8));
 
     const reasonOnly: Highlight = highlightOf(editItem(item, { reason: '新说明' }));
     const titled: Highlight = highlightOf(editItem(item, { title: '新标题' }));
 
-    expect(reasonOnly).toMatchObject({ reason: '新说明', edited: true, coverLines: ['原来的大字'] });
+    expect(reasonOnly).toMatchObject({ reason: '新说明', edited: true });
     expect(titled).toMatchObject({ title: '新标题', edited: true, cover: '', coverTitle: '新标题' }); // 封面用改过的标题
     expect(reasonOnly.coverTitle).toBeUndefined(); // 只改说明：封面还是 Gemini 的
-    expect(titled.coverLines).toBeUndefined();
     expect(Object.keys(titled)).not.toEqual(expect.arrayContaining(['cut', 'recommended', 'original']));
   });
 });

@@ -115,11 +115,12 @@ function videoSize(file: string): string {
     const result: HighlightResult = await processHighlight(job, deps, { source, danmu }, (): void => undefined);
 
     expect(asked.filter((item: string): boolean => item === 'other')).toEqual([]); // 不写字幕
-    expect(result.clips.map((clip: { title: string }): string => clip.title)).toEqual(['原班人马回来了', '话筒没声了']);
+    expect(result.clips.map((clip: { title: string }): string => clip.title)).toEqual(['《示例歌》', '话筒没声了']); // 唱歌的默认叫歌名
 
     const [song, mistake]: Array<ClipResult> = result.clips;
 
-    expect(song.postTitle).toBe('【SNH48 TEAM X｜甲&乙】原班人马回来了 | 《示例公演》 2026.11.21 公演切片');
+    expect(song.postTitle).toBe('【TeamX】《示例歌》 | 《示例公演》 2026.11.21');
+    expect(mistake.postTitle).toBe('【TeamX】话筒没声了 | 《示例公演》 2026.11.21');
     expect(song.points).toEqual(['《示例歌》', '甲、乙']);
     // 唱歌按伴奏定起止（18 ~ 83 秒，模型说的是 20 ~ 85 秒），前奏前 2 秒、结束后 6 秒 → 16 ~ 89 秒；
     // 失误按弹幕：104 秒开始涨（10 秒里数到 3 秒的刷屏就算），往前 19 秒；116 秒回落，往后 6 秒；切的时候再前 1 秒、后 2 秒 → 84 ~ 124 秒
@@ -130,7 +131,7 @@ function videoSize(file: string): string {
     expect(videoSize(song.video)).toBe('1920x1080');
     expect(videoSize(song.cover)).toBe('1920x1080');
     expect(videoSize(song.cover43)).toBe('1440x1080');
-    expect(fs.readFileSync(song.text, 'utf8')).toContain('公演切片');
+    expect(fs.readFileSync(song.text, 'utf8')).toContain('标题：【TeamX】《示例歌》 | 《示例公演》 2026.11.21');
     expect(fs.existsSync(workDir)).toBe(false); // 做完删掉工作文件夹
   }, 600_000);
 
@@ -262,7 +263,7 @@ function videoSize(file: string): string {
     const mc: ClipResult = clips.find((clip: ClipResult): boolean => clip.title === '我取的MC标题')!;
     const song: ClipResult = clips.find((clip: ClipResult): boolean => clip.title === '我取的歌标题')!;
 
-    for (const [clip, name, post] of [[mc, '我取的MC标题', '模型另想的MC标题'], [song, '我取的歌标题', '模型另想的歌标题']] as Array<[ClipResult, string, string]>) {
+    for (const [clip, name, post] of [[mc, '我取的MC标题', '模型另想的MC标题'], [song, '我取的歌标题', '《示例歌》']] as Array<[ClipResult, string, string]>) {
       const text: string = fs.readFileSync(clip.text, 'utf8');
 
       expect(path.basename(clip.video)).toContain(name);
@@ -272,7 +273,9 @@ function videoSize(file: string): string {
       expect(text).not.toContain(name);
     }
 
-    expect(song.otherTitles[0]).toContain('歌的备选');
+    // 唱歌的：发布用的标题第一个是歌名，Gemini 另想的排在备选里
+    expect(song.otherTitles.join('\n')).toContain('模型另想的歌标题');
+    expect(song.otherTitles.join('\n')).toContain('歌的备选');
     expect(prompts.find((prompt: string): boolean => prompt.includes('逐句转写'))).toContain('挑片的人已经取好了：「我取的MC标题」');
     expect(info.items.map((item: ShowItem): string | undefined => item.clip?.title).sort()).toEqual(['我取的MC标题', '我取的歌标题']);
   }, 600_000);
