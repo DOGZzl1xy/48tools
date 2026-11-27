@@ -35,6 +35,8 @@ docker/48tools-**/*
 docker/48tools/**/*
 # 本机私有配置（口袋48代理节点、登录token等），不提交
 /local/
+# 个性化设置内容包的源文件（见 packages/48tools/src/custom/basic/README.md）
+/packages/48tools/src/custom/private/
 
 # 下载、录制、切片出来的文件（录播、电台录音、封面、弹幕、抓包）：平时存在仓库外面的 download 文件夹，万一放进仓库也不提交
 *.mp4

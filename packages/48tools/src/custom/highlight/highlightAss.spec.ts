@@ -120,19 +120,7 @@ describe('buildVideoAss / renderFilter', (): void => {
     expect(ass).toContain('被说一笑就老｛气到｝回怼');
     expect(ass).toContain('一笑就变老了');
     expect(ass).toContain('提升一点情商吧');
-    expect(ass).toContain('测试粉丝');
     expect(ass).not.toContain('谢谢礼物');
-  });
-
-  test('标题太长时缩小，不压到右上角的成员和日期；短的保持原来的大小', (): void => {
-    const sizeOf: (title: string) => number = (title: string): number => Number(/,Title,.*\\fs(\d+)/.exec(buildVideoAss({
-      title, tag: 'SNH48 测试成员  2026.11.15', lines: [], segments, total: 20, danmu: [], fonts
-    }))?.[1]);
-    const normal: number = sizeOf('好萌');
-
-    expect(sizeOf('被说一笑就老气到回怼')).toBe(normal);
-    expect(sizeOf('这是一个特别特别特别长的测试标题用来验证自动缩小逻辑')).toBeLessThan(normal * 0.8);
-    expect(sizeOf('这是一个特别特别特别长的测试标题用来验证自动缩小逻辑')).toBeGreaterThan(normal * 0.4);
   });
 
   test('字幕的时间是成片里的时间', (): void => {
@@ -186,39 +174,4 @@ describe('封面', (): void => {
     expect(splitTitle('这是一个特别特别长的标题，长到快要四十个字了，看看在封面上会不会小到看不清楚啊')).toEqual(['这是一个特别特别长的标题', '长到快要四十个字了', '看看在封面上会不会小到看不清楚啊']);
   });
 
-  test('封面上有成员名、标题、类型时间标和最多三个下对齐看点（无磨砂玻璃）', (): void => {
-    const ass: string = buildCoverAss({
-      title: '被说一笑就老气到回怼',
-      tag: 'SNH48 测试成员  直播切片  2026.11.15',
-      member: 'SNH48 测试成员',
-      date: '2026.11.15',
-      team: 'NII',
-      points: ['怀疑自己变苍老了', '', '被说一笑就老气急了', '这并不搞笑这很雷霆', '第四个不要'],
-      fonts
-    });
-
-    expect(ass).toContain('被说一笑就');
-    expect(ass).toContain('测试成员');
-    expect(ass).toContain('TEAM NII');
-    expect(ass).toContain('LIVE / 直播');
-    expect(ass).toContain('2026.11.15');
-    expect(ass).toContain('这并不搞笑这很雷霆');
-    expect(ass).not.toContain('第四个不要');
-    expect(coverFilter(fonts)).toContain('subtitles=cover.ass:fontsdir=../fonts[out]');
-    expect(coverFilter(fonts)).not.toContain('gblur');
-  });
-
-  test('4:3 的封面：画布 1440 宽，只取成片左边的部分，字比 16:9 的小', (): void => {
-    const input: Parameters<typeof buildCoverAss>[0] = { title: '被说一笑就老气到回怼', tag: '测试成员', member: '测试成员', points: ['怀疑自己变苍老了'], fonts };
-    const wide: string = buildCoverAss(input);
-    const standard: string = buildCoverAss({ ...input, width: COVER_WIDTHS.standard });
-    const titleSize: (ass: string) => number = (ass: string): number => Number(/,Title,.*\\fs(\d+)/.exec(ass)?.[1]);
-    const filter: string = coverFilter(fonts, 'cover-standard.ass', COVER_WIDTHS.standard);
-
-    expect(wide).toContain('PlayResX: 1920');
-    expect(standard).toContain('PlayResX: 1440');
-    expect(titleSize(standard)).toBeLessThan(titleSize(wide));
-    expect(filter).toContain('[0:v]crop=1440:1080:0:0');
-    expect(filter).not.toContain('gblur');
-  });
 });

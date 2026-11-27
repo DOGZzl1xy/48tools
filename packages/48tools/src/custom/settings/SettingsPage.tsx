@@ -23,6 +23,7 @@ import Row from './SettingsRow';
 import TranscribeOption from '../transcribe/TranscribeOption';
 import HighlightOption from '../highlight/HighlightOption';
 import TimeZoneOption from '../time/TimeZoneOption';
+import PackStatusRow from '../sync/PackStatusRow';
 import { safeOpenExternal } from '../security/safeOpenExternal';
 import { resolveLocalDir } from '../download/defaultSaveDir';
 import {
@@ -176,6 +177,9 @@ function SettingsPage(props: {}): ReactElement {
         <h2>网络</h2>
         <Row label="口袋48代理" hint="只有口袋48接口走这个代理，其他请求直连。圆点表示代理是否在运行。">
           <Pocket48ProxyOption />
+        </Row>
+        <Row label="个性化设置同步" hint="切片的提示词、排版和几项配置可以放在自己的服务器上，各台设备启动时同步下来；这里是现在用的那一版和签名的状态。">
+          <PackStatusRow />
         </Row>
       </section>
 

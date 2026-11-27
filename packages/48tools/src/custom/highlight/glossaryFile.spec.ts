@@ -6,7 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as process from 'node:process';
 import { glossaryFilePath, ensureGlossaryFile, readGlossaryFile } from './glossaryFile';
-import { DEFAULT_GLOSSARY } from './highlightGlossary';
+import { defaultGlossary } from './highlightGlossary';
 
 let localRoot: string | undefined;
 
@@ -38,8 +38,8 @@ describe('glossaryFile', (): void => {
   test('第一次用时写一份默认的；之后读的是文件里改过的内容', (): void => {
     const file: string = ensureGlossaryFile();
 
-    expect(fs.readFileSync(file, 'utf8')).toBe(`${ DEFAULT_GLOSSARY }\n`);
-    expect(readGlossaryFile()).toBe(`${ DEFAULT_GLOSSARY }\n`);
+    expect(fs.readFileSync(file, 'utf8')).toBe(`${ defaultGlossary() }\n`);
+    expect(readGlossaryFile()).toBe(`${ defaultGlossary() }\n`);
 
     fs.writeFileSync(file, '﻿闫娜：娜姐\n', 'utf8'); // 记事本保存时可能带 BOM
     expect(readGlossaryFile()).toBe('闫娜：娜姐\n');

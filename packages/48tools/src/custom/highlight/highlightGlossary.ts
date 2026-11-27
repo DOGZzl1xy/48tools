@@ -1,3 +1,5 @@
+import { pack } from '../sync/packRegistry';
+
 /**
  * 录播自动切片的「专有词汇」：粉丝圈的叫法、人名、昵称这类 Gemini 不知道、容易听错的词。
  * 存在本机的一个文本文件里（见 ./glossaryFile；第一次用时写入下面的默认内容），每行一条，两种写法：
@@ -6,19 +8,10 @@
  * 以 # 开头的行是注释。
  * 都是纯计算，方便测试。接入点：./highlightGemini（提示里的 <专有词汇>）、./highlightPipeline（替换）、./glossaryFile（读写文件）。
  */
-export const DEFAULT_GLOSSARY: string = [
-  '# 录播切片的专有词汇：Gemini 容易听错的人名、昵称、圈内叫法。改完保存就行，下次切片时生效。',
-  '# 每行一条。「词：说明」告诉 Gemini 这个词是什么、怎么写；「错的写法 → 对的写法」在它写完后直接替换（字幕、标题、简介都会换）。',
-  '# 以 # 开头的行不算。',
-  '袋王：口袋48 的运营（发音像「代王」「带王」，都写成「袋王」）',
-  '叶总：SNH48 所有成员的直系上司（容易听成「艺龙」「叶宗」，都写成「叶总」）',
-  '口袋48：成员和粉丝聊天、直播用的 App，简称「口袋」',
-  '丝芭：丝芭传媒，SNH48 所属的公司',
-  '草姐：臧文萱（SNH48 Team NII）的昵称',
-  '娜姐：闫娜（成员们这样称呼她；写成「娜姐」，不是「那姐」）',
-  '代王 → 袋王',
-  '艺龙 → 叶总'
-].join('\n');
+/* 专有词汇文件第一次用时写进去的内容 */
+export function defaultGlossary(): string {
+  return pack().prompts.defaultGlossary;
+}
 
 export interface Glossary {
   hints: Array<string>;                          // 「词：说明」

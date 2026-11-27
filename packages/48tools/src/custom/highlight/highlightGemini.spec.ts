@@ -3,7 +3,7 @@
  * 录播自动切片里问 Gemini 的部分：提示里给了什么、结果怎么读、接口出错时怎么办。接口换成假的。
  */
 import {
-  geminiJson, findRequest, readFound, scriptRequest, readScript, stageTitlesRequest, readTitles, quoteTitle, isQuoteTitle, ownTitleFirst, coverRequest, cleanTitle, ContentRefused, PRONOUN,
+  geminiJson, findRequest, readFound, scriptRequest, readScript, stageTitlesRequest, readTitles, quoteTitle, isQuoteTitle, ownTitleFirst, coverRequest, cleanTitle, ContentRefused, pronoun,
   type GeminiConfig, type GeminiAsk
 } from './highlightGemini';
 import type { Highlight } from './highlightTypes';
@@ -99,7 +99,7 @@ describe('找爆点', (): void => {
     expect(request.parts[1].inlineData).toEqual({ mimeType: 'audio/mp3', data: 'QUJD' });
   });
 
-  test('礼物消息不发；提示里解释反应词；弹幕扎堆的时刻单独列出来', (): void => {
+  test('礼物消息不发；弹幕扎堆的时刻单独列出来', (): void => {
     const danmu: Array<{ time: number; nickname: string; message: string }> = [
       { time: 50, nickname: '甲', message: '送给SNH48-测试成员 1个荧光棒-SII' },
       ...['爆', '爆', '？？？', '哈哈哈哈', '典', '绷不住了'].map((message: string, index: number): { time: number; nickname: string; message: string } => (
@@ -108,7 +108,6 @@ describe('找爆点', (): void => {
     const prompt: string = findRequest({ member: '测试成员', title: '测试直播' }, { start: 0, length: 1_800 }, 'QUJD', danmu).parts[0].text!;
 
     expect(prompt).not.toContain('荧光棒');
-    expect(prompt).toContain('爆 = 出爆点了');
     expect(prompt).toContain('<弹幕热度>');
     expect(prompt).toContain('10:00 起的 30 秒：6 条弹幕');
     expect(prompt).not.toContain('first、last');
@@ -120,7 +119,7 @@ describe('找爆点', (): void => {
       summary: '', highlights: [{ start: '01:00', end: '02:00', title: '标题', score: 8, quote: '关键的话', first: ' 开头的话 ', last: '结尾的话' }]
     }, { start: 0, length: 1_800 });
 
-    expect(request.parts[0].text).toContain('first、last 是这个片段第一句话和最后一句话的原话');
+    expect(request.parts[0].text).toContain('first、last');
     expect(JSON.stringify(request.schema)).toContain('"first"');
     expect([found.highlights[0].first, found.highlights[0].last]).toEqual(['开头的话', '结尾的话']);
   });
@@ -164,31 +163,6 @@ describe('找爆点', (): void => {
 });
 
 describe('片段的字幕、标题、简介', (): void => {
-  test('公演 MC：说的是公演和台上的成员，不是口袋48的直播、主播、连麦', (): void => {
-    const stage: { team: string; teamColor: string; show: string; date: string } = { team: 'NII', teamColor: '#af83bb', show: '《示例公演》', date: '2026.11.22' };
-    const prompt: string = scriptRequest({ member: 'SNH48 TEAM NII', title: '《示例公演》' }, highlight, 120, 'QUJD', [], undefined, stage).parts[0].text!;
-    const live: string = scriptRequest({ member: '测试成员', title: '测试直播' }, highlight, 120, 'QUJD', []).parts[0].text!;
-
-    expect(prompt).toContain('SNH48 TEAM NII 《示例公演》 公演（2026.11.22）在 B 站直播的录像里，MC 环节的一段');
-    expect(prompt).toContain('剪出一个发到 B 站的公演切片');
-    // 发布用的标题前面只有队伍名（【恩兔】标题 | 公演名 日期），不再带成员名字
-    expect(prompt).toContain('发布时前面只加队伍名，不带成员的名字');
-    expect(prompt).not.toContain('｜甲&乙');
-    expect(prompt).toContain('台上大家的反应');
-    expect(prompt).not.toMatch(/口袋48|主播|连麦/);
-    // 找片段时听了 20 分钟，谁在讲认得更准：把那时的说明带上，认人以它为准
-    expect(prompt).toContain('对它的说明是：「理由」');
-    expect(live).not.toContain('对它的说明是');
-    expect(live).toContain('测试成员 在口袋48的直播「测试直播」');
-    expect(live).toContain('除了主播以外的主角');
-    // 公演的标题要标出一处突出的词（封面上刷荧光笔）；直播、电台不用；标题已经自己取好、只要发布标题时也不用
-    expect(prompt).toContain('每个标题里用【】标出最想突出的一处');
-    expect(live).not.toContain('用【】标出');
-    expect(scriptRequest({ member: 'SNH48 TEAM NII', title: '《示例公演》' }, { ...highlight, coverTitle: '自己取的' }, 120, 'QUJD', [], undefined, stage).parts[0].text)
-      .not.toContain('用【】标出');
-    expect(stageTitlesRequest({ member: 'SNH48 TEAM NII', title: '《示例公演》' }, { ...highlight, kind: 'mistake' }, stage).parts[0].text)
-      .toContain('每个标题里用【】标出最想突出的一处');
-  });
 
   test('提示里有主题和关键的那句话；弹幕没有昵称', (): void => {
     const prompt: string = scriptRequest({ member: '测试成员', title: '测试直播' }, highlight, 87.4, 'QUJD', [
@@ -202,21 +176,11 @@ describe('片段的字幕、标题、简介', (): void => {
     expect(prompt).not.toContain('某个粉丝的昵称');
   });
 
-  test('成员都是女生：找片段和写字幕的提示里都说「tā」写「她」', (): void => {
+  test('称呼的规则（提示词包里有的话）附在找片段和写字幕的提示后面', (): void => {
     const meta: { member: string; title: string } = { member: '测试成员', title: '测试直播' };
 
-    expect(scriptRequest(meta, highlight, 60, 'QUJD', []).parts[0].text).toContain(PRONOUN);
-    expect(findRequest(meta, { start: 0, length: 600 }, 'QUJD', []).parts[0].text).toContain(PRONOUN);
-    expect(PRONOUN).toContain('都写「她」');
-  });
-
-  test('字幕逐字照录、不换近义词；简介不添油加醋、不把反驳写成承认', (): void => {
-    const prompt: string = scriptRequest({ member: '测试成员', title: '测试直播' }, highlight, 60, 'QUJD', []).parts[0].text!;
-
-    expect(prompt).toContain('逐字照录');
-    expect(prompt).toContain('不要换成意思相近的词');
-    expect(prompt).toContain('弹幕里的话不是音频里说的，不能写进字幕');
-    expect(prompt).toContain('是反驳还是承认不要弄反');
+    expect(scriptRequest(meta, highlight, 60, 'QUJD', []).parts[0].text).toContain(pronoun());
+    expect(findRequest(meta, { start: 0, length: 600 }, 'QUJD', []).parts[0].text).toContain(pronoun());
   });
 
   test('读出句子、标题、简介、看点', (): void => {
@@ -251,18 +215,6 @@ describe('片段的字幕、标题、简介', (): void => {
     expect(readScript({ lines: [], title: '卡凳还卡电梯有多社死？！' }, highlight).title).toBe('卡凳还卡电梯有多社死？');
   });
 
-  test('取标题的规则：要「串」、给了正反例、最长 16 个字', (): void => {
-    const prompt: string = scriptRequest({ member: '测试成员', title: '测试直播' }, highlight, 60, 'QUJD', []).parts[0].text!;
-
-    expect(prompt).toContain('三个标题，让发视频的人挑');
-    expect(prompt).toContain('不要套公式');
-    expect(prompt).toContain('三个标题的写法必须互不相同');
-    expect(prompt).toContain('最长 16 个字');
-    expect(prompt).toContain('不能编造');
-    expect(prompt).toContain('而且不能是「确信」');
-    expect(prompt).toContain('- more：');
-  });
-
   test('片段里另外的爆点：最多两个，不和标题重复', (): void => {
     const script: ReturnType<typeof readScript> = readScript({
       lines: [], titles: ['全队全是萝莉', '第二个'], more: ['傻瓜也是瓜。', '全队全是萝莉', ' ', '铁T认证', '第三个不要']
@@ -277,41 +229,18 @@ describe('片段的字幕、标题、简介', (): void => {
     expect([script.title, script.titles, script.description, script.points, script.people]).toEqual(['第一步的标题', ['第一步的标题'], '理由', ['封面的话'], []]);
   });
 
-  test('其他主角：提示里说清楚什么人算；读结果时去掉主播自己', (): void => {
+  test('其他主角：提示里要 people；读结果时去掉主播自己', (): void => {
     const prompt: string = scriptRequest({ member: '测试成员', title: '测试直播' }, highlight, 60, 'QUJD', []).parts[0].text!;
 
     expect(prompt).toContain('people');
-    expect(prompt).toContain('只是顺口提到名字');
     expect(readScript({ lines: [], people: ['测试成员', 'SNH48-成员乙'] }, highlight, 'SNH48 测试成员').people).toEqual(['成员乙']);
   });
 
-  test('说明要写出具体内容；改过的标题和说明交给写字幕那一步，没改过的不多写', (): void => {
-    const found: string = findRequest({ member: 'SNH48 测试成员', title: '测试' }, { start: 0, length: 600 }, '', []).parts[0].text ?? '';
+  test('改过的标题和说明交给写字幕那一步', (): void => {
     const script: (item: Highlight) => string = (item: Highlight): string => scriptRequest({ member: 'SNH48 测试成员', title: '测试' }, item, 60, '', []).parts[0].text ?? '';
 
-    expect(found).toContain('不要只写「反差感拉满」');
-    expect(script(highlight)).not.toContain('挑片的人核对');
-    expect(script({ ...highlight, title: '改过的标题', reason: '她说的是乙', edited: true })).toContain('主题是：「改过的标题」。\n挑片的人核对、改过这一段的标题和说明，说明是：「她说的是乙」');
-  });
-
-  test('想不出标题时截成员的原话：直播和电台的两步提示里都说了，只能截不能改；公演不说', (): void => {
-    const meta: { member: string; title: string } = { member: 'SNH48 测试成员', title: '测试' };
-    const stage: Parameters<typeof scriptRequest>[6] = { team: 'X', teamColor: '#a9ca27', show: '《示例公演》', date: '2026.11.21' };
-    const found: string = findRequest(meta, { start: 0, length: 600 }, '', []).parts[0].text!;
-    const script: string = scriptRequest(meta, highlight, 60, '', []).parts[0].text!;
-
-    expect(found).toContain('先自己想一个有梗、有态度的');
-    expect(found).toContain('不要硬编，才直接截一句她的原话当标题');
-    expect(found).toContain('想不出来时也可以这样截一句原话');
-    expect(script).toContain('截原话的只当备选：三个里最多一个，不放第一个');
-    expect(script).toContain('截SNH48 测试成员的原话');
-    expect(script).not.toContain('想不出好标题');
-    [found, script].forEach((text: string): void => expect(text).toContain('只能掐头去尾，不换词、不调顺序、不补字'));
-
-    const mc: string = scriptRequest(meta, highlight, 60, '', [], undefined, stage).parts[0].text!;
-
-    expect(mc).toContain('截原话的只当备选');
-    expect(mc).not.toContain('只能掐头去尾');
+    expect(script({ ...highlight, title: '改过的标题', reason: '她说的是乙', edited: true })).toContain('主题是：「改过的标题」');
+    expect(script({ ...highlight, title: '改过的标题', reason: '她说的是乙', edited: true })).toContain('「她说的是乙」');
   });
 
   test('没给标题：从原话里截一小段，字不变；连原话都没有的不要', (): void => {
@@ -353,21 +282,7 @@ describe('片段的字幕、标题、简介', (): void => {
     expect([script.title, script.titles]).toEqual(['全队最急的人', ['全队最急的人', '你急什么呀又没说你', '我已经说服了我自己']]);
   });
 
-  test('自己取了封面标题：告诉模型发布用的标题另外想；没取的不说', (): void => {
-    const meta: { member: string; title: string } = { member: 'SNH48 测试成员', title: '测试' };
-    const own: Highlight = { ...highlight, title: '我取的标题', cover: '', edited: true, coverTitle: '我取的标题' };
-    const script: string = scriptRequest(meta, own, 60, '', []).parts[0].text!;
-    const plain: string = scriptRequest(meta, { ...highlight, edited: true }, 60, '', []).parts[0].text!;
-
-    expect(script).toContain('封面上的标题挑片的人已经取好了：「我取的标题」。titles 是发布视频时用的标题，要你自己另外想');
-    expect(script).toContain('第一个放你最满意的（发布时用它）');
-    expect(script).toContain('封面上已经有标题（「我取的标题」）了');
-    expect(plain).not.toContain('挑片的人已经取好了');
-    expect(plain).toContain('第一个放你最满意的（画面和封面上用它）');
-    expect(plain).toContain('封面上已经有标题了');
-  });
-
-  test('公演唱歌、失误自己取了封面标题：另外问发布用的标题', (): void => {
+  test('公演唱歌、失误的片段只问标题：说清楚是哪首歌、谁唱的，带上说明和自己取的封面标题', (): void => {
     const stage: Parameters<typeof stageTitlesRequest>[2] = { team: 'X', teamColor: '#a9ca27', show: '《示例公演》', date: '2026.11.21' };
     const meta: { member: string; title: string } = { member: 'SNH48 TEAM X', title: '《示例公演》' };
     const song: Highlight = { ...highlight, kind: 'song', song: '《示例歌》', singers: ['甲', '乙'], coverTitle: '我取的标题' };
@@ -375,33 +290,10 @@ describe('片段的字幕、标题、简介', (): void => {
 
     expect(prompt).toContain('一首歌《示例歌》，演唱的是甲、乙');
     expect(prompt).toContain('说明是：「理由」');
-    expect(prompt).toContain('「我取的标题」。titles 是发布视频时用的标题');
-    expect(prompt).toContain('最长 16 个字');
+    expect(prompt).toContain('「我取的标题」');
     expect(stageTitlesRequest(meta, { ...song, kind: 'mistake' }, stage).parts[0].text).toContain('表演中的一个失误或意外');
     expect(readTitles([' 一。', '一', '', '二', '三', '四'])).toEqual(['一', '二', '三']);
     expect(readTitles(undefined)).toEqual([]);
-  });
-
-  test('找爆点的提示里要求严格打分', (): void => {
-    const prompt: string = findRequest({ member: '测试成员', title: '测试直播' }, { start: 0, length: 1_800 }, 'QUJD', []).parts[0].text!;
-
-    expect(prompt).toContain('打分要严格');
-    expect(prompt).toContain('9 分以上');
-    expect(prompt).toContain('可以用半分');
-  });
-
-  test('切片要讲完整一件事：两步的提示里都要求成片 45 秒到 5 分钟，是 B 站的切片不是抖音短视频', (): void => {
-    const find: string = findRequest({ member: '测试成员', title: '测试直播' }, { start: 0, length: 1_800 }, 'QUJD', []).parts[0].text!;
-    const script: string = scriptRequest({ member: '测试成员', title: '测试直播' }, highlight, 90, 'QUJD', []).parts[0].text!;
-
-    for (const prompt of [find, script]) {
-      expect(prompt).toContain('45 秒到 5 分钟');
-      expect(prompt).toContain('B 站');
-      expect(prompt).toContain('抖音');
-    }
-
-    expect(find).toContain('不要拆成几段');
-    expect(script).not.toContain('注意：');
   });
 
   test('剪完长度不对、重做时把原因告诉模型', (): void => {

@@ -6,7 +6,7 @@ import {
   buildCoverAss, buildVideoAss, coverFilter, frameFilter, pictureFrameFilter, COVER_WIDTHS, LEFT_WIDTH, type FontSet, type PlacedDanmu
 } from './highlightAss';
 import { buildStageCoverAss, stageCoverFilter, stageFrameFilter, STAGE_VIDEO, type StageInfo } from './highlightStageAss';
-import { renderLiveCoverCanvas, renderRadioCoverCanvas, renderStageCoverCanvas } from './highlightGraphics';
+import { pack } from '../sync/packRegistry';
 import { resolveTeam } from './highlightTheme';
 import { coverTag, draftCoverLines, draftPoints, draftSegments, fromOut, lookOf, videoTag } from './highlightDraft';
 import type { ClipDraft, Highlight } from './highlightTypes';
@@ -21,7 +21,7 @@ import type { ClipDraft, Highlight } from './highlightTypes';
  * 接入点：./highlightPipeline（写、渲染、改标题），./coverPreview（预览），./DraftPanel（加图）。
  */
 const COVER_FOLDER: string = '.covers';
-const COVER_STYLE_VERSION: string = 'v3'; // 封面的画法变了就加一，做好的封面预览会重做（v3：去掉公演封面上柔光被截出来的直线）
+const COVER_STYLE_VERSION: string = 'v4'; // 封面的画法变了就加一，做好的封面预览会重做（v4：封面最下面留出 B 站卡片盖住的那一条，公演封面的字放大）
 
 export const LIBRARY_FOLDER: string = '封面库'; // 电台封面库（./radioPhotos）：切片保存位置下面的这个文件夹
 
@@ -285,10 +285,10 @@ export async function makeCovers(input: CoverInput): Promise<{ wide: string; sta
 
     // 优先用 Chromium Canvas 2D 高质感出图（Electron 渲染进程）
     const rendered: Buffer | null = job.stage
-      ? await renderStageCoverCanvas({ frameFile: frame, stage: job.stage, lines: stageLines, width })
+      ? await pack().graphics.stageCover({ frameFile: frame, stage: job.stage, lines: stageLines, width })
       : (job.radio
-        ? await renderRadioCoverCanvas({ frameFile: frame, meta: job, title: draft.title, points, width })
-        : await renderLiveCoverCanvas({ frameFile: frame, meta: job, title: draft.title, points, width }));
+        ? await pack().graphics.radioCover({ frameFile: frame, meta: job, title: draft.title, points, width })
+        : await pack().graphics.liveCover({ frameFile: frame, meta: job, title: draft.title, points, width }));
 
     if (rendered) {
       await fsP.writeFile(part, rendered);

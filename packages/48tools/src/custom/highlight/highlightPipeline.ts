@@ -26,7 +26,7 @@ import {
   plainTitle, stageFindRequest, stageKindOf, stageClipWindow, stageLengthProblem, stageScript, stageSongTitle, stageQuota, type StageQuota
 } from './highlightStage';
 import { buildStageVideoAss, stageRenderFilter, buildStageTitleAss, stageTitleStrip, type StageInfo } from './highlightStageAss';
-import { renderRetitlePatchCanvas, renderVideoBackdropCanvas } from './highlightGraphics';
+import { pack } from '../sync/packRegistry';
 import { runEncode, ENCODER_NAME, type CodecArgs, type EncoderKind } from './highlightEncoder';
 import { locateMistake, locateSong, lowBandLevels, type StageTiming } from './highlightStageTiming';
 import { draftPoints, draftPostTitles, draftSegments, isOwnTitle, newDraft, shownTitle, videoTag } from './highlightDraft';
@@ -607,7 +607,7 @@ async function renderClip(
 
   await fsP.mkdir(clipDir, { recursive: true });
 
-  const backdropBuffer: Buffer | null = await renderVideoBackdropCanvas(job, shownTitle(job, draft));
+  const backdropBuffer: Buffer | null = await pack().graphics.videoBackdrop(job, shownTitle(job, draft));
   const hasBackdrop: boolean = backdropBuffer !== null;
   const backdropArgs: Array<string> = [];
   let backdropInput: number | undefined;
@@ -689,7 +689,7 @@ export async function retitleClip(
 
     if (shownTitle(job, draft) !== clip.title) {
       const total: number = await mediaDuration(job.ffmpeg, video, signal);
-      const patch: { buffer: Buffer; rect: { x: number; y: number; w: number; h: number } } | null = await renderRetitlePatchCanvas(job, shownTitle(job, draft));
+      const patch: { buffer: Buffer; rect: { x: number; y: number; w: number; h: number } } | null = await pack().graphics.retitlePatch(job, shownTitle(job, draft));
 
       onProgress({ percent: 1, detail: '换标题' });
 

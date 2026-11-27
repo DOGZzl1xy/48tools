@@ -2,15 +2,17 @@ import { useSyncExternalStore } from 'react';
 import { requestRoomId, type RoomIdObj, type RoomItem } from '@48tools-api/48/jsdelivrCDN';
 import { readJson, writeJson } from '../common/util';
 import { teamLabel, type DirectoryMember } from './memberSearch';
+import { canSyncMembers } from '../sync/memberSource';
 
 /**
  * 成员名单：每个成员的队伍、所属团、拼音。用来在房间里显示成员是哪个队的（沈馨 → NII），以及按拼音、ID、队伍搜索成员。
- * 数据是原版就在用的那份公开名单（services/48/jsdelivrCDN 的 roomId.json，录播下载页的搜索也用它），
+ * 数据经过 services/48/jsdelivrCDN 的 requestRoomId 取（录播下载页的搜索也用它）：配置了同步服务时来自它维护的那份名单
+ * （见 ../sync/memberSource），否则是原版就在用的公开名单 roomId.json。
  * 取到后存在本机（localStorage 的 ROOM_MEMBER_DIRECTORY），一天更新一次；取不到时用本机存的，都没有就不显示队伍。
- * 请求里不带任何账号信息。
  */
 interface SavedDirectory {
   fetchedAt: number;
+  synced?: boolean; // 这一份是不是从同步服务取的
   members: Array<DirectoryMember>;
 }
 
@@ -23,6 +25,7 @@ const STORAGE_KEY: string = 'ROOM_MEMBER_DIRECTORY';
 const REFRESH_AFTER: number = 24 * 3_600_000;
 const listeners: Set<() => void> = new Set();
 let fetchedAt: number = 0;
+let fromSync: boolean = false;
 let loading: boolean = false;
 let state: DirectoryState = { members: [], byId: {} };
 
@@ -42,16 +45,19 @@ function fromSaved(): void {
   if (!saved || !Array.isArray(saved.members)) return;
 
   fetchedAt = Number(saved.fetchedAt) || 0;
+  fromSync = saved.synced === true;
   setMembers(saved.members.filter((item: DirectoryMember): boolean => typeof item?.id === 'number' && typeof item.name === 'string'));
 }
 
 if (typeof localStorage !== 'undefined') fromSaved();
 
-/* 需要时更新名单（一天一次）；旧缓存还没带 serverId 字段时立即刷新一次 */
+/* 需要时更新名单（一天一次）；旧缓存还没带 serverId 字段、或者配了同步服务而存着的还是公开名单时，立即刷新一次 */
 export async function loadMemberDirectory(): Promise<void> {
   const hasServerIds: boolean = state.members.some((item: DirectoryMember): boolean => typeof item.serverId === 'number');
 
-  if (loading || (state.members.length > 0 && hasServerIds && Date.now() - fetchedAt < REFRESH_AFTER)) return;
+  const sourceOk: boolean = fromSync || !canSyncMembers();
+
+  if (loading || (state.members.length > 0 && hasServerIds && sourceOk && Date.now() - fetchedAt < REFRESH_AFTER)) return;
 
   loading = true;
 
@@ -71,7 +77,8 @@ export async function loadMemberDirectory(): Promise<void> {
 
     if (members.length > 0) {
       fetchedAt = Date.now();
-      writeJson(STORAGE_KEY, { fetchedAt, members } satisfies SavedDirectory);
+      fromSync = (res as { synced?: boolean } | null)?.synced === true;
+      writeJson(STORAGE_KEY, { fetchedAt, synced: fromSync, members } satisfies SavedDirectory);
       setMembers(members);
     }
   } catch (err) {

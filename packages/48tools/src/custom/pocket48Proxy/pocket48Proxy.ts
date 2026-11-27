@@ -32,6 +32,8 @@ export interface Pocket48LocalConfig {
   presenceKey?: string; // 在线状态服务鉴权密钥
   presenceCert?: string; // 自签证书公钥文件路径（用于证书 pin）
   presenceCertPin?: string; // 可选：证书 SHA-256 指纹（用于证书 pin）
+  packPublicKey?: string; // 个性化设置同步：内容包签名的公钥（一行 base64 或 PEM），见 custom/sync/packSync；不填不启用
+  packDir?: string; // 个性化设置同步：不经过服务器，直接读这个文件夹里的内容包（相对路径以仓库根目录为基准）
 }
 
 let localConfig: Pocket48LocalConfig | undefined;

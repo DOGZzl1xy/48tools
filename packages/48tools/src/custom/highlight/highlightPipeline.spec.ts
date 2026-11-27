@@ -19,7 +19,7 @@ import {
 } from './highlightPipeline';
 import { highlightDefaults } from './highlightGemini';
 import { recognizeAudio } from './alignerRun';
-import { DEFAULT_GLOSSARY } from './highlightGlossary';
+import { defaultGlossary } from './highlightGlossary';
 import type { TimedToken } from './highlightTokens';
 import type { CaptionLine, Segment } from './highlightTypes';
 
@@ -205,7 +205,7 @@ const downloadOnly: boolean = process.env.HIGHLIGHT_ONLY === 'download';
       outDir: outDir!,
       workDir,
       ffmpeg: 'ffmpeg',
-      glossary: DEFAULT_GLOSSARY,
+      glossary: defaultGlossary(),
       gemini: {
         apiKey: local.sttGeminiKey ?? '',
         model: process.env.HIGHLIGHT_MODEL ?? highlightDefaults.model,

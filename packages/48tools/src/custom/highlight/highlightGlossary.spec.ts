@@ -1,7 +1,7 @@
 /**
  * 录播自动切片的专有词汇：读设置里的文字、提示里的那一段、替换错的写法。
  */
-import { parseGlossary, glossaryPrompt, applyGlossary, DEFAULT_GLOSSARY, type Glossary } from './highlightGlossary';
+import { parseGlossary, glossaryPrompt, applyGlossary, type Glossary } from './highlightGlossary';
 import { findRequest, scriptRequest } from './highlightGemini';
 import type { Highlight } from './highlightTypes';
 
@@ -18,16 +18,6 @@ describe('parseGlossary', (): void => {
     expect(parseGlossary(undefined)).toEqual({ hints: [], replacements: [] });
   });
 
-  test('默认的词汇表里有袋王和叶总', (): void => {
-    const glossary: Glossary = parseGlossary(DEFAULT_GLOSSARY);
-
-    expect(glossary.hints.some((line: string): boolean => line.startsWith('袋王：'))).toBe(true);
-    expect(glossary.hints.some((line: string): boolean => line.startsWith('叶总：'))).toBe(true);
-    expect(glossary.hints.some((line: string): boolean => line.startsWith('娜姐：闫娜'))).toBe(true);
-    // 「那姐」不做强制替换：「那姐姐呢」「那姐妹们」这种正常的话会被改坏
-    expect(glossary.replacements.some((item: { from: string }): boolean => item.from.includes('那姐'))).toBe(false);
-    expect(glossary.replacements).toEqual(expect.arrayContaining([{ from: '代王', to: '袋王' }, { from: '艺龙', to: '叶总' }]));
-  });
 });
 
 describe('glossaryPrompt / applyGlossary', (): void => {

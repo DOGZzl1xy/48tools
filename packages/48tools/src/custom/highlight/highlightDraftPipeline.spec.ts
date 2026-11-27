@@ -18,6 +18,7 @@ import { highlightOf, isRestyled, newShowInfo, withDraft, withResult, type ShowI
 import { mediaDuration, pickFonts, pixelAt } from './highlightFfmpeg';
 import { titleStrip, type Strip } from './highlightAss';
 import type { ClipDraft } from './highlightTypes';
+import { askKind } from './specAsk';
 
 const FFMPEG: string = 'ffmpeg';
 const hasFfmpeg: boolean = spawnSync(FFMPEG, ['-version'], { windowsHide: true }).status === 0;
@@ -71,10 +72,11 @@ function audioHash(file: string): string {
       const prompt: string = JSON.parse(init.body).contents[0].parts[0].text ?? '';
       let answer: unknown = { best: 2 };
 
-      if (prompt.includes('逐句转写')) {
+      if (askKind(init) === 'script') {
         asking++;
         atOnce = Math.max(atOnce, asking);
-        await new Promise<void>((resolve: () => void): void => void setTimeout(resolve, 300));
+        // 等久一点：三个请求不是同一刻发出的（各自先要截音频），机器忙的时候 300 毫秒里碰不到一起
+        await new Promise<void>((resolve: () => void): void => void setTimeout(resolve, 2_000));
         asking--;
         answer = {
           // 第三个爆点只留一句：太短，写不成
@@ -149,8 +151,8 @@ function audioHash(file: string): string {
     const previewed: Buffer = fs.readFileSync(preview.wide);
 
     expect(preview).toEqual(coverFiles(covers));
-    // 标题是纯白的，不发灰
-    expect(pixels(preview.wide, 0, '900:300:700:200').reduce((most: number, value: number): number => Math.max(most, value), 0)).toBeGreaterThan(250);
+    // 标题是纯白的，不发灰（看右边整块：标题具体在哪随排版变）
+    expect(pixels(preview.wide, 0, '1312:1080:608:0').reduce((most: number, value: number): number => Math.max(most, value), 0)).toBeGreaterThan(250);
 
     // 渲染
     let clips: Array<ClipResult> = await renderDrafts(job, prepared, info, (): void => undefined, (item: ShowItem, one: ClipResult): Promise<void> => {

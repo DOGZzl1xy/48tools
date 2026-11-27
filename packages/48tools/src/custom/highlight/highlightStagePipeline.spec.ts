@@ -13,16 +13,18 @@ import { cutHighlights, findHighlights, processHighlight, type ClipResult, type 
 import { mediaDuration } from './highlightFfmpeg';
 import { editItem, readShowInfoSync, withResult, type ShowInfo, type ShowItem } from './highlightShow';
 import type { DanmuLine } from './highlightTypes';
+import { askKind, type AskKind } from './specAsk';
+import { stageTeamTag } from './highlightStage';
 
 const FFMPEG: string = 'ffmpeg';
 const hasFfmpeg: boolean = spawnSync(FFMPEG, ['-version'], { windowsHide: true }).status === 0;
 
 function fakeGemini(asked: Array<string>): typeof fetch {
   return ((_url: string, init: { body: string }): Promise<Response> => {
-    const prompt: string = JSON.parse(init.body).contents[0].parts[0].text ?? '';
+    const kind: AskKind = askKind(init);
     let answer: unknown;
 
-    if (prompt.includes('公演的切片手')) {
+    if (kind === 'find') {
       asked.push('find');
       answer = {
         summary: '开场的歌和一段 Unit。',
@@ -37,11 +39,11 @@ function fakeGemini(asked: Array<string>): typeof fetch {
           }
         ]
       };
-    } else if (prompt.includes('封面')) {
-      asked.push('cover');
+    } else if (kind !== 'script') {
+      asked.push(kind);
       answer = { best: 1 };
     } else {
-      asked.push('other');
+      asked.push('script');
       answer = {};
     }
 
@@ -114,13 +116,13 @@ function videoSize(file: string): string {
     };
     const result: HighlightResult = await processHighlight(job, deps, { source, danmu }, (): void => undefined);
 
-    expect(asked.filter((item: string): boolean => item === 'other')).toEqual([]); // 不写字幕
+    expect(asked.filter((item: string): boolean => item === 'script')).toEqual([]); // 不写字幕
     expect(result.clips.map((clip: { title: string }): string => clip.title)).toEqual(['《示例歌》', '话筒没声了']); // 唱歌的默认叫歌名
 
     const [song, mistake]: Array<ClipResult> = result.clips;
 
-    expect(song.postTitle).toBe('【TeamX】《示例歌》 | 《示例公演》 2026.11.21');
-    expect(mistake.postTitle).toBe('【TeamX】话筒没声了 | 《示例公演》 2026.11.21');
+    expect(song.postTitle).toBe(`【${ stageTeamTag('X') }】《示例歌》 | 《示例公演》 2026.11.21`);
+    expect(mistake.postTitle).toBe(`【${ stageTeamTag('X') }】话筒没声了 | 《示例公演》 2026.11.21`);
     expect(song.points).toEqual(['《示例歌》', '甲、乙']);
     // 唱歌按伴奏定起止（18 ~ 83 秒，模型说的是 20 ~ 85 秒），前奏前 2 秒、结束后 6 秒 → 16 ~ 89 秒；
     // 失误按弹幕：104 秒开始涨（10 秒里数到 3 秒的刷屏就算），往前 19 秒；116 秒回落，往后 6 秒；切的时候再前 1 秒、后 2 秒 → 84 ~ 124 秒
@@ -131,7 +133,7 @@ function videoSize(file: string): string {
     expect(videoSize(song.video)).toBe('1920x1080');
     expect(videoSize(song.cover)).toBe('1920x1080');
     expect(videoSize(song.cover43)).toBe('1440x1080');
-    expect(fs.readFileSync(song.text, 'utf8')).toContain('标题：【TeamX】《示例歌》 | 《示例公演》 2026.11.21');
+    expect(fs.readFileSync(song.text, 'utf8')).toContain(`标题：【${ stageTeamTag('X') }】《示例歌》 | 《示例公演》 2026.11.21`);
     expect(fs.existsSync(workDir)).toBe(false); // 做完删掉工作文件夹
   }, 600_000);
 
@@ -169,7 +171,7 @@ function videoSize(file: string): string {
       const prompt: string = JSON.parse(init.body).contents[0].parts[0].text ?? '';
       const withDanmu: string = prompt.includes('<弹幕>') ? '+弹幕' : '';
 
-      if (prompt.includes('请找出值得单独剪出来')) return reply({ summary: 'MC', highlights: [mc('00:10', '01:00', '被拦的爆点', 9), mc('01:20', '02:20', '弹幕惹的祸', 8.5)] });
+      if (askKind(init) === 'find') return reply({ summary: 'MC', highlights: [mc('00:10', '01:00', '被拦的爆点', 9), mc('01:20', '02:20', '弹幕惹的祸', 8.5)] });
 
       if (prompt.includes('主题是：「被拦的爆点」')) {
         asked.push(`甲${ withDanmu }`);
@@ -222,7 +224,7 @@ function videoSize(file: string): string {
 
       prompts.push(prompt);
 
-      if (prompt.includes('请找出值得单独剪出来')) {
+      if (askKind(init) === 'find') {
         answer = {
           summary: 'MC 和歌',
           highlights: [
@@ -230,12 +232,12 @@ function videoSize(file: string): string {
             { kind: 'song', start: '01:22', end: '02:24', title: '模型的歌', cover: '话', cover_lines: ['大字'], quote: '歌词', reason: '少见的组合', score: 9, song: '《示例歌》', singers: ['甲'], reaction: '' }
           ]
         };
-      } else if (prompt.includes('逐句转写')) {
+      } else if (askKind(init) === 'script') {
         answer = {
           lines: Array.from({ length: 8 }, (_item: unknown, index: number): unknown => ({ start: 5 + (index * 7), end: 11 + (index * 7), text: `第${ index + 1 }句字幕`, keep: true, emphasis: [] })),
           titles: ['模型另想的MC标题', '备选'], more: [], description: '简介', points: ['看点'], people: []
         };
-      } else if (prompt.includes('内容是一首歌')) {
+      } else if (askKind(init) === 'titles' && prompt.includes('内容是一首歌')) {
         answer = { titles: ['模型另想的歌标题', '歌的备选'] };
       }
 
@@ -276,7 +278,7 @@ function videoSize(file: string): string {
     // 唱歌的：发布用的标题第一个是歌名，Gemini 另想的排在备选里
     expect(song.otherTitles.join('\n')).toContain('模型另想的歌标题');
     expect(song.otherTitles.join('\n')).toContain('歌的备选');
-    expect(prompts.find((prompt: string): boolean => prompt.includes('逐句转写'))).toContain('挑片的人已经取好了：「我取的MC标题」');
+    expect(prompts.find((prompt: string): boolean => prompt.includes('逐句转写'))).toContain('「我取的MC标题」'); // 自己取的封面标题要告诉模型
     expect(info.items.map((item: ShowItem): string | undefined => item.clip?.title).sort()).toEqual(['我取的MC标题', '我取的歌标题']);
   }, 600_000);
 

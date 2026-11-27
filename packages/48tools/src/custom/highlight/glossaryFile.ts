@@ -3,7 +3,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as process from 'node:process';
 import { getLocalConfigRoot } from '../pocket48Proxy/pocket48Proxy';
-import { DEFAULT_GLOSSARY } from './highlightGlossary';
+import { pack } from '../sync/packRegistry';
+import { defaultGlossary } from './highlightGlossary';
 
 /**
  * 专有词汇存在本机的一个文本文件里，切片时读出来用（写法见 ./highlightGlossary）。
@@ -28,19 +29,23 @@ export function ensureGlossaryFile(): string {
 
   if (!fs.existsSync(file)) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, `${ DEFAULT_GLOSSARY }\n`, { encoding: 'utf8' });
+    fs.writeFileSync(file, `${ defaultGlossary() }\n`, { encoding: 'utf8' });
   }
 
   return file;
 }
 
-/* 读出专有词汇的原文；文件读不了时用默认的 */
+/* 读出专有词汇的原文：同步下来的配置里有就用它（各台设备用同一份），没有读本机的文件；文件读不了时用默认的 */
 export function readGlossaryFile(): string {
+  const synced: string | undefined = pack().config.glossary;
+
+  if (synced !== undefined) return synced;
+
   try {
     return fs.readFileSync(ensureGlossaryFile(), { encoding: 'utf8' }).replace(/^﻿/, '');
   } catch (err) {
     console.error('读专有词汇文件失败，用默认的', err);
 
-    return DEFAULT_GLOSSARY;
+    return defaultGlossary();
   }
 }

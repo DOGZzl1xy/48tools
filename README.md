@@ -1,5 +1,5 @@
 > **这是一个自定义的分支**（窗口标题带 `-custom`），在原版 48tools 的基础上改了界面，加了口袋48代理、聊天样式的房间消息、
-> 语音转文字、下载队列、后台运行、自动抓取随程序启动等功能，只打包 Windows 64 位。
+> 语音转文字、下载队列、后台运行、自动抓取随程序启动、录播切片、个性化设置的多端同步等功能，只打包 Windows 64 位。
 > 改了什么、代码在哪里、怎么测试，见 [packages/48tools/src/custom/README.md](packages/48tools/src/custom/README.md)。
 > 原版在 <https://github.com/duan602728596/48tools>，下面是原版的说明。
 

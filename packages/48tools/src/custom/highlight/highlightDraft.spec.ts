@@ -1,6 +1,7 @@
 /**
  * 写好、等人定标题的切片：选标题、改亮点、改字幕、封面上写什么、发布用的标题、播放时跳过剪掉的地方。
  */
+import { stageTeamTag } from './highlightStage';
 import {
   basisOf, draftCoverLines, draftPoints, draftPostTitles, draftSegments, editLine, editPoint, fromOut, isOwnTitle, lineAt, lookOf, newDraft,
   pickTitle, playAt, shownTitle, type DraftInput
@@ -85,7 +86,7 @@ describe('写好的草稿', (): void => {
     expect(shownTitle({ stage }, marked)).toBe('娜姐耳朵红了');
     expect(shownTitle({ stage }, pickTitle(marked, '我写的【重点】'))).toBe('我写的重点');
     expect(shownTitle({}, marked)).toBe('娜姐【耳朵红了】'); // 直播、电台的标题不动
-    expect(draftPostTitles({ member: '', date: '', stage }, marked).post).toBe('【TeamX】娜姐耳朵红了 | 《示例公演》 2026.11.24');
+    expect(draftPostTitles({ member: '', date: '', stage }, marked).post).toBe(`【${ stageTeamTag('X') }】娜姐耳朵红了 | 《示例公演》 2026.11.24`);
 
     // 以前存下来的草稿里可能还记着改过的大字：不看它，封面还是照标题；做好的切片记的样子也不因为它变
     const old: ClipDraft = { ...draftOf(), ownCoverLines: ['以前改的', '【大字】'] } as ClipDraft;
@@ -108,7 +109,7 @@ describe('写好的草稿', (): void => {
     expect(own.others).toHaveLength(2);
     expect(JSON.stringify(own)).not.toContain('我取的');
     expect(draftPostTitles({ ...job, stage: { team: 'X', teamColor: '#a9ca27', show: '《示例公演》', date: '2026.11.24' } }, draftOf()).post)
-      .toBe('【TeamX】第一个 | 《示例公演》 2026.11.24');
+      .toBe(`【${ stageTeamTag('X') }】第一个 | 《示例公演》 2026.11.24`);
   });
 
   test('看得见的东西变了没有：标题、亮点、画面算，字幕不算，加了一个空的亮点不算', (): void => {

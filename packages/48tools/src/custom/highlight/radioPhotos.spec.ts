@@ -13,6 +13,7 @@ import { writeDrafts, type HighlightDeps, type HighlightJob } from './highlightP
 import { coverDir, ensureFrame, libraryThumb } from './highlightCover';
 import { newShowInfo, withDraft, type ShowInfo, type ShowItem } from './highlightShow';
 import type { ClipDraft } from './highlightTypes';
+import { askKind } from './specAsk';
 
 describe('封面库', (): void => {
   let dir: string;
@@ -187,15 +188,13 @@ function colorAt(file: string, crop: string): Array<number> {
     };
     let ranked: number = 0;
     const fake: typeof fetch = ((_url: string, init: { body: string }): Promise<Response> => {
-      const parts: Array<{ text?: string }> = JSON.parse(init.body).contents[0].parts;
-      const prompt: string = parts[0].text ?? '';
       let answer: unknown = {};
 
-      if (prompt.includes('挑封面照片')) {
+      if (askKind(init) === 'photos') {
         ranked++;
         // 库里新的在前：蓝（11-24）、绿（11-23）、红（这场自己的，11-25 那张是同样的红，留的是 11-22 的名字）
         answer = { order: [1, 3, 2], reason: '' };
-      } else if (prompt.includes('逐句转写')) {
+      } else if (askKind(init) === 'script') {
         answer = {
           lines: Array.from({ length: 8 }, (_item: unknown, index: number): unknown => ({ start: 5 + (index * 7), end: 11 + (index * 7), text: `第${ index + 1 }句`, keep: true, emphasis: [] })),
           titles: ['标题一', '标题二', '标题三'], more: [], description: '简介。', points: ['亮点'], people: []
