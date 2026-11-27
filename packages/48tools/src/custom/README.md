@@ -120,7 +120,7 @@
 
 ## 测试
 
-- 单元测试：`custom/` 下的 `*.spec.ts`，在 `packages/48tools` 目录运行 `node --run test`。`CUSTOM_BASIC=true node --run test` 只测程序自带的默认内容（60 个文件，467 个测试）；本机有内容包的源文件时，不带这个环境变量会先装上它再跑，连它自己的测试一起（见 [basic/README.md](basic/README.md)）。提交前两种都要过。
+- 单元测试：`custom/` 下的 `*.spec.ts`，在 `packages/48tools` 目录运行 `node --run test`。`CUSTOM_BASIC=true node --run test` 只测程序自带的默认内容（60 个文件，470 个测试）；本机有内容包的源文件时，不带这个环境变量会先装上它再跑，连它自己的测试一起（见 [basic/README.md](basic/README.md)）。提交前两种都要过。
   其中 `highlight/highlightPipeline.spec.ts` 最后一组测试是真的把录播切片跑一遍（下载、问 Gemini、合成；也可以只下载），平时跳过，
   要跑时按那个文件开头的说明设置环境变量。
   `bilibili/gongyanSource.spec.ts`（把几段录像接起来）和 `highlight/highlightStagePipeline.spec.ts`（公演切片完整走一遍：假的 Gemini、

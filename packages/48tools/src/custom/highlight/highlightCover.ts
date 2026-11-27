@@ -6,7 +6,7 @@ import {
   buildCoverAss, buildVideoAss, coverFilter, frameFilter, pictureFrameFilter, COVER_WIDTHS, LEFT_WIDTH, type FontSet, type PlacedDanmu
 } from './highlightAss';
 import { buildStageCoverAss, stageCoverFilter, stageFrameFilter, STAGE_VIDEO, type StageInfo } from './highlightStageAss';
-import { pack } from '../sync/packRegistry';
+import { pack, packVersion } from '../sync/packRegistry';
 import { resolveTeam } from './highlightTheme';
 import { coverTag, draftCoverLines, draftPoints, draftSegments, fromOut, lookOf, videoTag } from './highlightDraft';
 import type { ClipDraft, Highlight } from './highlightTypes';
@@ -247,7 +247,7 @@ function coverKey(input: Pick<CoverInput, 'job' | 'highlight' | 'draft'>): strin
     : resolveTeam(job.team, job.teamColor);
 
   return JSON.stringify([
-    COVER_STYLE_VERSION,
+    `${ COVER_STYLE_VERSION } ${ packVersion() }`, // 画法的版本，加上是哪一份内容画的：换了内容包，旧的封面预览重做
     Boolean(job.radio),
     team.code,
     team.color,

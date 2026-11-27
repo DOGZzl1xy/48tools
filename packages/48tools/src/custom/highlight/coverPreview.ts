@@ -2,9 +2,10 @@ import { promises as fsP } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { useEffect, useState, type Dispatch as D, type SetStateAction as S } from 'react';
+import { useEffect, useState, useSyncExternalStore, type Dispatch as D, type SetStateAction as S } from 'react';
 import { getFFmpeg } from '../../utils/utils';
 import { teamOfName, useMemberDirectory } from '../room/memberDirectory';
+import { onPackChange, packVersion } from '../sync/packRegistry';
 import { pickFonts } from './highlightFfmpeg';
 import { coverDir, makeCovers, type CoverJob } from './highlightCover';
 import { shortMemberName, teamColorOf } from './highlightTheme';
@@ -96,7 +97,8 @@ export function useCoverPreview(dir: string, info: ShowInfo, item: ShowItem): Co
     stage: info.stage
   };
   const highlight: Highlight = highlightOf(item);
-  const look: string = `${ item.draft!.key } ${ memberTeam ?? '' } ${ Boolean(info.radio) } ${ lookOf(item.draft!) } ${ info.stage ? draftCoverLines(highlight, item.draft!).join('\n') : '' }`;
+  const drawnBy: string = useSyncExternalStore(onPackChange, packVersion); // 换了内容包，预览重做
+  const look: string = `${ drawnBy } ${ item.draft!.key } ${ memberTeam ?? '' } ${ Boolean(info.radio) } ${ lookOf(item.draft!) } ${ info.stage ? draftCoverLines(highlight, item.draft!).join('\n') : '' }`;
 
   useEffect((): (() => void) => {
     const controller: AbortController = new AbortController();

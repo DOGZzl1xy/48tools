@@ -6,8 +6,8 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { getPackStatus, resetPackSync, syncPack, type PackSyncDeps } from './packSync';
-import { isBuiltinPack, pack } from './packRegistry';
+import { getPackStatus, resetPackSync, syncPack, type PackStatus, type PackSyncDeps } from './packSync';
+import { isBuiltinPack, pack, packVersion } from './packRegistry';
 import { checkPack, manifestText, sha256Hex } from './packVerify';
 import { PACK_API, type PackManifest, type SignedManifest } from './packTypes';
 
@@ -49,6 +49,9 @@ describe('checkPack', (): void => {
     expect(checkPack(signed, Buffer.from(packCode('乙队')), publicKey, NOW)).toMatchObject({ ok: false });
     expect(checkPack(sign(code, { api: PACK_API + 1 }), Buffer.from(code), publicKey, NOW)).toMatchObject({ ok: false });
     expect(checkPack(signed, Buffer.from(code), 'not a key', NOW)).toMatchObject({ ok: false });
+    // 只认 Ed25519 的公钥
+    expect(checkPack(signed, Buffer.from(code), crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ type: 'spki', format: 'pem' }) as string, NOW))
+      .toEqual({ ok: false, reason: '本机配置里的公钥不是 Ed25519 的' });
     expect(checkPack({} as SignedManifest, Buffer.from(code), publicKey, NOW)).toMatchObject({ ok: false });
   });
 });
@@ -162,6 +165,23 @@ describe('syncPack', (): void => {
     await syncPack(deps);
     expect(isBuiltinPack()).toBe(true);
     expect(getPackStatus().state).toBe('rejected');
+  });
+
+  test('服务器给的比现在装着的还旧（就算签名是对的）：不换', async (): Promise<void> => {
+    serve(packCode('新的'), { version: 'v2', createdAt: new Date(NOW).toISOString() });
+    await syncPack(deps);
+    serve(packCode('以前的'), { version: 'v1', createdAt: new Date(NOW - 86_400_000).toISOString() });
+    expect(await syncPack(deps)).toMatchObject({ state: 'verified', version: 'v2', message: expect.stringContaining('比现在装着的旧') });
+    expect(tag()).toBe('新的');
+    expect(calls.code).toBe(1); // 旧的那一版连下载都不下
+  });
+
+  test('正在同步时再点一次：不重复下载，等的是同一次', async (): Promise<void> => {
+    const [first, second]: Array<PackStatus> = await Promise.all([syncPack(deps), syncPack(deps)]);
+
+    expect(first).toBe(second);
+    expect(calls).toEqual({ manifest: 1, code: 1 });
+    expect(packVersion()).toMatch(/^[0-9a-f]{12}$/); // 装着的是哪一份（封面照它记）
   });
 
   test('签名过了期：照样用，状态里标出来', async (): Promise<void> => {

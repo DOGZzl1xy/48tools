@@ -122,6 +122,7 @@ export async function runEncode(
   if (kind === 'gpu') {
     try {
       await runFfmpeg(ffmpeg, build(codecArgs('gpu', quality)), run);
+      gpuFailures = 0; // 「连着」失败才算：中间成功过就重新数
 
       return 'gpu';
     } catch (err) {

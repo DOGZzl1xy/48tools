@@ -43,6 +43,8 @@ const CHECK_EVERY: number = 10 * 60_000; // 说明文件只有几百字节，10 
 
 let status: PackStatus = { state: 'off' };
 let installed: string | undefined; // 现在装着的那一版的 sha256
+let installedAt: number = 0;       // 它是什么时候打的包（说明里的 createdAt）
+let running: Promise<PackStatus> | undefined;
 const listeners: Set<() => void> = new Set();
 
 export function getPackStatus(): PackStatus {
@@ -72,12 +74,13 @@ function install(signed: SignedManifest, code: Buffer, file: string, source: Pac
 
   if (installed !== signed.manifest.sha256) {
     try {
-      installPack(deps.load(file) as PackContent);
+      installPack(deps.load(file) as PackContent, signed.manifest.sha256.slice(0, 12));
     } catch (err) {
       return { ok: false, reason: `包运行不了：${ (err as Error)?.message ?? err }` };
     }
 
     installed = signed.manifest.sha256;
+    installedAt = Date.parse(signed.manifest.createdAt) || 0;
   }
 
   setStatus({
@@ -136,11 +139,8 @@ async function saveToCache(dir: string, signed: SignedManifest, code: Buffer): P
   return file;
 }
 
-/**
- * 同步一次：先把本机有的装上（文件夹 / 上次存的），再问服务器有没有新的
- * @return { Promise<PackStatus> }
- */
-export async function syncPack(deps: PackSyncDeps): Promise<PackStatus> {
+/* 同步一次：先把本机有的装上（文件夹 / 上次存的），再问服务器有没有新的 */
+async function syncOnce(deps: PackSyncDeps): Promise<PackStatus> {
   if (!deps.publicKey()) {
     setStatus({ state: 'off' });
 
@@ -152,7 +152,10 @@ export async function syncPack(deps: PackSyncDeps): Promise<PackStatus> {
   const folder: string | undefined = deps.folder();
 
   if (folder) {
-    if (!await installFromDir(folder, 'folder', deps) && !status.message) reject('文件夹里没有内容包（要有 manifest.json 和 pack.cjs）', deps);
+    const before: number | undefined = status.checkedAt;
+
+    // 校验没过的已经记了原因；什么都没记就是文件夹里没有东西
+    if (!await installFromDir(folder, 'folder', deps) && status.checkedAt === before) reject('文件夹里没有内容包（要有 manifest.json 和 pack.cjs）', deps);
 
     return status;
   }
@@ -165,10 +168,17 @@ export async function syncPack(deps: PackSyncDeps): Promise<PackStatus> {
     const signed: SignedManifest = await deps.fetchManifest();
 
     if (signed?.manifest?.sha256 && signed.manifest.sha256 === installed) {
-      // 没有新的：只更新「什么时候看过」和到期的状态
-      const expires: number = signed.manifest.expiresAt ? Date.parse(signed.manifest.expiresAt) : NaN;
+      // 没有新的：只更新「什么时候看过」和到期的状态（到期时间用装上时验过的那个，这次的说明还没验）
+      const expires: number = status.expiresAt ? Date.parse(status.expiresAt) : NaN;
 
       setStatus({ ...status, message: undefined, expired: Number.isFinite(expires) && deps.now() > expires, checkedAt: deps.now() });
+
+      return status;
+    }
+
+    // 服务器给的比现在装着的还旧：不换（签名是对的旧包也不行，免得被人拿以前的一版顶回来）
+    if (installed && (Date.parse(signed?.manifest?.createdAt) || 0) < installedAt) {
+      reject('服务器上的内容包比现在装着的旧，没有换', deps);
 
       return status;
     }
@@ -190,6 +200,18 @@ export async function syncPack(deps: PackSyncDeps): Promise<PackStatus> {
   }
 
   return status;
+}
+
+/**
+ * 同步一次。正在同步时再调（定时的那一次和设置页的「立即同步」撞上）不会重复下载，等的是同一次的结果
+ * @return { Promise<PackStatus> }
+ */
+export function syncPack(deps: PackSyncDeps): Promise<PackStatus> {
+  running ??= syncOnce(deps).finally((): void => {
+    running = undefined;
+  });
+
+  return running;
 }
 
 /* ---------- 程序里实际用的那一套 ---------- */
@@ -240,6 +262,7 @@ export function startPackSync(): void {
 /* 测试用：回到什么都没装的状态 */
 export function resetPackSync(): void {
   installed = undefined;
+  installedAt = 0;
   resetPack();
   setStatus({ state: 'off' });
 }

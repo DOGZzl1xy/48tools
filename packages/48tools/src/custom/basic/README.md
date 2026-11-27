@@ -26,7 +26,9 @@
    第一次运行会生成签名用的密钥：私钥 `local/pack/signing-key.pem` 只留在打包的电脑上，自己备份；
    公钥在 `local/pack/signing-key.pub.txt`。`local/专有词汇.txt` 会作为配置里的专有词汇一起打进去。
 3. 每台设备的 `local/pocket48.json` 里写上 `packPublicKey`（公钥那一行）。然后二选一：
-   - 把输出的两个文件放到同步服务器上（和在线状态是同一个服务，接口 `GET /pack/manifest`、`GET /pack/file`）；
+   - 把输出的两个文件放到同步服务器上（和在线状态是同一个服务，接口 `GET /pack/manifest`、`GET /pack/file`）。
+     服务端不在这个仓库里，要自己搭：HTTPS、`Authorization: Bearer <密钥>`，`/pack/manifest` 原样返回 `manifest.json`，
+     `/pack/file` 返回 `{ "code": "<pack.cjs 的内容>" }`；地址、密钥、证书指纹写在 `local/pocket48.json` 的 `presenceUrl`、`presenceKey`、`presenceCertPin`；
    - 或者写上 `packDir`（比如 `local/pack/out`），程序直接读这个文件夹，不经过服务器。
 
 内容包是会被程序直接运行的代码，所以装上之前要过两关（`sync/packVerify.ts`）：说明上的签名是自己的私钥签的，

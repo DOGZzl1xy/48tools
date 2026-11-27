@@ -51,6 +51,8 @@ export function checkPack(signed: SignedManifest, code: Buffer, publicKey: strin
     return { ok: false, reason: '本机配置里的公钥读不出来' };
   }
 
+  if (key.asymmetricKeyType !== 'ed25519') return { ok: false, reason: '本机配置里的公钥不是 Ed25519 的' };
+
   let signedByMe: boolean = false;
 
   try {

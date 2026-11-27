@@ -11,13 +11,14 @@ jest.mock('../room/presenceApi', (): object => ({
   requestPresenceJson: (): Promise<never> => Promise.reject(new Error('测试里不该真的发请求'))
 }));
 
-import { canSyncMembers, requestSyncedMembers } from './memberSource';
+import { canSyncMembers, requestSyncedMembers, resetSyncedMembers } from './memberSource';
 
 const list: RoomIdObj = { buildTime: '2026-11-27 15:18:02', roomId: [{ id: 1, ownerName: '成员甲', team: '预备生', serverId: 100 }] };
 
 describe('requestSyncedMembers', (): void => {
   beforeEach((): void => {
     configured = { baseUrl: 'https://example.invalid:8443', apiKey: 'k' };
+    resetSyncedMembers();
     jest.spyOn(console, 'warn').mockImplementation((): void => undefined);
   });
 
@@ -44,8 +45,39 @@ describe('requestSyncedMembers', (): void => {
   });
 
   test('没连上、名单是空的、格式不对：返回 null', async (): Promise<void> => {
-    expect(await requestSyncedMembers((): Promise<RoomIdObj> => Promise.reject(new Error('超时')))).toBeNull();
-    expect(await requestSyncedMembers((): Promise<RoomIdObj> => Promise.resolve({ buildTime: '', roomId: [] }))).toBeNull();
-    expect(await requestSyncedMembers((): Promise<RoomIdObj> => Promise.resolve({ error: 'forbidden' } as unknown as RoomIdObj))).toBeNull();
+    for (const answer of [
+      (): Promise<RoomIdObj> => Promise.reject(new Error('超时')),
+      (): Promise<RoomIdObj> => Promise.resolve({ buildTime: '', roomId: [] }),
+      (): Promise<RoomIdObj> => Promise.resolve({ error: 'forbidden' } as unknown as RoomIdObj)
+    ]) {
+      resetSyncedMembers();
+      expect(await requestSyncedMembers(answer)).toBeNull();
+    }
+  });
+
+  test('取到的留 10 分钟不重复问；没取到的 5 分钟内不再问，过后再试', async (): Promise<void> => {
+    let time: number = 1_000_000;
+    let asked: number = 0;
+    let fail: boolean = true;
+    const ask: () => Promise<RoomIdObj> = (): Promise<RoomIdObj> => {
+      asked++;
+
+      return fail ? Promise.reject(new Error('连不上')) : Promise.resolve(list);
+    };
+    const now: () => number = (): number => time;
+
+    expect(await requestSyncedMembers(ask, now)).toBeNull();
+    expect(await requestSyncedMembers(ask, now)).toBeNull();
+    expect(asked).toBe(1); // 刚失败过：不问
+
+    time += 5 * 60_000;
+    fail = false;
+    expect(await requestSyncedMembers(ask, now)).toMatchObject({ synced: true });
+    expect(await requestSyncedMembers(ask, now)).toMatchObject({ synced: true });
+    expect(asked).toBe(2); // 留着的还新：不问
+
+    time += 10 * 60_000;
+    await requestSyncedMembers(ask, now);
+    expect(asked).toBe(3);
   });
 });

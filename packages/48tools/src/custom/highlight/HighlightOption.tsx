@@ -1,4 +1,4 @@
-import { Fragment, type ReactElement, type ChangeEvent } from 'react';
+import { Fragment, useSyncExternalStore, type ReactElement, type ChangeEvent } from 'react';
 import { shell } from 'electron';
 import { Button, Input, Segmented, Space } from 'antd';
 import { FolderOpenOutlined as IconFolderOpenOutlined } from '@ant-design/icons';
@@ -11,6 +11,7 @@ import { AUTO_SCORE, AUTO_SCORE_OPTIONS } from './highlightTime';
 import AlignerOption from './AlignerOption';
 import { agyDefaults } from './highlightAgy';
 import { ensureGlossaryFile } from './glossaryFile';
+import { onPackChange, pack } from '../sync/packRegistry';
 
 /**
  * 设置页面里的「录播切片」：用哪个 Gemini 模型、走接口还是本机的 agy、专有词汇、「自动」时多少分以上才推荐、切片保存在哪里、本地打轴模型装不装。
@@ -19,6 +20,7 @@ import { ensureGlossaryFile } from './glossaryFile';
  */
 function HighlightOption(props: {}): ReactElement {
   const overrides: CustomSettings = useSettingOverrides();
+  const syncedGlossary: boolean = useSyncExternalStore(onPackChange, (): boolean => pack().config.glossary !== undefined);
   const dir: string = resolveSetting(overrides, 'highlightDir') ?? '';
   const invalid: boolean = dir !== '' && resolveLocalDir(dir) === undefined;
 
@@ -78,7 +80,7 @@ function HighlightOption(props: {}): ReactElement {
           { overrides.highlightDir ? <Button onClick={ (): void => setSetting('highlightDir', undefined) }>恢复默认</Button> : null }
         </Space.Compact>
       </Row>
-      <Row label="专有词汇" hint="人名、昵称、圈内叫法">
+      <Row label="专有词汇" hint={ syncedGlossary ? '人名、昵称、圈内叫法。现在用的是同步下来的那一份：改了这个文件，要重新打包发布内容包才生效' : '人名、昵称、圈内叫法' }>
         <Button icon={ <IconFolderOpenOutlined /> } onClick={ (): void => shell.showItemInFolder(ensureGlossaryFile()) }>打开所在位置</Button>
       </Row>
       <AlignerOption />

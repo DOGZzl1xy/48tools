@@ -9,6 +9,13 @@ import { getPackStatus, onPackStatus, packSyncDeps, syncPack, type PackStatus } 
  */
 const SOURCE: Record<NonNullable<PackStatus['source']>, string> = { server: '来自同步服务', cache: '用的是上次存在本机的', folder: '来自本机文件夹' };
 
+/* 版本一般是打包的时间；不是时间的原样显示 */
+function versionText(version: string | undefined): string {
+  if (!version) return '未知';
+
+  return Number.isFinite(Date.parse(version)) ? showTime(Date.parse(version), 'YYYY-MM-DD HH:mm') : version;
+}
+
 /* 状态写成一两句话 */
 export function packStatusText(status: PackStatus): { main: string; note?: string } {
   if (status.state === 'off') return { main: '未启用：没有配置签名的公钥，用的是程序自带的内容' };
@@ -19,7 +26,7 @@ export function packStatusText(status: PackStatus): { main: string; note?: strin
     const expires: string = status.expiresAt ? `，${ status.expired ? '已于' : '到期' } ${ showTime(Date.parse(status.expiresAt), 'YYYY-MM-DD') }${ status.expired ? ' 过期（还在用，记得重新签名）' : '' }` : '';
 
     return {
-      main: `签名${ status.expired ? '已过期' : '有效' }${ expires }；版本 ${ status.version ? showTime(Date.parse(status.version), 'YYYY-MM-DD HH:mm') : '未知' }，${ SOURCE[status.source ?? 'server'] }`,
+      main: `签名${ status.expired ? '已过期' : '有效' }${ expires }；版本 ${ versionText(status.version) }，${ SOURCE[status.source ?? 'server'] }`,
       note: [status.message, checked].filter(Boolean).join('；') || undefined
     };
   }
